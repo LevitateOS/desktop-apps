@@ -21,47 +21,44 @@ void applyLook(const QString &look)
     font.setPointSizeF(10);
     QApplication::setFont(font);
 
+    // These values are copies of `[look.light]` (levitate) and `[look.dark]`
+    // (acorn) in `distro/variants/<id>/distro.toml` of the LevitateOS repo;
+    // change them there first. LevitateOS starts light, AcornOS starts dark.
+    struct Colours {
+        const char *surface, *raised, *sunken, *text, *secondary, *muted, *rule, *hairline, *accent, *onAccent,
+            *highlight, *button, *bevel, *deep, *shadow;
+    };
+    static const Colours light = {"#F2EEE4", "#FCFAF5", "#E7E2D5", "#14221A", "#59645B", "#7A8075", "#BFC6B8",
+                                  "#D9DCCF", "#214438", "#F2EEE4", "#644532", "#E7E2D5", "#FFFFFF", "#9AA394",
+                                  "#7A8075"};
+    static const Colours dark = {"#1F1711", "#2B2019", "#150F0A", "#F2EEE4", "#CDBFAE", "#A89886", "#4D3D30",
+                                 "#382B21", "#E4CBA6", "#1F1711", "#C7D9BA", "#2B2019", "#5E4B3B", "#0F0A07",
+                                 "#070402"};
+    const Colours &c = acorn ? dark : light;
+
     QPalette p;
     auto set = [&p](QPalette::ColorRole role, const char *colour) { p.setColor(role, QColor(colour)); };
-    if (acorn) {
-        set(QPalette::Window, "#f2eee4");
-        set(QPalette::WindowText, "#14221a");
-        set(QPalette::Base, "#fcfaf5");
-        set(QPalette::AlternateBase, "#f2eee4");
-        set(QPalette::Text, "#14221a");
-        set(QPalette::Button, "#ece7da");
-        set(QPalette::ButtonText, "#14221a");
-        set(QPalette::Highlight, "#644532");
-        set(QPalette::HighlightedText, "#f2eee4");
-        set(QPalette::Link, "#644532");
-        set(QPalette::PlaceholderText, "#59645b");
-        set(QPalette::ToolTipBase, "#fcfaf5");
-        set(QPalette::ToolTipText, "#14221a");
-        set(QPalette::Light, "#ffffff");
-        set(QPalette::Midlight, "#f7f4ec");
-        set(QPalette::Mid, "#c4c2b3");
-        set(QPalette::Dark, "#aeab9b");
-        set(QPalette::Shadow, "#7a8075");
-    } else {
-        set(QPalette::Window, "#202326");
-        set(QPalette::WindowText, "#fcfcfc");
-        set(QPalette::Base, "#141618");
-        set(QPalette::AlternateBase, "#1b1e20");
-        set(QPalette::Text, "#fcfcfc");
-        set(QPalette::Button, "#31363b");
-        set(QPalette::ButtonText, "#fcfcfc");
-        set(QPalette::Highlight, "#c7d9ba");
-        set(QPalette::HighlightedText, "#14221a");
-        set(QPalette::Link, "#c7d9ba");
-        set(QPalette::PlaceholderText, "#a8b0b8");
-        set(QPalette::ToolTipBase, "#31363b");
-        set(QPalette::ToolTipText, "#fcfcfc");
-        set(QPalette::Light, "#474c52");
-        set(QPalette::Midlight, "#3b3f44");
-        set(QPalette::Mid, "#2e3236");
-        set(QPalette::Dark, "#16181a");
-        set(QPalette::Shadow, "#0c0d0e");
-    }
+    set(QPalette::Window, c.surface);
+    set(QPalette::WindowText, c.text);
+    set(QPalette::Base, c.raised);
+    set(QPalette::AlternateBase, c.sunken);
+    set(QPalette::Text, c.text);
+    set(QPalette::Button, c.button);
+    set(QPalette::ButtonText, c.text);
+    set(QPalette::Highlight, c.accent);
+    set(QPalette::HighlightedText, c.onAccent);
+    set(QPalette::Link, c.accent);
+    set(QPalette::LinkVisited, c.highlight);
+    set(QPalette::PlaceholderText, c.muted);
+    set(QPalette::ToolTipBase, c.raised);
+    set(QPalette::ToolTipText, c.text);
+    set(QPalette::Light, c.bevel);
+    set(QPalette::Midlight, c.hairline);
+    set(QPalette::Mid, c.rule);
+    set(QPalette::Dark, c.deep);
+    set(QPalette::Shadow, c.shadow);
+    for (QPalette::ColorRole role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+        p.setColor(QPalette::Disabled, role, QColor(c.muted));
     QApplication::setPalette(p);
 }
 

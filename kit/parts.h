@@ -120,7 +120,7 @@ private:
 
 // What a short piece of state says: "this needs you", "this went well", "this
 // went wrong". The colours follow the palette's lightness, so the words stay
-// readable on the dark Levitate look and on the light Acorn one.
+// readable on the light Levitate look and on the dark Acorn one.
 enum class Mood { Plain, Warn, Ok, Bad };
 QColor moodColour(const QPalette &palette, Mood mood);
 
