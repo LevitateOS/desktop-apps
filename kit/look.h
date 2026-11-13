@@ -7,7 +7,7 @@
 
 #include <functional>
 
-// "levitate": the LevitateOS light palette (green accent). "acorn": the
+// "levitate": the LevitateOS dark green palette (sage accent). "acorn": the
 // AcornOS dark palette (sand accent). On a real desktop an app takes the desktop's
 // own style and colours and this is never called.
 void applyLook(const QString &look);

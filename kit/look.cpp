@@ -21,20 +21,21 @@ void applyLook(const QString &look)
     font.setPointSizeF(10);
     QApplication::setFont(font);
 
-    // These values are copies of `[look.light]` (levitate) and `[look.dark]`
-    // (acorn) in `distro/variants/<id>/distro.toml` of the LevitateOS repo;
-    // change them there first. LevitateOS starts light, AcornOS starts dark.
+    // These values are copies of each variant's `[look.dark]` in
+    // `distro/variants/<id>/distro.toml` of the LevitateOS repo; change them
+    // there first. Both distros start dark: LevitateOS in its green, AcornOS
+    // in its brown.
     struct Colours {
         const char *surface, *raised, *sunken, *text, *secondary, *muted, *rule, *hairline, *accent, *onAccent,
             *highlight, *button, *bevel, *deep, *shadow;
     };
-    static const Colours light = {"#DDE2D2", "#E8ECDF", "#CFD6C3", "#14221A", "#465047", "#5C6459", "#AEB8A4",
-                                  "#C6CDB9", "#214438", "#E8ECDF", "#644532", "#D3D9C8", "#F0F3E9", "#8E9887",
-                                  "#6F776A"};
-    static const Colours dark = {"#1F1711", "#2B2019", "#150F0A", "#F2EEE4", "#CDBFAE", "#A89886", "#4D3D30",
+    static const Colours levitate = {"#14221A", "#1D2D24", "#0D1711", "#F2EEE4", "#BAC5B7", "#9AA89D", "#3A4B40",
+                                     "#2A3B31", "#C7D9BA", "#14221A", "#E4CBA6", "#1D2D24", "#4A5E51", "#0A120D",
+                                     "#050A07"};
+    static const Colours acornDark = {"#1F1711", "#2B2019", "#150F0A", "#F2EEE4", "#CDBFAE", "#A89886", "#4D3D30",
                                  "#382B21", "#E4CBA6", "#1F1711", "#C7D9BA", "#2B2019", "#5E4B3B", "#0F0A07",
                                  "#070402"};
-    const Colours &c = acorn ? dark : light;
+    const Colours &c = acorn ? acornDark : levitate;
 
     QPalette p;
     auto set = [&p](QPalette::ColorRole role, const char *colour) { p.setColor(role, QColor(colour)); };
