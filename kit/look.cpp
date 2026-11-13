@@ -28,7 +28,7 @@ void applyLook(const QString &look)
         const char *surface, *raised, *sunken, *text, *secondary, *muted, *rule, *hairline, *accent, *onAccent,
             *highlight, *button, *bevel, *deep, *shadow;
     };
-    static const Colours light = {"#F2EEE4", "#FCFAF5", "#E7E2D5", "#14221A", "#59645B", "#7A8075", "#BFC6B8",
+    static const Colours light = {"#F2EEE4", "#FCFAF5", "#E7E2D5", "#14221A", "#59645B", "#656D62", "#BFC6B8",
                                   "#D9DCCF", "#214438", "#F2EEE4", "#644532", "#E7E2D5", "#FFFFFF", "#9AA394",
                                   "#7A8075"};
     static const Colours dark = {"#1F1711", "#2B2019", "#150F0A", "#F2EEE4", "#CDBFAE", "#A89886", "#4D3D30",
