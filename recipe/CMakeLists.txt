@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Svg)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Svg)
 
 qt_add_executable(recipe-gui
     src/main.cpp

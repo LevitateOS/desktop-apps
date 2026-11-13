@@ -19,7 +19,7 @@ The three graphical apps share widgets and window components in [`kit/`](kit/). 
 
 - CMake 3.21 or later
 - A C++20 compiler
-- Qt 6.5 or later: Core for `levitate-agent`; Widgets and Svg for the graphical apps
+- Qt 6.5 or later: Core for `levitate-agent`; Widgets and Svg for the graphical apps (`recipe-gui` alone needs only Qt 6.4, so it builds on Debian 12 and Ubuntu 24.04)
 - Ninja is optional but used in the example below
 
 Build all applications from the repository root:
