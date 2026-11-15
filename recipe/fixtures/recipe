@@ -26,7 +26,7 @@ Environment:
   RECIPE_STANDIN_AB       0: `--system` is a system with one root (plain answers, no other root)
   RECIPE_STANDIN_NOT_DONE "NAME:error text": `--system installed` lists that system change as
                           not done (wiped by `recab copy`, writing it again failed)
-  RECIPE_STANDIN_HOST_LIBC  this system's C library, as `recipe info` says it (default glibc)
+  RECIPE_STANDIN_HOST_LIBC  this system's C library, as `recipe list --json` says it in host_libc (default glibc)
   RECIPE_STANDIN_LINGER   seconds the command stays alive after its last event (`done`), as a
                           recipe that tears its sandbox down slowly does
   RECIPE_STANDIN_INFO     nofile: `recipe info` does not print the Recipe: line
@@ -208,11 +208,41 @@ def sample(name, title, description, category, like):
     return made
 
 
+def mismatch(item, parent=None, seen=None):
+    """The message Recipe's install gives for a recipe whose declared C library is not this system's, for the
+    recipe or one it needs when it runs; None when it can run here."""
+    seen = seen if seen is not None else []
+    if item["name"] in seen:
+        return None
+    seen.append(item["name"])
+    about = item.get("about") or {}
+    libc = about.get("libc")
+    if libc and HOST_LIBC != "unknown" and HOST_LIBC not in libc:
+        build = " or ".join(libc)
+        if about.get("libc_carried"):
+            text = ("%s: its build is linked against %s, and its package brings its own %s and loader; this "
+                    "system's C library is %s. The package was made and tried on %s systems; on %s it has not "
+                    "been tried." % (item["name"], build, build, HOST_LIBC, build, HOST_LIBC))
+        else:
+            text = ("%s: its build is linked against %s; this system's C library is %s, so as packaged its "
+                    "program would find no loader." % (item["name"], build, HOST_LIBC))
+        if parent:
+            text += " %s is a dependency of %s." % (item["name"], parent)
+        return text + " To install it anyway: recipe install --any-libc %s" % (parent or item["name"])
+    for dep in item.get("deps", []):
+        found = next((each for each in CATALOG["recipes"] if each["name"] == dep), None)
+        if found and (why := mismatch(found, parent or item["name"], seen)):
+            return why
+    return None
+
+
 def recipes():
     found = []
     for item in CATALOG["recipes"]:
         # `tree` is the one in in the person's own folder.
-        found.append(dict(item, source="local" if item["name"] == "tree" else "levitate", path=recipe_file(item["name"])))
+        why = mismatch(item)
+        found.append(dict(item, source="local" if item["name"] == "tree" else "levitate", path=recipe_file(item["name"]),
+                          runs_here=why is None, not_runnable_reason=why))
     for source in sources():
         if source["name"] == "levitate" or source.get("problem"):
             continue
@@ -678,7 +708,8 @@ def main(args):
         # once a second source is added, so the Sources page has something to show.
         problems = [{"path": os.path.join(STATE_DIR, "recipes", "yazi.rhai"),
                      "problem": "it names nothing to download"}] if len(sources()) > 1 else []
-        print(json.dumps({"schema_version": 1, "sources": listed_sources(), "recipes": recipes(), "problems": problems}))
+        print(json.dumps({"schema_version": 1, "host_libc": HOST_LIBC, "sources": listed_sources(),
+                          "recipes": recipes(), "problems": problems}))
     elif command == "refresh":
         refresh(words[1] if len(words) > 1 else "")
     elif command == "source" and words[1:2] == ["add"] and len(words) == 3:

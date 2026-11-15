@@ -104,6 +104,7 @@ void RecipeClient::query(const QStringList &arguments, Answered then)
 
 static void readList(const QJsonObject &list, Catalog &fresh)
 {
+    fresh.hostLibc = list["host_libc"].toString();
     for (const QJsonValue &value : list["sources"].toArray()) {
         const QJsonObject o = value.toObject();
         Origin origin;
@@ -325,7 +326,7 @@ void RecipeClient::load(Loaded done)
     auto next = std::make_shared<std::function<void(int)>>();
     *next = [this, steps, next, finish, fresh](int index) {
         if (index >= steps->size())
-            return askHostLibc(fresh, [finish] { finish(true, QString()); });
+            return finish(true, QString());
         const Step &step = steps->at(index);
         query(step.arguments, [steps, next, finish, index](const QJsonObject &answer, const QString &problem) {
             const Step &step = steps->at(index);
@@ -340,36 +341,6 @@ void RecipeClient::load(Loaded done)
         });
     };
     (*next)(0);
-}
-
-// Recipe says this system's C library only in `recipe info` of a recipe that declares one
-// ("this system's C library is glibc (…)"); the list carries what each recipe declares and
-// nothing about the system. A recipe that cannot be asked about leaves it unknown: nothing is guessed.
-void RecipeClient::askHostLibc(std::shared_ptr<Catalog> fresh, std::function<void()> then)
-{
-    const Recipe *declaring = nullptr;
-    for (const Recipe &recipe : fresh->recipes)
-        if (!recipe.libc.isEmpty()) {
-            declaring = &recipe;
-            break;
-        }
-    if (!declaring) {
-        then();
-        return;
-    }
-    auto *run = new Run(program_, QStringList{"info", fresh->qualified(declaring->name)} + collection() + store(), this);
-    connect(run, &Run::finished, this, [run, fresh, then](bool ok) {
-        if (ok) {
-            static const QRegularExpression colour(QStringLiteral("\x1b\\[[0-9;]*[A-Za-z]"));
-            static const QRegularExpression says(QStringLiteral("this system's C library is (glibc|musl|unknown)"));
-            const QRegularExpressionMatch found = says.match(QString::fromUtf8(run->answer()).remove(colour));
-            if (found.hasMatch())
-                fresh->hostLibc = found.captured(1);
-        }
-        run->deleteLater();
-        then();
-    });
-    run->start();
 }
 
 void RecipeClient::recipeFile(const QString &qualifiedName,

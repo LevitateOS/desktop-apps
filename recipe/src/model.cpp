@@ -81,6 +81,8 @@ Recipe Recipe::fromJson(const QJsonObject &object)
     r.hooks = strings(object["hooks"]);
     r.libc = strings(about["libc"]);
     r.libcCarried = about["libc_carried"].toBool();
+    r.runsHere = object["runs_here"].toBool(true);
+    r.notRunnableReason = object["not_runnable_reason"].toString();
     return r;
 }
 
@@ -315,33 +317,8 @@ QString Catalog::takenOutWords(const InstalledItem &item) const
 
 QString Catalog::unavailable(const QString &name) const
 {
-    if (hostLibc.isEmpty() || hostLibc == QLatin1String("unknown"))
-        return QString();
-    // The recipe and the recipes it needs when it runs (what `recipe install` checks).
-    QStringList seen;
-    std::function<QString(const QString &, const QString &)> check = [&](const QString &each, const QString &parent) -> QString {
-        if (seen.contains(each))
-            return QString();
-        seen << each;
-        const Recipe *found = recipe(each);
-        if (!found)
-            return QString();
-        if (!found->libc.isEmpty() && !found->libc.contains(hostLibc)) {
-            const QString build = found->libc.join(QObject::tr(" or "));
-            return parent.isEmpty()
-                       ? QObject::tr("Its build is linked against %1, and this system uses %2, so it would find no loader here.")
-                             .arg(build, hostLibc)
-                       : QObject::tr("It needs %1, whose build is linked against %2; this system uses %3.")
-                             .arg(found->shown(), build, hostLibc);
-        }
-        for (const QString &dep : found->deps) {
-            const QString why = check(dep, parent.isEmpty() ? each : parent);
-            if (!why.isEmpty())
-                return why;
-        }
-        return QString();
-    };
-    return check(name, QString());
+    const Recipe *found = recipe(name);
+    return found && !found->runsHere ? found->notRunnableReason : QString();
 }
 
 QList<Place> Catalog::installPlaces(const QString &name) const

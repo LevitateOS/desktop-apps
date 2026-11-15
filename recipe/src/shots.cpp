@@ -1410,7 +1410,8 @@ void availabilityShots(Window &window, const Save &save, const Expect &expect)
         const QString why = catalog.unavailable("steam");
         expect(QStringLiteral("on musl: steam is not available, and one line says why (%1)").arg(why),
                catalog.hostLibc == "musl"
-                   && why == "Its build is linked against glibc, and this system uses musl, so it would find no loader here.");
+                   && why == "steam: its build is linked against glibc; this system's C library is musl, so as packaged its "
+                             "program would find no loader. To install it anyway: recipe install --any-libc steam");
         expect(QStringLiteral("claude-code too; htop, which declares glibc or musl, and recipes that declare nothing, are"),
                !catalog.unavailable("claude-code").isEmpty() && catalog.unavailable("htop").isEmpty()
                    && catalog.unavailable("krita").isEmpty());

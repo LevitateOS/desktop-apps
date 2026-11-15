@@ -52,6 +52,9 @@ struct Recipe {
     // whether the package brings its own C library and loader.
     QStringList libc;
     bool libcCarried = false;
+    // From `recipe list --json`: whether this system can run it, and if not, the reason Recipe gives.
+    bool runsHere = true;
+    QString notRunnableReason;
     QString path;
 
     QString shown() const { return title.isEmpty() ? name : title; }
@@ -188,8 +191,7 @@ struct Catalog {
     // System changes that were in the other root, were wiped from it (`recab
     // copy`), and whose writing again failed.
     QList<NotDone> notDone;
-    // This system's C library as Recipe says it ("glibc", "musl", "unknown");
-    // empty when Recipe could not be asked.
+    // This system's C library as `recipe list --json` says it ("glibc", "musl", "unknown").
     QString hostLibc;
 
     const Recipe *recipe(const QString &name) const;
@@ -215,8 +217,7 @@ struct Catalog {
     // What taking this item out does on an A/B system, as a sentence: only the other root
     // is ever changed.
     QString takenOutWords(const InstalledItem &item) const;
-    // One line saying why this system's C library cannot run the recipe (or one it needs);
-    // empty when it can, or when Recipe did not say what this system's C library is.
+    // Why this system cannot run the recipe, in Recipe's words (`not_runnable_reason`); empty when it can.
     QString unavailable(const QString &name) const;
     // The places it could still be installed in, the computer's first.
     QList<Place> installPlaces(const QString &name) const;

@@ -349,9 +349,8 @@ This section replaces everything below that speaks of a next system, recab's
   folder is added.
 - A recipe whose `ABOUT.libc` this system's C library cannot run is not offered
   (one line says why); a licence starting `proprietary` is flagged before install.
-  The list says what each recipe declares; this system's C library is read from
-  the `recipe info` line "this system's C library is …" of a recipe that declares
-  one (Recipe has no machine-readable field for it).
+  `recipe list --json` carries `host_libc` once and, per recipe, `runs_here` and
+  `not_runnable_reason` (Recipe's own message); the app reads those and decides nothing.
 - The story runs with stand-in settings `RECIPE_STANDIN_AB=0|1`,
   `RECIPE_STANDIN_NOT_DONE`, `RECIPE_STANDIN_HOST_LIBC`, `RECIPE_STANDIN_LINGER`,
   `RECIPE_STANDIN_SLOW_READS` and `RECIPE_STANDIN_INFO=nofile` (see the top of

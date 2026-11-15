@@ -79,8 +79,6 @@ private:
     // The store whose sources are listed and fetched: the computer's.
     QStringList store() const;
     bool ab() const;
-    // What this system's C library is, from `recipe info` of a recipe that declares one.
-    void askHostLibc(std::shared_ptr<Catalog> fresh, std::function<void()> then);
     QString program_, rootHelper_, recipesPath_, packageRoot_, systemRoot_;
     bool explicit_ = false;
     int loading_ = 0;
