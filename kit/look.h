@@ -34,3 +34,7 @@ bool waitFor(const std::function<bool()> &holds, int seconds = 20);
 // Call it before the window is made: the window starts reading at once.
 int guardPictureMode(const QString &program, const QStringList &programs, const QStringList &mayBeEmpty);
 bool pictureMode();
+
+// A story's check of the guard: a bare `--shots` of this program refuses to start (exit code 2)
+// and says `mustName`, and starts nothing.
+void guardRefuses(const std::function<void(const QString &, bool)> &expect, const QString &folder, const QString &mustName);

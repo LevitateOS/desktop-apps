@@ -48,19 +48,26 @@ struct Recipe {
     QList<Source> sources;
     Needs needs;
     QStringList deps, buildDeps, hooks;
+    // ABOUT.libc: the C libraries its build is linked against (empty: any), and
+    // whether the package brings its own C library and loader.
+    QStringList libc;
+    bool libcCarried = false;
     QString path;
 
     QString shown() const { return title.isEmpty() ? name : title; }
     bool listed() const { return kind != QLatin1String("library"); }
+    // The licence is `proprietary …` (the recipe format requires SPDX or `proprietary`).
+    bool proprietary() const { return license.trimmed().startsWith(QLatin1String("proprietary"), Qt::CaseInsensitive); }
     static Recipe fromJson(const QJsonObject &object);
 };
 
 // Where software is. `Me` is the person's own store, in effect at once for
-// them only. `Computer` is the system's: its store when the system is not
-// locked, the running system's selection (through recab) when it is. `Next`
-// is software that only the next system holds, after a restart. The one store
-// a check names (RECIPE_GUI_PACKAGE_ROOT) is `Computer`, the only place there is.
-enum class Place { Me = 0, Computer = 1, Next = 2 };
+// them only. `Computer` is the system's, for everyone: its store when the
+// system has one root, the booted root's software when it has two (A/B).
+// `Other` exists only on an A/B system: software written into the other root,
+// which becomes active when that root is booted. The one store a check names
+// (RECIPE_GUI_PACKAGE_ROOT) is `Computer`, the only place there is.
+enum class Place { Me = 0, Computer = 1, Other = 2 };
 
 struct InstalledItem {
     // `kept`: the newest earlier version Recipe still holds, which "Go back" returns to.
@@ -83,11 +90,11 @@ struct InstalledItem {
     QString profile;
     Place place = Place::Computer;
     // A store stands behind it: earlier versions, storage and going back apply.
-    // False for what recab answers about a locked system, which says only
-    // name and version.
+    // False for what `recipe --system installed` answers on an A/B system,
+    // which says only name and version.
     bool inStore = true;
-    // On a locked system: the next system no longer holds it.
-    bool leavesNext = false;
+    // On an A/B system: the other root no longer holds it (it is in the booted root).
+    bool leavesOther = false;
 };
 
 // One field of what a recipe may use (NEEDS) that the newer recipe changes,
@@ -108,7 +115,7 @@ struct UpdateItem {
     QString name, from, to;
     Place place = Place::Computer;
     // Made from the collection's version, not by `recipe updates` (which
-    // cannot look at a locked system's software).
+    // cannot look at an A/B system's software).
     bool fromCollection = false;
     QList<Change> changes;
     // False when `recipe` cannot say what changed in what the recipe may use:
@@ -149,6 +156,11 @@ struct RecipeProblem {
     QString path, problem;
 };
 
+// A system change that is not in the other root, and why writing it again failed.
+struct NotDone {
+    QString package, error;
+};
+
 struct Catalog {
     QList<Origin> origins;
     int unreadable = 0; // recipes in the collection that `recipe` could not read
@@ -168,9 +180,17 @@ struct Catalog {
     bool twoPlaces = false;
     // The computer's own software could not be read; why. Empty otherwise.
     QString computerProblem;
-    // On a locked system, what the next system's changes name (`recab`'s
-    // `preparation.changes`, readable by a person): package -> last action.
-    QMap<QString, QString> nextChanges;
+    // An A/B system: two roots, the booted one locked, the other unlocked. Their
+    // names (A or B) as `recipe --system installed` says them. When `ab` is
+    // false none of this applies and no A/B word is shown.
+    bool ab = false;
+    QString bootedRoot, otherRoot, otherMount;
+    // System changes that were in the other root, were wiped from it (`recab
+    // copy`), and whose writing again failed.
+    QList<NotDone> notDone;
+    // This system's C library as Recipe says it ("glibc", "musl", "unknown");
+    // empty when Recipe could not be asked.
+    QString hostLibc;
 
     const Recipe *recipe(const QString &name) const;
     const Origin *origin(const QString &name) const;
@@ -179,15 +199,25 @@ struct Catalog {
     // Where the recipes are from, in a few words.
     QString originsWords() const;
     int countFrom(const QString &origin) const;
-    // The first place that holds it (Me before Computer before Next), or the given one.
+    // The first place that holds it (Me before Computer before Other), or the given one.
     const InstalledItem *installedItem(const QString &name) const;
     const InstalledItem *installedItem(const QString &name, Place place) const;
     const UpdateItem *update(const QString &name) const;
     const UpdateItem *update(const QString &name, Place place) const;
     // Updates that count: the held ones are listed but not counted.
     int updatesToCount() const;
-    // The next system holds a change that installs or updates it (recab says so).
-    bool waitsForRestart(const QString &name) const;
+    // The other root holds it (and the booted root does not hold that version).
+    bool inOtherRoot(const QString &name) const;
+    // "the other root (B)", or "the other root" when its name is not known.
+    QString otherWords() const;
+    // "the running root (A)": the booted root, which is locked.
+    QString bootedWords() const;
+    // What taking this item out does on an A/B system, as a sentence: only the other root
+    // is ever changed.
+    QString takenOutWords(const InstalledItem &item) const;
+    // One line saying why this system's C library cannot run the recipe (or one it needs);
+    // empty when it can, or when Recipe did not say what this system's C library is.
+    QString unavailable(const QString &name) const;
     // The places it could still be installed in, the computer's first.
     QList<Place> installPlaces(const QString &name) const;
     // Every place that holds it.
@@ -199,5 +229,5 @@ QString categoryTitle(const QString &id);
 QString hookTitle(const QString &hook);
 
 
-// "For me", "For this computer", "In the next system, after a restart".
-QString placeTitle(Place place);
+// "For me", "For everyone", "In the other root (B)".
+QString placeTitle(Place place, const QString &otherRoot = QString());

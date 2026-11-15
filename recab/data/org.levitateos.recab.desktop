@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Recab
-GenericName=System changes and updates
-Comment=Change and update the locked system
+GenericName=The two roots
+Comment=Copy the booted root to the other root, start the other root, restart
 Exec=recab-gui
 Icon=system-software-update
 Categories=Qt;System;Settings;
-Keywords=system;update;upgrade;change;rollback;restart;
+Keywords=root;system;copy;restart;boot;

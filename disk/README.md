@@ -1,8 +1,8 @@
 # disk-gui
 
 The third desktop app, titled "Recdirstat". It sits in the shared window frame
-(`gui/kit/frame.*`, see its README): the rail with the app name, Recdirstat's four
-entries and Help; the pages; the strip about the next system; the status line.
+(`gui/kit/frame.*`, see its README): the rail with the app name, Recdirstat's entries
+and Help; the pages; the status line.
 It does these things, each its own rail entry (it opens on the first):
 
 - **The disk**: how full the place for the person's files is, what could be
@@ -10,8 +10,11 @@ It does these things, each its own rail entry (it opens on the first):
 - **Browse**: the folder being looked at, with the map beside it.
 - **Mess**: where the mess is hiding, as a list to tick. "Copy for agent" puts
   the ticked places and the facts about them on the clipboard.
-- **The two systems**: it compares the running system with the other one (the
-  A and B root partitions) and says how alike they are and what differs.
+- **The two roots**: it compares the booted root with the other root (the A and B root
+  partitions) and says how alike they are and what differs. **Only on a computer that
+  has two roots**: recab can be run *and* the kernel command line has `recab.immutable`
+  (an A/B install). On a single-root ("mutable") install there is no such entry, no page,
+  no row about it in Help, and recab is never run.
 
 The window only reads and shows; it deletes and moves nothing. Whoever clears
 the mess does it outside this window; "Copy for agent" hands them the list. Qt 6 Widgets, C++20, CMake.
@@ -24,13 +27,10 @@ folder (172 GiB read in about nine seconds, on a warm disk). The pages for The
 disk, Browse and Mess were built against stand-ins for `lsblk` and
 `recipe storage` (below) and never on a real desktop.
 
-**recab has the comparison now; no real pair of systems has been compared.**
-`recab compare` (tools/recab `760a60b`) answers in the shape written down
-under "What it asks of recab". It was run on two sample trees with its
-`--roots` form, and this window drew that answer; the two-slot form, which
-mounts the other partition, has never run on an A/B system. The stories still
-use `fixtures/recab`, which plays a system from before, a next system and two
-identical ones without a disk.
+**recab compare has only run on sample trees.** It answers in the shape written down
+under "What it asks of recab"; the two-root form, which mounts the other partition, has never
+run on an A/B computer with this window. The stories use `fixtures/recab`, which speaks
+`status` (schema 11) and `compare` without a disk.
 
 ## What a person sees
 ### The disk (the first page)
@@ -48,8 +48,10 @@ identical ones without a disk.
 - **Every partition of this disk**, from `lsblk --json --bytes` (`DISK_GUI_LSBLK`)
   for the disk that holds the home folder (found by its device, else by what is
   mounted at the home folder's filesystem). Which partition is the running
-  system and which the other comes from recab's status (`slots[].device`, or the
-  stand-in's `running.device`/`other.device`). Used and free are `statvfs` at the
+  root and which the other is comes from recab's status (`booted`, `other`) and from where
+  the roots are mounted (`/`, and `other_mount`), or from the last comparison's `device`
+  fields when it was made under the same booted root: "Root A — booted, locked", "Root B —
+  other, unlocked". Used and free are `statvfs` at the
   mount point, so a partition that is not mounted (the other system's) says "not
   mounted, so not read"; when a comparison was kept, the other system's row adds
   what its files took then. Start-up files, swap and the home partition are named
@@ -95,42 +97,36 @@ the person to paste where they choose. Nothing else happens. The map moved
 to Browse; so did "Add to the list".
 
 The rail entry "Mess" carries a badge: how many places of mess are on the list.
-The strip, "The next system holds N changes." with "Finish and restart…", is read from `recab
-status --json` (`DISK_GUI_RECAB`) and shown on every page; when recab cannot be
-read or answers in a shape the strip does not know, there is no strip and no
-error. The button and "Open Recab…" start the Recab app the same way
-(`LEVITATE_APP_SYSTEM`, else `recab-gui`; the frame starts it).
 
 The status line says when the disk was looked at. "Read again" in the status
 line, F5 and Ctrl+R look at the disk again on The disk, Browse and Mess, and ask
-recab again on the two systems, and read the strip again. Coming back to the
-window after a while asks recab again; the disk is only looked at again when
-asked, since that takes a while and drops what was ticked.
+recab again on the two roots. Coming back to the window after a while asks recab
+again; the disk is only looked at again when asked, since that takes a while and
+drops what was ticked.
 
-The fourth entry:
+The fourth entry, only on a computer with two roots:
 
-1. **What is there.** On opening, recab is asked what the two systems are
-   (quick, no password): the page names both and shows two empty frames. If a
-   comparison was kept from before, it is shown instead, with when it was
-   made; when either system has changed since, it says so and offers to
-   compare again. "Open Recab…" starts the Recab window, where changing,
-   updating and going back are done.
-2. **Compare.** "Compare" first shows the shared Before page: both systems are
+1. **What is there.** On opening, `recab status --json` is asked which root is booted
+   (quick, no password): the page names both ("Root A", "Booted — locked"; "Root B",
+   "Other — unlocked") and shows two empty frames. If a comparison was kept from
+   before, it is shown instead, with when it was made; when another root is booted
+   than at that comparison, it says so and offers to compare again. "Open Recab…"
+   starts the Recab window, where the other root is copied and started.
+2. **Compare.** "Compare" first shows the shared Before page: both roots are
    read from start to end, neither is changed, it takes a few minutes, whether the
    administrator's password is asked (it follows the root helper this window
    really uses) and the command that will run. Cancel compares nothing. Then both
-   systems are read from start to end, which takes minutes, and with a root
+   roots are read from start to end, which takes minutes, and with a root
    helper the administrator's password is asked; without one it runs as the person
    and the pages say so (the page before comparing says "no password is asked",
    the frame while it waits says "Waiting"). The page stays: each frame fills as
    its side is read, and Stop ends it.
-3. **How alike they are.** A headline ("The two systems are identical", or
-   "99.9% the same", by room taken), how many files differ, and what the other
-   system is: a copy, the system from before the last change, or the next
-   system with a change that is not started.
-4. **The two systems as blocks, side by side.** Two maps, this system left
+3. **How alike they are.** A headline ("The two roots are identical", or
+   "99.9% the same", by room taken), how many files differ, and which root is
+   booted and which is the other.
+4. **The two roots as blocks, side by side.** Two maps, the booted root left
    and the other right, drawn from one layout: every folder is a block in the
-   same place on both sides, so two systems that are the same look the same.
+   same place on both sides, so two roots that are the same look the same.
    A block that holds files that differ is coloured, with the number of files
    on it: only on this side, different content, or same content with other
    settings. A block where only the other side has something more is outlined
@@ -138,20 +134,20 @@ The fourth entry:
    however little room the difference takes. A click on a block marks it on
    both sides and says whether it is the same in both.
 5. **The list** shows every difference by folder. Files that differ by design
-   (each system names its own partition) are counted apart.
+   (each root names its own partition) are counted apart.
 6. **Copy for agent.** Under the list, one click puts the differences on the
-   clipboard as plain text (the issue and the facts: what the other system is,
+   clipboard as plain text (the issue and the facts: which root is which,
    what is the same, the differences by folder, the biggest ones by name). A
    comparison that failed says why, with a "Copy for agent" button that copies
-   the full error text, as does the page when the two systems could not be read.
+   the full error text, as does the page when the two roots could not be read.
 
 ## Help and the first page
 
 Both are the frame's (`gui/kit/README.md`, "Help" and "The first time"); the window
 adds nothing for them: every link of Help goes to a rail entry (The disk, Browse, Mess,
-The two systems). Help for Recdirstat has the ideas (mess, the two systems) and what it
-can do (see how full the disk is, find what takes the room, use "Copy for agent" on the mess, compare
-the two systems). The first page comes once per person the first time Recdirstat opens
+and The two roots where there is one). Help for Recdirstat has the idea of mess and what it
+can do (see how full the disk is, find what takes the room, use "Copy for agent" on the mess, and on a
+computer with two roots compare them). The first page comes once per person the first time Recdirstat opens
 (never in a picture run). Both stories check them (`../kit/helpstory.*`; pictures `h-help*`,
 `h-help-went`, `h-firstrun`).
 
@@ -199,35 +195,36 @@ Window 1100 x 700 the first time, then the size it had when it closed
 ### The story
 
 `--shots FOLDER` looks, saves pictures, checks expectations and compares the two
-systems with the stand-in. It ends with "all as expected" or says "not as
+roots with the stand-in. It ends with "all as expected" or says "not as
 expected: ..." for each thing that failed, and exits non-zero. It needs no
 display, and no real recab, recipe, lsblk or administrator.
 **`--shots` refuses to start (exit code 2, and a sentence naming what is missing)
 unless every program it could run and every folder it could write is named in the
-environment**: `DISK_GUI_RECAB`, `DISK_GUI_RECIPE`, `DISK_GUI_FILES`,
+environment**: `DISK_GUI_RECAB`, `DISK_GUI_CMDLINE`, `DISK_GUI_RECIPE`, `DISK_GUI_FILES`,
 `DISK_GUI_LSBLK`, `DISK_GUI_ROOTS`, `DISK_GUI_HOME`, `DISK_GUI_ROOT_HELPER` (empty is a
 name), and `HOME` (not your own) and the XDG folders in scratch space (the command
 below names them all). The story runs itself bare to check that.
 
 Every Before page of the shared layout is checked too (comparing): what it says, that
 Cancel leaves everything as it was (nothing compared), and that its button does it.
-Pictures `1-disk`, `2a`..`2f` Browse, `3a-mess`, `3c-mess-told`, `3-picked`, `s1`/`s2`
-the strip, `5-systems`, `5a-before-compare`, `5b-comparing`, `6-compared`,
-`6b-disk-compared`, `h-help*`, `h-firstrun`.
+Pictures `1-disk`, `2a`..`2f` Browse, `3a-mess`, `3c-mess-told`, `3-picked`,
+`5-systems`, `5a-before-compare`, `5b-comparing`, `6-compared`, `6b-disk-compared`,
+`6c-stale`, `h-help*`, `h-firstrun`; on a single root `h-help-one-root` instead of the
+ones about the two roots.
 
 - the window is 1100 x 700, and **every picture** is taken at that size (no page
   may make the window wider or taller); the rail offers The disk, Browse, Mess,
-  The two systems and Help and nothing else; the window opens on The disk; the
-  Mess badge equals the number of places listed, also after a second look; the
-  status line says when the disk was looked at; the strip.
+  The two roots (only with two roots) and Help and nothing else; the window opens on
+  The disk; the Mess badge equals the number of places listed, also after a second
+  look; the status line says when the disk was looked at.
 - **The disk**: the free space and total it names are what `statvfs` says for the
   sample's disk (within 256 MiB, because the disk is shared with other programs
   while the check runs), and the heading follows them; the Known leftovers row is
   the Mess list's figure in the same number of places; Kept by Recipe is what the
   `recipe` stand-in says, and its button starts the Recipe stand-in app; there is
   no row for logs; the partitions are the `lsblk` stand-in's (right disk, the
-  other disk's partition left out, the running system and the other one named
-  from recab's devices, the home partition measured, the unmounted ones "not
+  other disk's partition left out, the booted root and the other root named
+  from recab's status and the mounts, the home partition measured, the unmounted ones "not
   read", sizes); whose room it is adds up to exactly what the scan read; "Look
   again" reads again.
 - **Browse**: starts in the home folder; going in and up; the path; search keeps
@@ -242,32 +239,35 @@ the strip, `5-systems`, `5a-before-compare`, `5b-comparing`, `6-compared`,
 - **Mess**: heading, kinds' words, columns, the panel and every action, "Show in
   Browse" lands on the place, "Tick only what is safe to remove" leaves only
   places that are, and "Copy for agent" puts the ticked places on the clipboard.
-- **The two systems**: the kept comparison, the strip, the password sentence, the
-  comparison itself, and "Copy for agent" copying the differences and starting
-  nothing.
+- **The two roots**: which is booted and which is the other, before and after the
+  comparison; the password sentence; the comparison itself, and "Copy for agent" copying
+  the differences and starting nothing; "Open Recab…" starting the Recab stand-in; the
+  partitions named "Root A — booted, locked" and "Root B — other, unlocked"; a kept
+  comparison going out of date when the other root is booted; a status that fails.
+- **Whether there are two roots at all**: `Window::hasTwoRoots` is checked for every
+  combination (recab runs or not; the command line has `recab.immutable`, has
+  `recab.immutable=value`, lacks it, has only words that contain it, cannot be read).
+  A second run of the story with a command line without it (below) checks that there
+  is no entry, no page, no row in Help, and that the stand-in recab was never run (not
+  even on F5).
 
 The story writes the "never suggest" list of the person (and puts it back at the
 end), so run it with `HOME` and the `XDG_*` folders in scratch space.
 
 ```sh
-A=$PWD/.artifacts/disk-gui; F=$PWD/gui/disk/fixtures; R=$PWD/gui/recab/fixtures
+A=$PWD/.artifacts/disk-gui; F=$PWD/gui/disk/fixtures
 S=/tmp/disk-shots   # all state of the check lives here
 mkdir -p $S/home; $F/make-sample $S/sample
 printf '#!/bin/sh\ntouch "$DISK_STANDIN_SYSTEM_MARK"\n' > $S/system-app; chmod +x $S/system-app
 printf '#!/bin/sh\ntouch "$DISK_STANDIN_RECIPE_MARK"\n' > $S/recipe-app; chmod +x $S/recipe-app
 printf '#!/bin/sh\nprintf %%s "$1" > "$DISK_STANDIN_FILES_MARK"\n' > $S/files-app; chmod +x $S/files-app
-# The strip reads the real recab's shape: a next system with one change.
-export RECAB_STANDIN_STATE=$S/recab-state RECAB_STANDIN_SPEED=0
-$R/recab-real --json prepare
-$R/recab-real --json change install htop --preparation p2 --revision 1
 mkdir -p $S/run; chmod 700 $S/run
 export HOME=$S/home XDG_CONFIG_HOME=$S/home/config XDG_STATE_HOME=$S/home/state \
   XDG_CACHE_HOME=$S/home/cache XDG_DATA_HOME=$S/home/share XDG_RUNTIME_DIR=$S/run
 QT_QPA_PLATFORM=offscreen DISK_GUI_ROOTS=$S/sample DISK_GUI_HOME=$S/sample DISK_GUI_APPARENT=1 \
-  DISK_GUI_RECAB=$F/recab DISK_GUI_ROOT_HELPER= \
-  DISK_STANDIN_SPEED=0 DISK_GUI_KEPT=$S/kept.json \
+  DISK_GUI_RECAB=$F/recab DISK_GUI_ROOT_HELPER= DISK_GUI_CMDLINE=$F/cmdline-ab \
+  DISK_STANDIN_LOG=$S/recab-log DISK_STANDIN_SPEED=0 DISK_GUI_KEPT=$S/kept.json \
   LEVITATE_APP_SYSTEM=$S/system-app DISK_STANDIN_SYSTEM_MARK=$S/system-app-started \
-  DISK_STANDIN_STRIP_RECAB=$R/recab-real \
   DISK_GUI_LSBLK=$F/lsblk DISK_STANDIN_LSBLK_MOUNT=$(df --output=target $S/sample | tail -1) \
   DISK_STANDIN_LSBLK_HOME_SIZE=$(df -B1 --output=size $S/sample | tail -1 | tr -d ' ') \
   DISK_GUI_RECIPE=$F/recipe LEVITATE_APP_RECIPE=$S/recipe-app DISK_STANDIN_RECIPE_MARK=$S/recipe-app-started \
@@ -275,12 +275,9 @@ QT_QPA_PLATFORM=offscreen DISK_GUI_ROOTS=$S/sample DISK_GUI_HOME=$S/sample DISK_
   $A/build/disk-gui --look levitate --shots $S/pics
 ```
 
-The comparison keeps using the Recdirstat stand-in `$F/recab`, which answers `status`
-in the older shape the strip cannot read (schema 3, with the partitions
-`/dev/vda2` and `/dev/vda3` the `lsblk` stand-in knows); that is also the check
-for "no strip". `DISK_STANDIN_STRIP_RECAB` is `recab-real`, used only for the
-strip (`prepare` printed `p2` as the preparation's id in a fresh state). Without the
-strip's two variables, the story says what is missing and fails.
+`$F/cmdline-ab` is a kernel command line with `recab.immutable` (two roots); a second run
+with `DISK_GUI_CMDLINE=$F/cmdline-single` (no `recab.immutable`) is the single-root story.
+Then `DISK_STANDIN_LOG` must not exist at the end: recab was not run.
 
 Without the settings it reads the real home folder and compares nothing.
 
@@ -289,10 +286,10 @@ Without the settings it reads the real home folder and compares nothing.
 | `DISK_GUI_ROOTS` | the folders to read, separated by `:` | the home folder, and `/var/lib/recipe` |
 | `DISK_GUI_HOME` | which folder the home rules apply to | the home folder |
 | `DISK_GUI_APPARENT` | `1`: count each file's length (the sample is made of empty-but-long files) | off |
-| `DISK_GUI_RECAB` | the program asked to compare the two systems | `recab` |
+| `DISK_GUI_RECAB` | the program asked for the roots' status and to compare them | `recab` |
+| `DISK_GUI_CMDLINE` | the kernel command line that is searched for `recab.immutable` | `/proc/cmdline` |
 | `DISK_GUI_ROOT_HELPER` | what runs it as root; empty: run it as the person | `pkexec` |
 | `DISK_GUI_KEPT` | the file the last comparison is kept in | `comparison.json` in the person's cache |
-| `DISK_GUI_OS_RELEASE` | where the running system's name is read | `/etc/os-release` |
 | `DISK_GUI_LSBLK` | the program that lists the disk's partitions, asked `--json --bytes -o ...` | `lsblk` |
 | `DISK_GUI_RECIPE` | the program asked `storage --json` for what Recipe keeps | `recipe` |
 | `DISK_GUI_FILES` | a program started with a folder instead of the desktop's file manager (for checks) | the desktop's own |
@@ -305,24 +302,20 @@ The stand-ins, all in `fixtures/`:
   of the computer it runs on is mistaken for one of the partitions.
   `DISK_STANDIN_LSBLK_FAIL=1` makes it fail.
 - `recipe` answers `storage --json` (`DISK_STANDIN_EARLIER` bytes, default 6 GiB).
-- `recab` reads no disk. `DISK_STANDIN_SYSTEMS` picks its story: `before` (the
-  other system is the one from before the last change; the default), `next`
-  (the other holds a change not started yet), `identical`, or `none` (no second
-  system).
+- `recab` reads no disk and speaks `status --json` (schema 11) and `compare --json
+  --machine-events` only. `DISK_STANDIN_SCENARIO` picks what it says: `normal` (A booted),
+  `booted-b`, `identical` (the two roots hold the same), `failing`. `DISK_STANDIN_LOG`
+  names a file each run appends its arguments to.
+- `cmdline-ab`, `cmdline-single`: kernel command lines with and without `recab.immutable`.
 
 ## What it asks of recab
 
-`recab status --json`, as the Recab window reads it, for what the two
-systems are. From the real recab (schema 7 to 10; recab sends 10 today) it takes the two slots, the
-generation each holds, the preparation's revision and `lifecycle.other`, in
-which recab itself says what the other system is: the next one, the system
-from before, or a copy; the running
-system's name comes from `/etc/os-release`. The slots, their generations and
-the preparation's revision together are the state a comparison was made under;
-under another state it is shown as out of date. The stand-in (schema 3) names
-the releases and the role itself and counts a `revision`.
+`recab status --json` (schema 11), for which root is booted and which is the other:
+`booted`, `other`, `other_mount`. The partitions come from where `/` and `other_mount` are
+mounted, or from the last comparison's `device` fields. A comparison made while another root
+was booted is shown as out of date.
 
-And one command, run as root, that reads both systems and changes neither:
+And one command, run as root, that reads both roots and changes neither:
 
 ```
 recab compare --json --machine-events
@@ -336,8 +329,7 @@ When done it writes one JSON object on its standard output:
 | Field | What |
 |---|---|
 | `schema_version` | `1` |
-| `running`, `other` | each: `slot`, `device`, `files` (files and links, not folders), `bytes` (each hard-linked file once) |
-| `other.role` | `copy` (made as one, nothing changed since), `previous` (the system from before the last change) or `next` (holds a change that is not started) |
+| `running`, `other` | the booted root and the other root, each: `slot`, `device`, `files` (files and links, not folders), `bytes` (each hard-linked file once) |
 | `same` | `files` and `bytes` that are the same in both |
 | `folders` | every folder down to the depth recab chooses (three names below `/`), each with its whole size on both sides: `path`, `running_bytes`, `other_bytes`. The maps are drawn from this |
 | `own` | paths that differ by design, because each system names its own partition; not counted as differences |
@@ -355,17 +347,17 @@ both and set side by side.
 |---|---|
 | `src/scan.*` | reads a folder tree from the disk into memory |
 | `src/mess.*` | the rules, and the finding for something picked by hand |
-| `src/map.*` | the map of blocks, used for the mess and for each of the two systems |
+| `src/map.*` | the map of blocks, used for the mess and for each of the two roots |
 | `src/disk.*` | The disk: measuring free space, reading lsblk's answer, the page, the split of whose room it is |
 | `src/browse.*` | Browse |
 | `src/pages.*` | the Mess list and its "Copy for agent" |
 | `src/rules.*` | the places the person said never to suggest (their config folder) |
-| `src/systems.*` | the comparison of the two systems: what recab answered, and its page |
+| `src/systems.*` | the comparison of the two roots: what recab answered, and its page |
 | `src/window.*` | the frame, its four entries and the flows between them |
 | `src/shots.*` | the picture mode and flow check |
 | `fixtures/` | the stand-ins (lsblk, recipe, recab) and the sample home folder |
 | `data/` | the menu entry |
-| `../kit/` | the frame (rail, strip, status line), shared widgets, the page base, the work page, the command runner |
+| `../kit/` | the frame (rail, status line), shared widgets, the page base, the command runner |
 
 ## Not done
 
@@ -382,17 +374,15 @@ both and set side by side.
   btrfs layouts were not tried (the stand-in has plain partitions); an unlisted
   device shows by its label or filesystem. The lsblk columns `MOUNTPOINTS`
   (util-linux 2.37 or later) and a failing lsblk were not run against a real one.
-- The strip is read at start and on refresh; not while a change is made elsewhere
-  until the window is entered again.
 - Choosing the other entry while a comparison reads is allowed (the page keeps
   filling).
 - Checked only offscreen, with stand-ins; not on a real desktop, and the
   link buttons, the Recipe app and the Recab app were not started for real.
-- A comparison of a real pair of systems: `recab compare` has only run on
+- A comparison of a real pair of roots: `recab compare` has only run on
   sample trees. It says no byte progress, so the bar cannot say how far it is.
 - The kept comparison is one file in the person's cache
   (`DISK_GUI_KEPT`); nothing checks that it belongs to this computer's disks
-  beyond recab's revision number.
+  beyond which root was booted.
 - Seeing what changed inside a file whose content differs; searching the list of
   differences.
 - Recipe's own folders are left alone because Recipe has no command that clears
@@ -400,8 +390,8 @@ both and set side by side.
   --clear-earlier` for earlier versions). When it has one, Recdirstat can offer to clear them through
   Recipe. The real `recipe storage --json` was not run here: the shape (`earlier_bytes`,
   `earlier_generations`) was read from `tools/recipe` and `gui/recipe`.
-- Mess inside the systems. The map reads only the home folder and
-  `/var/lib/recipe`; the two systems are compared with each other, not searched
+- Mess inside the roots. The map reads only the home folder and
+  `/var/lib/recipe`; the two roots are compared with each other, not searched
   for leftovers.
 - In an image: `distro/builder/os-recipes/desktop-apps.rhai` builds and installs it with
   the other two, and the contract's `DESKTOP_APPS` lists it; no image with it has been built.

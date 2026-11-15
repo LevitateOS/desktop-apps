@@ -1,14 +1,14 @@
 # LevitateOS Desktop Apps
 
-This repository contains the desktop applications and shared components used by LevitateOS. The apps provide graphical interfaces for software management, system lifecycle management, and disk inspection.
+This repository contains the desktop applications and shared components used by LevitateOS. The apps provide graphical interfaces for software management, the two roots, and disk inspection.
 
 ## Applications
 
 | Directory | Program | Purpose |
 |---|---|---|
 | [`recipe/`](recipe/) | `recipe-gui` | Browse software and recipes, inspect what software may use, and install, update, or remove software. |
-| [`recab/`](recab/) | `recab-gui` | View and manage the running and next system, including updates, restarts, recovery, and history. |
-| [`disk/`](disk/) | `disk-gui` | Inspect disk usage, browse files and known leftovers, and compare system partitions. |
+| [`recab/`](recab/) | `recab-gui` | Show the two roots, A and B (the booted root is locked, the other is unlocked); make the other root a copy of the booted root, start it at the next boot, restart. |
+| [`disk/`](disk/) | `disk-gui` | Inspect disk usage, browse files and known leftovers, and, on an A/B computer, compare the two roots. |
 
 The three apps share widgets and window components in [`kit/`](kit/). Each app has its own README with further details, configuration, and checks.
 

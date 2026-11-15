@@ -25,14 +25,12 @@ qt_add_executable(disk-gui
     ../kit/words.cpp
     ../kit/page.cpp
     ../kit/refresh.cpp
-    ../kit/work.cpp
     ../kit/before.cpp
     ../kit/frame.cpp
     ../kit/windowsize.cpp
     ../kit/help.cpp
     ../kit/firstrun.cpp
     ../kit/helpstory.cpp
-    ../kit/nextsystem.cpp
 )
 target_include_directories(disk-gui PRIVATE ../kit)
 target_compile_options(disk-gui PRIVATE -Wall -Wextra)

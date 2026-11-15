@@ -4,6 +4,7 @@
 
 #include <QDesktopServices>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -14,6 +15,27 @@
 #include <QUrl>
 
 // ---------------------------------------------------------------- The sources
+
+// Plain words, with Recipe's own `recipe source` commands. "The recipes root" is a folder Recipe
+// reads: the folder of a source. The ones it reads now are named, so that an agent can be pointed at one.
+QString SourcesPage::ownRecipesWords(const Catalog &catalog)
+{
+    QStringList folders;
+    for (const Origin &origin : catalog.origins)
+        if (!origin.remote() && !origin.path.isEmpty())
+            folders << origin.path;
+    const QString reads = folders.isEmpty() ? tr("Recipe reads no folder on this computer yet.")
+                                            : tr("The folders of recipes Recipe reads now: %1.").arg(folders.join(tr(", ")));
+    return tr("An agent that writes or fixes recipes must be pointed at the recipes root: the folder whose recipes Recipe really "
+              "reads. %1\n\n"
+              "You can make a folder or a repository of your own and put your recipes in it, one .rhai file for each. Then tell "
+              "Recipe to read it: press \"Add my recipe folder…\" here, or run `recipe source add --path ~/my-recipes` "
+              "(for a repository on the network, `recipe source add https://…`). `recipe source list` shows what Recipe reads, "
+              "and `recipe source remove NAME` stops reading one.\n\n"
+              "It ends here: when you have added the folder, it is listed below with the number of recipes it holds, and Browse shows "
+              "them under it. Nothing is installed until you ask.")
+        .arg(reads);
+}
 
 void SourcesPage::show(const Catalog &catalog)
 {
@@ -40,6 +62,22 @@ void SourcesPage::show(const Catalog &catalog)
     });
     header->addWidget(more, 0, Qt::AlignBottom);
     column->addLayout(header);
+
+    // Teaching: how to use recipes of one's own, with one's own agent.
+    auto *teach = new Panel;
+    teach->column()->addWidget(strong(tr("Use your own recipes, and your own agent")));
+    teach->column()->addWidget(text(ownRecipesWords(catalog), true));
+    auto *teachRow = new QHBoxLayout;
+    teachRow->addStretch();
+    auto *folder = new QPushButton(tr("Add my recipe folder…"));
+    connect(folder, &QPushButton::clicked, this, [this] {
+        const QString where = QFileDialog::getExistingDirectory(this, tr("The folder that holds your recipes"), QDir::homePath());
+        if (!where.isEmpty())
+            emit add(where);
+    });
+    teachRow->addWidget(folder);
+    teach->column()->addLayout(teachRow);
+    column->addWidget(teach);
 
     auto *inner = new QWidget;
     auto *list = new QVBoxLayout(inner);
@@ -112,7 +150,7 @@ void SourcesPage::show(const Catalog &catalog)
             row->addWidget(text(problem.problem, true), 1);
             auto *read = new QPushButton(tr("Read the file"));
             const QString path = problem.path;
-            connect(read, &QPushButton::clicked, this, [path] { QDesktopServices::openUrl(QUrl::fromLocalFile(path)); });
+            connect(read, &QPushButton::clicked, this, [this, path] { emit viewFile(path); });
             row->addWidget(read, 0, Qt::AlignTop);
             problems->column()->addLayout(row);
         }

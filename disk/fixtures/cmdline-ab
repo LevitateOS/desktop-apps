@@ -1,0 +1,1 @@
+BOOT_IMAGE=/levitate-a/vmlinuz root=PARTUUID=0a1b2c3d-02 ro recab.immutable quiet

@@ -29,77 +29,32 @@ HelpText systemText()
     HelpText t;
     t.name = QObject::tr("Recab");
     t.purpose = QObject::tr(
-        "Recab is where you change and update this computer's locked system. The running system cannot be "
-        "changed while it runs, so a change is made in a second system beside it, and takes effect when you "
-        "restart into it.");
+        "Recab shows the two roots of this computer, A and B. The booted root is locked; the other root is unlocked, "
+        "and changes are made there.");
     t.never = QObject::tr(
-        "It never starts a change or a restart by itself. Before one, it says what will happen and waits for you.");
-    // The 15 minutes are recab's own wait for start-up (`recab trial`, its default timeout), as Overview says.
+        "It never copies a root or restarts the computer by itself. Before a copy, it says what will be overwritten and "
+        "waits for you.");
     t.ideas = {
-        {QObject::tr("The running system and the next system"),
-         QObject::tr("The running system is locked: it cannot be changed while it runs."),
-         QObject::tr("A change goes into the next system, a copy made beside it when you make a change. It takes "
-                     "effect only after you restart into it. Your files are the same in both: home is shared by both "
-                     "systems."),
-         true},
-        {QObject::tr("Finishing"),
-         QObject::tr("Finishing checks and closes the next system, so that it can be started."),
-         QObject::tr("Until it is finished, a restart cannot start it. On the other pages, the strip under them has "
-                     "“Finish and restart…”, which goes to “The next system”."),
-         false},
-        {QObject::tr("The restart on trial"),
-         QObject::tr("After you restart into the next system it is on trial: it is not kept yet."),
-         QObject::tr("recab keeps it by itself once start-up has finished with nothing failed. It waits up to 15 "
-                     "minutes for that. If start-up fails, the computer goes back to the system from before by "
-                     "itself. You need not wait: Overview has “Keep it now” and “Go back now…”."),
-         true},
-        {QObject::tr("Coming back"),
-         QObject::tr("The system from before stays as your way back."),
-         QObject::tr("After a new system is kept, the system from before stays beside it until you make the next "
-                     "change, which uses its place. Going back restarts into it; “Getting back” has the button."),
+        {QObject::tr("The booted root and the other root"),
+         QObject::tr("The booted root is locked: it cannot be changed while it runs."),
+         QObject::tr("The other root is unlocked and mounted for changes. Start the other root and the two swap: it "
+                     "becomes the locked one."),
          true}};
     t.how = {
-        {QObject::tr("Install software"),
-         QObject::tr("Software is installed with Recipe. “Install software…” starts Recipe, where what you install for "
-                     "this computer goes into the next system."),
-         QStringLiteral("next"), QObject::tr("The next system")},
-        {QObject::tr("Finish the next system and restart into it"),
-         QObject::tr("Choose “Finish…”, then “Restart now” or “Start it at the next restart”. Each shows what will "
-                     "happen and waits for you."),
-         QStringLiteral("next"), QObject::tr("The next system")},
-        {QObject::tr("Keep the new system, or go back"),
-         QObject::tr("Getting back has three rows: go back to the system from before, keep the running system, and "
-                     "cancel a restart that is set."),
-         QStringLiteral("back"), QObject::tr("Getting back")},
-        {QObject::tr("Take a newer release"),
-         QObject::tr("When recab knows of a newer release, Overview says so, and “See it…” opens the page that follows "
-                     "it from the check to the next system. “Check for a new release” asks recab. Whether one is found "
-                     "depends on recab being set up with a place to get releases from. When recab will not merge a "
-                     "release by itself, the page offers what recab offers: the original release to adopt, a package to "
-                     "reproduce, or a failed system to replace. Each says what will happen first."),
-         QStringLiteral("overview"), QObject::tr("Overview")},
-        {QObject::tr("See what has happened"),
-         QObject::tr("History lists what recab recorded: when, what, who and how it ended. “Save as a file…” keeps it "
-                     "as text."),
-         QStringLiteral("history"), QObject::tr("History")}};
+        {QObject::tr("Start over from the booted root"),
+         QObject::tr("“Make the other root a copy of the booted root” overwrites the other root, after asking."),
+         QString(), QString()},
+        {QObject::tr("Start the other root"),
+         QObject::tr("“Start the other root at the next boot” picks it once; “Restart now” restarts the computer."),
+         QString(), QString()}};
     t.wrong = {
         {QObject::tr("A run stopped"),
          QObject::tr("The page says why, and its output ends with the reason. “Copy for agent” puts the whole output on "
                      "the clipboard, to paste into your own agent."),
-         QString(), QString()},
-        {QObject::tr("The desktop does not start"),
-         QObject::tr("Getting back has the steps: which system to pick in the list at start-up, and how to make that "
-                     "choice stay. “Save as a file…” keeps them as text. A next system that fails to start properly is "
-                     "left by itself: the computer restarts into the system it came from."),
-         QStringLiteral("back"), QObject::tr("Getting back")},
-        {QObject::tr("recab says a system needs recovery"),
-         QObject::tr("Overview gives recab's own reason and lists the steps recab offers, each with its own verdict. "
-                     "While recab says a system needs recovery, nothing else is offered. A restart or a command that "
-                     "failed says which step had been made before it."),
-         QStringLiteral("overview"), QObject::tr("Overview")}};
+         QString(), QString()}};
     t.others = {{Frame::Recipe, QObject::tr("Find, install, update and remove software.")},
-                {Frame::Recdirstat, QObject::tr("See how full the disk is, find mess, and compare the two "
-                                          "systems.")}};
+                {Frame::Recdirstat, QObject::tr("See how full the disk is and find mess, and compare the two roots where "
+                                          "there are two.")}};
     return t;
 }
 
@@ -130,7 +85,7 @@ HelpText recipeText()
          QObject::tr("Software goes either for you alone or for the whole computer."),
          QObject::tr("“For me” goes into your own folder, takes effect at once, is only for you and asks for no "
                      "password. “For this computer” is for everyone and asks for the administrator's password; on a "
-                     "locked computer it goes into the next system and takes effect after a restart. The page before an "
+                     "locked computer it goes into the other root and takes effect once that root is started. The page before an "
                      "install says which place, and lets you choose when both are open."),
          true}};
     t.how = {
@@ -167,10 +122,10 @@ HelpText recipeText()
                      "keeping at a version, sources, fetching and clearing have a page of their own with Stop; if one does "
                      "not finish it shows Recipe's message and “Try again”."),
          QString(), QString()}};
-    t.others = {{Frame::Recab, QObject::tr("Change and update the locked system, finish and restart into it, and go "
-                                            "back.")},
+    t.others = {{Frame::Recab, QObject::tr("Make the other root a copy of the booted root, start it at the next boot, and "
+                                            "restart.")},
                 {Frame::Recdirstat, QObject::tr("See how full the disk is, find mess and set it aside, and compare the two "
-                                          "systems.")}};
+                                          "roots where there are two.")}};
     return t;
 }
 
@@ -181,7 +136,7 @@ HelpText diskText()
     HelpText t;
     t.name = QObject::tr("Recdirstat");
     t.purpose = QObject::tr(
-        "Recdirstat shows how full the place for your files is, where the mess is hiding, and how alike the two systems are. "
+        "Recdirstat shows how full the place for your files is, where the mess is hiding, and, where the computer has two roots, how alike they are. "
         "What belongs to Recipe is listed, but Recdirstat leaves it alone.");
     t.never = QObject::tr(
         "It changes nothing on your disk: it only reads and shows.");
@@ -192,14 +147,6 @@ HelpText diskText()
                      "places you pick yourself. The rules look only at your home folder and Recipe's own folders, which are "
                      "listed but never handed over. “Never suggest this” keeps a "
                      "place off the list; “Suggest it again” on Mess puts it back."),
-         true},
-        {QObject::tr("The two systems"),
-         QObject::tr("A locked computer keeps two systems: the running one and the other beside it."),
-         QObject::tr("“The two systems” reads both from start to end, which takes minutes, and changes neither. "
-                     "If the other system can only be read by the administrator, it asks for the administrator's "
-                     "password first. It says how alike they are and which folders "
-                     "differ. Changing, updating and going back are done in "
-                     "Recab."),
          true}};
     t.how = {
         {QObject::tr("See how full the disk is"),
@@ -214,12 +161,13 @@ HelpText diskText()
          QObject::tr("Tick the places, then choose “Copy for agent”, which puts the ticked places and the facts about "
                      "them on the clipboard, to paste into your own agent."),
          QStringLiteral("mess"), QObject::tr("Mess")},
-        {QObject::tr("Compare the two systems"),
-         QObject::tr("Choose “Compare”. A page says first that both systems are read and that it takes minutes."),
-         QStringLiteral("systems"), QObject::tr("The two systems")}};
+        {QObject::tr("Compare the two roots"),
+         QObject::tr("On a computer with two roots, choose “Compare”. A page says first that both roots are read and that "
+                     "it takes minutes."),
+         QStringLiteral("systems"), QObject::tr("The two roots")}};
     t.others = {{Frame::Recipe, QObject::tr("Find, install, update and remove software.")},
-                {Frame::Recab, QObject::tr("Change and update the locked system, finish and restart into it, and go "
-                                            "back.")}};
+                {Frame::Recab, QObject::tr("Make the other root a copy of the booted root, start it at the next boot, and "
+                                            "restart.")}};
     return t;
 }
 

@@ -1,0 +1,4 @@
+#!/bin/sh
+# A stand-in for pkexec: runs the command as it is, saying it has the
+# administrator's rights (what the stand-in recab checks for `root-only`).
+RECAB_STANDIN_ROOT=1 exec "$@"

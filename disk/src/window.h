@@ -1,5 +1,6 @@
 // The one window. Four things to look at: the disk, Browse, the mess, the two
-// systems.
+// roots. The last only on a computer that has two roots (recab is there and the
+// kernel command line has `recab.immutable`).
 #pragma once
 
 #include "before.h"
@@ -22,7 +23,6 @@ class BrowsePage;
 class DiskPage;
 class Frame;
 class MessPage;
-class NextSystem;
 class QStackedWidget;
 class QTimer;
 class Refresher;
@@ -48,7 +48,12 @@ public:
 
     // The page that says what will happen before it does.
     BeforePage *beforePage() const { return before_; }
+    // Null on a computer without two roots.
     SystemsPage *systemsPage() const { return systems_; }
+    // Whether this computer has two roots: recab can be run, and the kernel was
+    // started with `recab.immutable`. `cmdline` is the kernel command line.
+    static bool hasTwoRoots(const QString &recab, const QString &cmdline);
+    bool twoRoots() const { return systems_ != nullptr; }
     bool showingBefore() const;
 
     // The two systems: the page and the comparison.
@@ -85,10 +90,6 @@ public:
     bool showingBrowse() const;
     bool showingMess() const;
     bool showingSystems() const;
-    // The strip is read with the recab program the window has. For a check
-    // that must feed it a recab of another shape (the comparison stand-in
-    // answers `status` in an older shape), this reads it from another program.
-    void readStripFrom(const QString &recab);
 
 private:
     enum class Job { None, Comparing };
@@ -108,13 +109,13 @@ private:
     void keep();
     void recall();
     void openFolder(const QString &path);
-    // The Recab app: from the strip's button and from "Open Recab…".
+    // The Recab app: from "Open Recab…".
     void openSystem();
     // The rail entry the page belongs to.
     QString entryOf(QWidget *page) const;
 
     QStringList roots_;
-    QString home_, recab_, rootHelper_, osRelease_, kept_, lsblk_, recipe_, files_;
+    QString home_, recab_, rootHelper_, kept_, lsblk_, recipe_, files_;
     bool apparent_;
 
     Scanner *scanner_ = nullptr;
@@ -143,7 +144,6 @@ private:
     bool compared_ = false;
 
     Frame *frame_;
-    NextSystem *next_;
     QStackedWidget *stack_;
     DiskPage *disk_;
     BrowsePage *browse_;

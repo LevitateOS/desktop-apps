@@ -8,11 +8,14 @@ install as a stream of events. Nothing is downloaded, built or installed.
 It tells the places software can be in apart the way the real `recipe` does
 (tools/recipe, `system_route` and `default_package_root`):
 
-  recipe --system install|update|remove NAME   the system route: the change goes
-                                               into the next system (recab); the
-                                               running system is not touched
-  recipe --system installed --json             what recab's `change list` answers:
-                                               {active, prepared, preparation, activation}
+  recipe --system install|update|remove NAME   the system route. On an A/B system the booted root is
+                                               locked and the change is written into the OTHER root;
+                                               it prints {action, package, packages, other_root,
+                                               other_mount, running_root, active_now: false,
+                                               in_other_root}. Without A/B it is an ordinary store.
+  recipe --system installed --json             on A/B: {booted: {root, packages}, other: {root,
+                                               mount, packages}, not_done: [{package, error}]};
+                                               without A/B: the plain {packages, profile}
   recipe ... --package-root DIR                one explicit store (installed.json)
   recipe ...                                   the person's own store (installed-me.json)
 
@@ -20,10 +23,14 @@ Environment:
   RECIPE_STANDIN_STATE    folder for the state file (default: a folder in /tmp)
   RECIPE_STANDIN_LOG      file each invocation's arguments are appended to, one JSON
                           line each (default: invocations.log in the state folder)
-  RECIPE_STANDIN_PREPARED 1: the reader may read `prepared` (real recipe: only root can);
-                          otherwise it is null, as for a person
-  RECIPE_RECAB_BIN        as the real recipe: the recab the system route runs; the stand-in
-                          prepares and records the change in it, so the strip can be read
+  RECIPE_STANDIN_AB       0: `--system` is a system with one root (plain answers, no other root)
+  RECIPE_STANDIN_NOT_DONE "NAME:error text": `--system installed` lists that system change as
+                          not done (wiped by `recab copy`, writing it again failed)
+  RECIPE_STANDIN_HOST_LIBC  this system's C library, as `recipe info` says it (default glibc)
+  RECIPE_STANDIN_LINGER   seconds the command stays alive after its last event (`done`), as a
+                          recipe that tears its sandbox down slowly does
+  RECIPE_STANDIN_INFO     nofile: `recipe info` does not print the Recipe: line
+  RECIPE_STANDIN_SLOW_READS  seconds `list`, `installed` and `updates` take before they answer
   RECIPE_STANDIN_SPEED    time factor for an install; 0 runs it at once (default 1)
   RECIPE_STANDIN_STOP_AT  "name:hook": stay in the middle of that step forever
   RECIPE_STANDIN_REFUSE_NEW  a recipe whose install (not yet installed) the sandbox refuses,
@@ -59,7 +66,10 @@ STATE_DIR = os.environ.get("RECIPE_STANDIN_STATE") or "/tmp/recipe-standin-%d" %
 STATE = os.path.join(STATE_DIR, "installed.json")  # main() picks the store the arguments name
 SYSTEM = os.path.join(STATE_DIR, "system.json")
 ME = os.path.join(STATE_DIR, "installed-me.json")
-PREPARED_VISIBLE = os.environ.get("RECIPE_STANDIN_PREPARED") == "1" or os.getuid() == 0
+AB = os.environ.get("RECIPE_STANDIN_AB", "1") != "0"
+HOST_LIBC = os.environ.get("RECIPE_STANDIN_HOST_LIBC", "glibc")
+LINGER = float(os.environ.get("RECIPE_STANDIN_LINGER", "0"))
+SLOW_READS = float(os.environ.get("RECIPE_STANDIN_SLOW_READS", "0"))
 STORE_ROOT = "/var/lib/recipe"  # the profile named in answers
 SPEED = float(os.environ.get("RECIPE_STANDIN_SPEED", "1"))
 STOP_AT = os.environ.get("RECIPE_STANDIN_STOP_AT", "")
@@ -213,13 +223,31 @@ def recipes():
     return found
 
 
+RECIPE_TEXT = """// the stand-in's recipe for %(name)s
+/* what a recipe says about itself */
+const ABOUT = #{
+    kind: "tool",
+    title: "%(name)s",
+    libc: ["glibc"],
+};
+
+fn install(ctx) {
+    let programs = 3;
+    if programs > 2 {
+        print("putting the files in place");
+    }
+    return true;
+}
+"""
+
+
 def recipe_file(name):
     """The recipe's file, as the real `list --json` names it: made here so there is one to open."""
     path = os.path.join(STATE_DIR, "recipes", name + ".rhai")
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as out:
-            out.write("// the stand-in's recipe for %s\n" % name)
+            out.write(RECIPE_TEXT % {"name": name})
     return path
 
 
@@ -341,6 +369,7 @@ def play(item, refuse=None):
                     emit(event="failed", recipe=name, hook=hook,
                          reason="connection refused by the sandbox",
                          refused={"endpoint": refuse, "declared": item["needs"]["network"]})
+                    linger()
                     sys.exit(1)
                 emit(event="fetch", recipe=name, source=next(iter(item["sources"])),
                      bytes=total * part // 8, total=total)
@@ -409,6 +438,7 @@ def install(name, update_only=False):
     record("update" if update_only else "install", name, current["version"] if current else None, item["version"],
            remote_source(name))
     emit(event="done", recipe=name)
+    linger()
 
 
 def kept_of(item):
@@ -504,86 +534,91 @@ def updates():
 
 
 # ---------------------------------------------------------------- the system route
-# `recipe --system ...` hands the change to recab, which puts it into the next
-# system. State: what the running system holds (`active`), what the next one will
-# (`prepared`, null until a change is made) and the changes made in it.
+# `recipe --system ...` on an A/B system: the booted root is locked, the other root is
+# unlocked and is the only one written. State: what each root holds, by name and version.
+
+OTHER_MOUNT = "/run/recab/other"
+
 
 def system_state():
     if not os.path.exists(SYSTEM):
-        # Two programs the running system came with, at the versions it was built with.
-        write(SYSTEM, {"active": {"gimp": "3.0.4", "element": "1.12.3"}, "prepared": None, "changes": []})
+        # Two programs the running system came with; the other root starts as a copy of it.
+        both = {"gimp": "3.0.4", "element": "1.12.3"}
+        write(SYSTEM, {"booted": {"root": "A", "packages": dict(both)}, "other": {"root": "B", "packages": dict(both)}})
     return read(SYSTEM, None)
 
 
-def receipt(packages):
-    """The selection as recipe's `system::Receipt` has it (tools/recipe/src/system.rs)."""
-    return {"schema_version": 1, "packages": {
-        name: {"name": name, "version": version, "recipe": "/usr/share/recipe/recipes/%s.rhai" % name,
-               "recipe_digest": "sha256:" + "0" * 64, "architecture": "x86_64", "target": "linux",
-               "dependencies": [], "files": {}}
-        for name, version in sorted(packages.items())}}
+def summary(packages):
+    """The packages as `recipe --system installed --json` lists them (system_route.rs `summary`)."""
+    return [{"name": name, "version": version, "recipe": "/usr/share/recipe/recipes/%s.rhai" % name,
+             "recipe_digest": "sha256:" + "0" * 64, "dependencies": []}
+            for name, version in sorted(packages.items())]
+
+
+def not_done():
+    """System changes wiped from the other root whose writing again failed (RECIPE_STANDIN_NOT_DONE)."""
+    word = os.environ.get("RECIPE_STANDIN_NOT_DONE", "")
+    if not word:
+        return []
+    package, _, error = word.partition(":")
+    return [{"package": package, "error": error or "the recipe failed; nothing was written to the other root"}]
 
 
 def system_view():
-    """What `recab change list` answers (tools/recab/src/change.rs `changes()`): the running
-    system's selection, the next system's only for a reader that may read it (root), the next
-    system's state with its changes, and a fixed sentence."""
     state = system_state()
-    preparation = None
-    if state["changes"]:
-        preparation = {"id": "p2", "slot": "B", "source_slot": "A", "source_generation": "g1",
-                       "revision": 1 + len(state["changes"]), "operation": "synchronize", "phase": "prepared",
-                       "completed_steps": 3, "failure": None, "synchronized": True, "synchronization": None,
-                       "finalization": None, "change": None, "last_change": None, "changes": state["changes"]}
-    prepared = receipt(state["prepared"]) if state["prepared"] is not None and PREPARED_VISIBLE else None
-    return {"active": receipt(state["active"]), "prepared": prepared, "preparation": preparation,
-            "activation": "pending reboot for prepared changes"}
-
-
-def recab_record(action, name):
-    """The change is made in recab too when the story names one, so the strip can be read."""
-    binary = os.environ.get("RECIPE_RECAB_BIN")
-    if not binary:
-        return
-
-    def run(*args):
-        done = subprocess.run([binary, *args], capture_output=True, text=True)
-        if done.returncode:
-            fail("recab: " + (done.stderr.strip() or "failed"))
-        return done.stdout
-
-    preparation = json.loads(run("status", "--json")).get("preparation")
-    if not preparation:
-        run("--json", "prepare")
-        preparation = json.loads(run("status", "--json"))["preparation"]
-    run("--json", "change", action, name, "--preparation", preparation["id"], "--revision", str(preparation["revision"]))
+    return {"booted": {"root": state["booted"]["root"], "packages": summary(state["booted"]["packages"])},
+            "other": {"root": state["other"]["root"], "mount": OTHER_MOUNT, "packages": summary(state["other"]["packages"])},
+            "not_done": not_done()}
 
 
 def system_change(action, name):
     state = system_state()
-    held = state["prepared"] if state["prepared"] is not None else state["active"]
-    if action in ("update", "remove") and name not in held:
-        fail("package is not selected in that system")
-    if action == "install" and name in held:
-        fail("%s is already selected in the next system" % name)
+    other = state["other"]["packages"]
+    if action in ("update", "remove") and name not in other:
+        fail("%s is not installed in the other root" % name)
+    if action == "install" and name in other:
+        fail("%s is already in the other root" % name)
     if action != "remove":
         item = recipe(name)
         order = [recipe(dep) for dep in item["build_deps"]] + [item]
         emit(event="plan", recipes=[{"name": each["name"], "steps": steps_of(each)} for each in order])
         for each in order:
             play(each)
-    pause(0.4)
-    recab_record(action, name)
-    prepared = dict(held)
-    if action == "remove":
-        del prepared[name]
+        # As the real recipe: the producer's own last event comes before the other root is written.
+        emit(event="done", recipe=name)
+        pause(0.6)
+        other[name] = item["version"]
     else:
-        prepared[name] = item["version"]
-    state["prepared"] = prepared
-    state["changes"].append({"id": "c%d" % (len(state["changes"]) + 2), "action": action, "package": name,
-                             "unix_time": int(time.time()), "actor": None})
+        pause(0.4)
+        del other[name]
     write(SYSTEM, state)
-    emit(event="done", recipe=name)
+    print(json.dumps({"action": action, "package": name, "packages": [name],
+                      "other_root": state["other"]["root"], "other_mount": OTHER_MOUNT,
+                      "running_root": state["booted"]["root"], "active_now": False,
+                      "in_other_root": name in other}))
+    linger()
+
+
+def linger():
+    """The command stays alive after its last event, as a recipe that tears its sandbox down slowly does."""
+    if LINGER > 0:
+        time.sleep(LINGER)
+
+
+def info(name):
+    """`recipe info`: the file Recipe runs for the entry, and the C library line where the recipe declares one."""
+    item = recipe(name)
+    print("Name:        %s" % item["name"])
+    print("Version:     %s" % item["version"])
+    print("Description: %s" % item["description"])
+    if os.environ.get("RECIPE_STANDIN_INFO") != "nofile":  # nofile: `info` does not say which file it is
+        print("Recipe:      %s" % recipe_file(item["name"]))
+    libc = item["about"].get("libc")
+    if libc:
+        loader = "/lib64/ld-linux-x86-64.so.2" if HOST_LIBC == "glibc" else "/lib/ld-musl-x86_64.so.1"
+        print("C library:   its build is linked against %s; this system's C library is %s (the %s loader %s)"
+              % (" or ".join(libc), HOST_LIBC, HOST_LIBC, loader))
+    print("Runs:        on the host (it starts no program)")
 
 
 def log(args, route):
@@ -600,6 +635,10 @@ def main(args):
     global STATE, PROFILE, MACHINE_EVENTS
     system = "--system" in args
     root = args[args.index("--package-root") + 1] if "--package-root" in args else None
+    if system and not AB:
+        # One root, the running one: system scope is the ordinary store, and the answers are plain.
+        root = os.path.join(STATE_DIR, "one-root")
+        STATE = os.path.join(STATE_DIR, "installed-one-root.json")
     MACHINE_EVENTS = "--machine-events" in args
     log(args, "system" if system else "me" if root is None else "store")
     if root is None and not system:
@@ -620,15 +659,21 @@ def main(args):
     command = words[0] if words else ""
     if command in ("install", "update", "remove", "go-back", "hold", "unhold") and len(words) == 2:
         words[1] = words[1].split(":", 1)[-1]  # SOURCE:NAME; the stand-in's names are unique
-    if system:
+    if system and AB:
         if command == "installed":
+            if SLOW_READS > 0:
+                time.sleep(SLOW_READS)
             print(json.dumps(system_view()))
         elif command in ("install", "update", "remove") and len(words) == 2:
             system_change(command, words[1])
         else:
             fail("--system supports install, update, remove, installed and isinstalled")
         return
-    if command == "list":
+    if command in ("list", "installed", "updates") and SLOW_READS > 0:
+        time.sleep(SLOW_READS)
+    if command == "info" and len(words) == 2:
+        info(words[1])
+    elif command == "list":
         # A recipe that cannot be read is named as `list --json` does: its path and why. One appears
         # once a second source is added, so the Sources page has something to show.
         problems = [{"path": os.path.join(STATE_DIR, "recipes", "yazi.rhai"),

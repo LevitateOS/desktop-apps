@@ -1,402 +1,146 @@
 #!/usr/bin/env python3
-"""A stand-in for `recab`, for running recab-gui from a checkout.
+"""A stand-in for recab, for running recab-gui from a checkout. It speaks the
+CLI the window uses and nothing else:
 
-It plays the lifecycle in recab's REQUIREMENTS 0.3.0 against a small state
-file: the running system stays as it is; the other place holds the system from
-before until a change is asked for, then becomes the next system, which
-collects changes and an update, is finished, and is restarted into. Nothing on
-this machine is read or changed.
+  recab status --json
+  recab copy
+  recab boot-other [--cancel] --json
 
-`reboot` beside this file is the same program: the restart that judges a trial.
-`make-change nvidia|ssh|fix-failed` makes a change in the next system, for the
-stories (the way a person's own tool would).
+and answers as tools/recab does (schema 11, docs/status.schema.json). It reads
+and writes no disk: its state is one JSON file, RECAB_STANDIN_STATE, made from
+RECAB_STANDIN_SCENARIO the first time, so `copy` and `boot-other` change what
+`status` says next.
 
-Environment:
-  RECAB_STANDIN_STATE        folder for the state file (default: a folder in /tmp)
-  RECAB_STANDIN_DISTRO       LevitateOS (default) or AcornOS
-  RECAB_STANDIN_SPEED        time factor for long steps; 0 runs them at once (default 1)
-  RECAB_STANDIN_STOP_AT      "change": stay in the middle of making a change forever
-                             (and write `stopped-at-change` in the state folder when it does)
-  RECAB_STANDIN_FAIL_TRIALS  how many restarts into the next system fail, read
-                             when the state file is first written (default 0)
+RECAB_STANDIN_SCENARIO:
+  normal        A is booted and the boot default; B is mounted and can be started
+  booted-b      B is booted and the boot default; A is the other root
+  once          B is picked for the next boot, once
+  not-mounted   the other root is not mounted
+  not-bootable  a copy into the other root did not finish: it cannot be started
+  no-default    the boot default names neither root
+  copy-failing  as normal, but `copy` stops half way and leaves B not startable
+  root-only     as normal, but `status` is refused unless RECAB_STANDIN_ROOT=1
+                (what the root helper stand-in sets)
+RECAB_STANDIN_SPEED scales the waiting (0: none).
 """
-import datetime
 import json
 import os
 import sys
 import time
 
-STATE_DIR = os.environ.get("RECAB_STANDIN_STATE") or "/tmp/recab-standin-%d" % os.getuid()
-STATE = os.path.join(STATE_DIR, "state.json")
+SCENARIO = os.environ.get("RECAB_STANDIN_SCENARIO", "normal")
+STATE = os.environ.get("RECAB_STANDIN_STATE", "")
 SPEED = float(os.environ.get("RECAB_STANDIN_SPEED", "1"))
-STOP_AT = os.environ.get("RECAB_STANDIN_STOP_AT", "")
-SSHD = "/etc/ssh/sshd_config"
-MIB = 1 << 20
+JSON = "--json" in sys.argv
 
 
 def fresh():
-    distro = os.environ.get("RECAB_STANDIN_DISTRO", "LevitateOS")
+    booted, other = ("B", "A") if SCENARIO == "booted-b" else ("A", "B")
     return {
-        "distro": distro,
-        "running": {"release": "2026.10", "holds": []},
-        "other": {"role": "previous", "release": "2026.09", "state": "kept", "holds": [], "changes": []},
-        "update": {"release": "2026.11", "size_bytes": 3328599654 if distro == "LevitateOS" else 1503238553,
-                   "applied": False},
-        "conflicts": [], "last_trial": None, "interrupted": None,
-        "trial_pending": False, "next_boot_previous": False, "revision": 0,
-        "fail_trials": int(os.environ.get("RECAB_STANDIN_FAIL_TRIALS", "0")),
+        "schema_version": 11,
+        "booted": booted,
+        "other": other,
+        "other_mount": None if SCENARIO == "not-mounted" else "/run/recab/other",
+        "other_bootable": SCENARIO != "not-bootable",
+        "boot_default": None if SCENARIO == "no-default" else booted,
+        "next_boot_once": other if SCENARIO == "once" else None,
     }
 
 
 def load():
-    if not os.path.exists(STATE):
-        os.makedirs(STATE_DIR, exist_ok=True)
-        save(fresh())
-    return json.load(open(STATE))
+    if STATE and os.path.exists(STATE):
+        with open(STATE) as f:
+            return json.load(f)
+    state = fresh()
+    save(state)
+    return state
 
 
 def save(state):
-    state["revision"] = state.get("revision", 0) + 1
-    with open(STATE + ".new", "w") as out:
-        json.dump(state, out, indent=1)
-    os.replace(STATE + ".new", STATE)
+    if STATE:
+        with open(STATE, "w") as f:
+            json.dump(state, f)
 
 
-def emit(**event):
-    sys.stderr.write(json.dumps(event) + "\n")
+def fail(code, message, klass=None):
+    if JSON:
+        sys.stderr.write(json.dumps({"schema_version": 11, "class": klass, "code": code, "message": message}) + "\n")
+    else:
+        sys.stderr.write("recab: %s%s\n" % ("[%s] " % klass if klass else "", message))
+    sys.exit(code)
+
+
+def say(text):
+    sys.stderr.write("recab: %s\n" % text)
     sys.stderr.flush()
+    time.sleep(0.3 * SPEED)
 
 
-def refuse(reason):
-    emit(event="failed", reason=reason)
-    sys.exit(21)
-
-
-def pause(seconds):
-    if SPEED > 0:
-        time.sleep(seconds * SPEED)
-
-
-def step(name, status):
-    emit(event="step", step=name, status=status)
-
-
-# ---------------------------------------------------------------- what status says
-
-def lifecycle(s):
-    if s["interrupted"]:
-        return "interrupted"
-    if s["other"]["role"] != "next":
-        return "stable"
-    if s["trial_pending"]:
-        return "trial_pending"
-    return {"open": "preparing", "ready": "ready", "failed": "failed"}[s["other"]["state"]]
-
-
-def actions(s):
-    other = s["other"]
-    nxt = other["role"] == "next"
-    update_open = bool(s["update"]) and not s["update"]["applied"]
-
-    def verdict(ready, reason=""):
-        return {"verdict": "ready" if ready else "refused", "reason": "" if ready else reason}
-
-    busy = "Finish or discard what was interrupted first." if s["interrupted"] else ""
-    clash = "The update and a change clash. Settle that first." if s["conflicts"] else ""
-    return {
-        "change": verdict(not busy and not clash and not s["trial_pending"], busy or clash or "A restart into the next system is set."),
-        "update": verdict(update_open and not busy and not clash, busy or clash or "No newer release is known."),
-        "finalize": verdict(nxt and other["state"] == "open" and not busy and not clash and bool(other["changes"]),
-                            busy or clash or "The next system has nothing to finish."),
-        "restart": verdict(nxt and other["state"] in ("ready", "failed") and not busy, busy or "The next system is not finished."),
-        "go_back": verdict(other["role"] == "previous", "No system from before is kept."),
-        "discard": verdict(nxt, "There is no next system."),
-        "recover": verdict(bool(s["interrupted"]), "Nothing was interrupted."),
-    }
-
-
-def status(s):
-    update = s["update"]
-    return {
-        "schema_version": 3,
-        "distro": s["distro"],
-        "state": lifecycle(s),
-        "revision": s["revision"],
-        "running": s["running"],
-        "other": s["other"],
-        "update": {"release": update["release"], "size_bytes": update["size_bytes"]}
-                  if update and not update["applied"] else None,
-        "conflicts": s["conflicts"],
-        "last_trial": s["last_trial"],
-        "interrupted": s["interrupted"],
-        "actions": actions(s),
-    }
-
-
-# ---------------------------------------------------------------- the lifecycle
-
-def prepare(s, announce=True):
-    """Create the next system as a copy of the running one, or reopen it."""
-    other = s["other"]
-    if other["role"] == "next":
-        if other["state"] != "open":
-            other["state"] = "open"  # reopening a finished system takes its readiness away
-            save(s)
+def status():
+    if SCENARIO == "root-only" and os.environ.get("RECAB_STANDIN_ROOT") != "1":
+        fail(13, "cannot read the boot entries: Permission denied (needs root)", "permission")
+    state = load()
+    if JSON:
+        print(json.dumps(state, indent=2))
         return
-    if announce:
-        step("level", "running")
-    total = 310 * MIB
-    for part in range(1, 11):
-        emit(event="progress", step="level", done=total * part // 10, total=total, unit="bytes")
-        pause(0.12)
-    emit(event="say", text="310 MiB differed from the running system and was copied. 5.6 GiB was already the same.")
-    s["other"] = {"role": "next", "release": s["running"]["release"], "state": "open",
-                  "holds": list(s["running"]["holds"]), "changes": []}
-    save(s)
-    if announce:
-        step("level", "done")
+    print("Booted root (locked, read-only): %s" % state["booted"])
+    print("Other root (unlocked): %s, %s" % (state["other"], "mounted at " + state["other_mount"] if state["other_mount"] else "not mounted"))
+    print("Boot default: %s" % (state["boot_default"] or "neither root"))
+    print("Next boot, once: %s" % (state["next_boot_once"] or "nothing picked"))
 
 
-def add_change(s, kind, title, **more):
-    changes = s["other"]["changes"]
-    change = dict({"id": "c%d" % (len(changes) + 1), "kind": kind, "title": title}, **more)
-    changes.append(change)
-    save(s)
-    return change
+def copy():
+    state = load()
+    booted, other = state["booted"], state["other"]
+    say("reading the booted root %s" % booted)
+    if not state["other_mount"] or not state["other_bootable"]:
+        say("creating root %s's filesystem anew" % other)
+    # While a copy runs the other root has no boot entry.
+    state["other_bootable"] = False
+    state["next_boot_once"] = None
+    save(state)
+    say("copying root %s into root %s" % (booted, other))
+    if SCENARIO == "copy-failing":
+        fail(1, "copying into root %s stopped at /usr/lib64/libLLVM.so.19: No space left on device (os error 28)" % other)
+    say("writing root %s's boot files on the ESP" % other)
+    state["other_bootable"] = True
+    state["other_mount"] = "/run/recab/other"
+    save(state)
+    print("Root %s is now a copy of root %s: 8734 MiB written in 4091 ranges, 12 entries removed, 3 metadata updates." % (other, booted))
 
 
-def build(label, count):
-    for done in range(1, count + 1):
-        emit(event="output", line="[%d/%d] %s" % (done, count, label % done))
-        if done == count // 2 and STOP_AT == "change":
-            # A story waits for this file, not for a number of seconds.
-            os.makedirs(STATE_DIR, exist_ok=True)
-            open(os.path.join(STATE_DIR, "stopped-at-change"), "w").close()
-            while True:
-                time.sleep(3600)
-        pause(0.05)
-
-
-def apply_update(s):
-    update = s["update"]
-    if not update or update["applied"]:
-        refuse("No newer release is known.")
-    if s["interrupted"]:
-        refuse("Finish or discard what was interrupted first.")
-    emit(event="plan", steps=[["level", "Make it level"], ["fetch", "Get the update"], ["merge", "Merge it in"]])
-    if s["other"]["role"] == "next":
-        step("level", "skipped")
-    prepare(s)
-    step("fetch", "running")
-    for part in range(1, 11):
-        emit(event="progress", step="fetch", done=update["size_bytes"] * part // 10, total=update["size_bytes"], unit="bytes")
-        pause(0.12)
-    step("fetch", "done")
-    step("merge", "running")
-    other = s["other"]
-    for change in other["changes"]:
-        if change["kind"] == "software":
-            emit(event="say", text="%s: rebuilt by Recipe for the update's kernel, and kept." % change["title"].split(",")[0])
-            pause(0.4)
-        if change["kind"] == "file" and change.get("path") == SSHD:
-            s["conflicts"] = [{
-                "path": SSHD,
-                "local": "your edit: password logins turned off",
-                "release": "the update's edit: one new setting, and the included folder moved",
-            }]
-    other["release"] = update["release"]
-    update["applied"] = True
-    add_change(s, "update", "Update to %s %s" % (s["distro"], update["release"]))
-    step("merge", "failed" if s["conflicts"] else "done")
-    if s["conflicts"]:
-        emit(event="say", text="One file was changed by you and by the update. Nothing was chosen for you.")
-    emit(event="done")
-
-
-def resolve(s, path, how):
-    s["conflicts"] = [c for c in s["conflicts"] if c["path"] != path]
-    words = {"--local": "your version", "--release": "the update's version"}[how]
-    for change in s["other"]["changes"]:
-        if change.get("path") == path:
-            change["title"] = "%s, %s" % (path, words)
-    save(s)
-    emit(event="done")
-
-
-def finalize(s):
-    verdict = actions(s)["finalize"]
-    if verdict["verdict"] != "ready":
-        refuse(verdict["reason"])
-    emit(event="plan", steps=[["check", "Check it"], ["close", "Close it"], ["boot", "Make it startable"]])
-    for name in ("check", "close", "boot"):
-        step(name, "running")
-        pause(0.5)
-        step(name, "done")
-    s["other"]["state"] = "ready"
-    save(s)
-    emit(event="done")
-
-
-def set_next(s):
-    if s["other"]["role"] != "next" or s["other"]["state"] not in ("ready", "failed"):
-        refuse("The next system is not finished.")
-    s["other"]["state"] = "ready"
-    s["trial_pending"] = True
-    save(s)
-    emit(event="done")
-
-
-def rollback(s):
-    if s["trial_pending"]:
-        s["trial_pending"] = False
-    elif s["other"]["role"] == "previous":
-        s["next_boot_previous"] = True
-    else:
-        refuse("No system from before is kept.")
-    save(s)
-    emit(event="done")
-
-
-def discard(s):
-    if s["other"]["role"] != "next":
-        refuse("There is no next system.")
-    # The place was already reused: discarding does not bring the older system back.
-    s["other"] = {"role": "none", "release": "", "state": "empty", "holds": [], "changes": []}
-    s["conflicts"], s["interrupted"], s["trial_pending"] = [], None, False
-    if s["update"]:
-        s["update"]["applied"] = False
-    save(s)
-    emit(event="done")
-
-
-def recover(s):
-    if not s["interrupted"]:
-        refuse("Nothing was interrupted.")
-    emit(event="plan", steps=[["inspect", "See what is really there"], ["change", "Carry on"]])
-    step("inspect", "running")
-    pause(0.6)
-    step("inspect", "done")
-    step("change", "running")
-    pending = s["interrupted"]["change"]
-    build("Building object nvidia.p/part%03d.o", 20)
-    s["interrupted"] = None
-    add_change(s, pending["kind"], pending["title"])
-    step("change", "done")
-    emit(event="done")
-
-
-def reboot(s):
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    if s["next_boot_previous"]:
-        s["next_boot_previous"] = False
-        s["running"], old = {"release": s["other"]["release"], "holds": s["other"]["holds"]}, s["running"]
-        s["other"] = {"role": "previous", "release": old["release"], "state": "kept", "holds": old["holds"], "changes": []}
-        s["last_trial"] = None
-    elif s["trial_pending"]:
-        s["trial_pending"] = False
-        other = s["other"]
-        if s["fail_trials"] > 0:
-            s["fail_trials"] -= 1
-            other["state"] = "failed"
-            s["last_trial"] = {"outcome": "failed", "when": now, "log_lines": 212,
-                               "detail": "the login screen failed (sddm.service)"}
+def boot_other():
+    state = load()
+    if "--cancel" in sys.argv:
+        state["next_boot_once"] = None
+        save(state)
+        if JSON:
+            print(json.dumps({"next_boot_once": None}))
         else:
-            old = s["running"]
-            holds = other["holds"] + [c["title"] for c in other["changes"] if c["kind"] != "update"]
-            s["running"] = {"release": other["release"], "holds": holds}
-            s["other"] = {"role": "previous", "release": old["release"], "state": "kept", "holds": old["holds"], "changes": []}
-            s["last_trial"] = {"outcome": "kept", "when": now, "log_lines": 0, "detail": "startup ended with nothing failed"}
-            if s["update"] and s["update"]["applied"]:
-                s["update"] = None
-    save(s)
-
-
-# ---------------------------------------------------------------- a change, made for a story
-
-def make_change(s, which):
-    """Makes a change in the next system the way a person's own tool would
-    (`recab` has no command for it in this stand-in): `nvidia`, `ssh`, or
-    `fix-failed`, which settles what made the next system fail to start."""
-    if which == "fix-failed":
-        emit(event="plan", steps=[["read", "Read the failure"], ["change", "Change the next system"], ["record", "Record it"]])
-        step("read", "running")
-        pause(0.8)
-        step("read", "done")
-        step("change", "running")
-        build("Building object nvidia.p/part%03d.o", 24)
-        for change in s["other"]["changes"]:
-            if change["kind"] == "software":
-                change["title"] = "NVIDIA driver 580.105, installed"
-        s["other"]["state"] = "open"
-        s["fail_trials"] = 0
-        save(s)
-        step("change", "done")
-        step("record", "done")
-        emit(event="done")
+            print("No root is picked for the next boot; the boot default starts.")
         return
-    if which == "nvidia":
-        change = {"kind": "software", "title": "NVIDIA driver 580.95, installed"}
+    if not state["other_bootable"]:
+        fail(21, "root %s has no complete boot entry; run 'recab copy' first" % state["other"], "state_or_detection")
+    state["next_boot_once"] = state["other"]
+    save(state)
+    if JSON:
+        print(json.dumps({"next_boot_once": state["other"]}))
     else:
-        change = {"kind": "file", "title": "%s, edited" % SSHD, "path": SSHD}
-    emit(event="plan", steps=[["level", "Make it level"], ["change", "Make the change"], ["record", "Record it"]])
-    if s["other"]["role"] == "next":
-        step("level", "skipped")
-    prepare(s)
-    step("change", "running")
-    if change["kind"] == "software":
-        # A long step: what is half done is marked, so a stop or a power cut can be recovered.
-        s["interrupted"] = {"during": "adding the NVIDIA driver", "change": change}
-        save(s)
-        build("Building object nvidia.p/part%03d.o", 40)
-        s["interrupted"] = None
-    else:
-        pause(0.8)
-    add_change(s, **change)
-    step("change", "done")
-    step("record", "running")
-    pause(0.3)
-    step("record", "done")
-    emit(event="done")
+        print("Root %s starts at the next boot, once. Reboot when ready." % state["other"])
 
 
-# ---------------------------------------------------------------- the command line
-
-def main(args):
-    role = os.path.basename(sys.argv[0])
-    words = [arg for arg in args if not arg.startswith("--")]
-    s = load()
-    if role == "reboot":
-        return reboot(s)
-    command = words[0] if words else ""
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    command = args[0] if args else ""
     if command == "status":
-        print(json.dumps(status(s)))
-    elif command == "prepare":
-        emit(event="plan", steps=[["level", "Make it level"]])
-        prepare(s)
-        emit(event="done")
-    elif command == "update" and words[1:2] == ["apply"]:
-        apply_update(s)
-    elif command == "resolve" and len(words) == 2:
-        how = next((arg for arg in args if arg in ("--local", "--release")), None)
-        if not how:
-            refuse("say --local or --release")
-        resolve(s, words[1], how)
-    elif command == "make-change" and len(words) == 2:
-        make_change(s, words[1])
-    elif command == "finalize":
-        finalize(s)
-    elif command == "set-next":
-        set_next(s)
-    elif command == "rollback":
-        rollback(s)
-    elif command == "discard":
-        discard(s)
-    elif command == "recover":
-        recover(s)
-    else:
-        sys.stderr.write("stand-in recab: unknown command: %s\n" % " ".join(args))
-        sys.exit(2)
+        return status()
+    if command == "copy":
+        return copy()
+    if command == "boot-other":
+        return boot_other()
+    sys.stderr.write("error: the stand-in recab only knows `status`, `copy` and `boot-other`\n")
+    sys.exit(2)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()

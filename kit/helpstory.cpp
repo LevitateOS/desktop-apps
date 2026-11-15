@@ -164,22 +164,7 @@ void run(const Plan &plan, const Save &save, const Expect &expect, const QString
 
 void guardRefuses(const Expect &expect, const QString &folder, const QString &mustName)
 {
-    // Bare: no stand-in named, nothing but what a shell needs.
-    QProcessEnvironment bare;
-    bare.insert(QStringLiteral("PATH"), qEnvironmentVariable("PATH"));
-    bare.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
-    const QString pictures = QDir(folder).filePath("refused-pictures");
-    QDir(pictures).removeRecursively();
-    QProcess process;
-    process.setProcessEnvironment(bare);
-    process.start(QCoreApplication::applicationFilePath(), {"--shots", pictures});
-    process.waitForFinished(120000);
-    const QString said = QString::fromUtf8(process.readAllStandardError());
-    expect(QStringLiteral("guard: a bare --shots refuses to start, with exit code 2 (%1)").arg(process.exitCode()),
-           process.exitStatus() == QProcess::NormalExit && process.exitCode() == 2);
-    expect(QStringLiteral("guard: it says what is missing in a sentence (%1)").arg(said.trimmed().left(120)),
-           said.contains(QStringLiteral("would reach this computer for real")) && said.contains(mustName));
-    expect(QStringLiteral("guard: and it started nothing (no folder for pictures)"), !QDir(pictures).exists());
+    ::guardRefuses(expect, folder, mustName);
 }
 
 } // namespace helpstory

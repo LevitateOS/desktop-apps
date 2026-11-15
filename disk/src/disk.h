@@ -70,7 +70,8 @@ struct DiskInfo {
     // The partitions
     bool layoutRead = false;
     DiskLayout layout;
-    QString runningDevice, otherDevice, otherRole;
+    // The two roots, on a computer that has them: which letter is booted, and the partitions.
+    QString runningDevice, otherDevice, bootedRoot, otherRoot;
     bool compared = false;
     qint64 otherFilesBytes = 0;
     QString otherDeviceCompared;

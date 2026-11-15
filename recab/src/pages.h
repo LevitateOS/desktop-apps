@@ -1,156 +1,70 @@
-// The pages of the window. Each one is told what to show and rebuilds itself;
-// it asks for actions with signals and never runs anything itself.
+// The two pages of the window: the two roots with their three actions, and
+// the output of what was run.
 #pragma once
 
-#include "model.h"
 #include "page.h"
-#include "work.h"
-
-#include <QMap>
-#include <QWidget>
+#include "status.h"
 
 class QLabel;
+class QPlainTextEdit;
+class QProgressBar;
 class QPushButton;
-class QVBoxLayout;
 
-// The one page a person sees most: the running system, what is beside it, and
-// what can be done. Its shape follows recab's state.
-class SystemPage : public Page {
+class RootsPage : public Page {
     Q_OBJECT
 public:
     using Page::Page;
+    // The two roots as recab said them.
     void show(const Status &status);
-    // `asAdministrator`: the read failed for lack of rights, so offer to
-    // read with the administrator's password.
-    void showProblem(const QString &problem, bool asAdministrator = false);
+    // recab could not be read. `asAdministrator`: offer to read it as administrator.
+    void showProblem(const QString &problem, bool asAdministrator);
+
+    // For a check: the buttons as drawn, and the one-line reason under a disabled one.
+    QPushButton *copyButton() const { return copy_; }
+    QPushButton *startButton() const { return start_; }
+    QPushButton *restartButton() const { return restart_; }
+    QString startReason() const;
+    QString pageText() const;
+
 signals:
-    void operation(const QJsonObject &operation);
-    void addUpdate();
-    void goBack();
-    void keep();
-    void restartLater();
-    void cancelRestart();
-    void finish();
-    void restart();
-    void discard();
-    // Give up every change in the next system and make it an exact copy of
-    // the running system again.
-    void reset();
-    void recover();
-    void settle();
-    void retry();
+    void copyOther();
+    void startOther();
+    void doNotStartOther();
+    void restartNow();
     void readAgain();
     void readAsAdministrator();
-    // The ways to the two pages that hold the rest.
-    void openNext();
-    void openBack();
-    // What recab says about a newer release.
-    void openRelease();
-    // A failed system that recab keeps no preparation record for: its own
-    // `replace_failed` operation.
-    void replaceFailed();
+
+private:
+    QPushButton *copy_ = nullptr, *start_ = nullptr, *restart_ = nullptr;
+    QLabel *reason_ = nullptr;
 };
 
-// Everything about the next system in one place: what it holds, what will
-// differ after the restart, and the three steps to get it started.
-class NextPage : public Page {
+// What a command wrote while it ran, and how it ended.
+class OutputPage : public Page {
     Q_OBJECT
 public:
     using Page::Page;
-    void show(const Status &status);
-signals:
-    void operation(const QJsonObject &operation);
-    void installSoftware();
-    void reset();
-    void settle();
-    void finish();
-    void restart();
-    void restartLater();
-    void cancelRestart();
-    void recover();
-    void discard();
-    void keep();
-    void goBack();
-    void openDisk();
-    void openRelease();
-};
+    // Starts showing a run: `title` over it, the lines it writes as they come.
+    void begin(const QString &title, const QString &subtitle);
+    void add(const QString &line);
+    // It ended well: `result` is what it said.
+    void succeeded(const QString &result);
+    // It ended badly: `reason` is what it said.
+    void failed(const QString &title, const QString &reason);
+    // What "Copy for agent" copies: the reason, then the whole output.
+    QString outputText() const;
+    bool finished() const { return finished_; }
+    QString pageText() const;
 
-// A new release of the system: what recab says about it, and the steps it
-// offers (look, fetch, add to the next system, take out again). Every button
-// follows one of recab's own operations; this page works nothing out.
-class ReleasePage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const Status &status);
 signals:
     void back();
-    // One of recab's operations by its id (`update_check`, `update_download`,
-    // `update_recover`, `update_cancel`).
-    void operation(const QString &id);
-    // Merge the release into the next system, as recab's `update_apply` or,
-    // with the older stand-in, its `update apply`.
-    void add();
-    // A release manifest from a file (`update_media`).
-    void addFromFile();
-    void settle();
-    void finish();
-    // What a merge stopped on that is not settled by choosing a side: the
-    // original release's baseline (`adopt_baseline`), a package to reproduce
-    // (`update_reproduce`), and a failed system to replace (`replace_failed`).
-    void adoptBaseline();
-    void reproduce(const QString &package);
-    void replaceFailed();
-};
 
-// What happened to this computer's systems, newest first, as recab's
-// `history` lists it. With a recab that has none, it says so.
-class HistoryPage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const History &history);
-    // The history could not be read, or this recab has none.
-    void showUnavailable(const History &history);
-signals:
-    void saveAsFile();
-    void readAgain();
 private:
-    History last_;
-    int filter_ = 0; // 0 all, 1 restarts
-};
-
-// What can be turned back from here, and what to do when the desktop does not
-// start. The steps for the second are also given as plain text, to be saved.
-class BackPage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const Status &status);
-signals:
-    void goBack();
-    void keep();
-    void cancelRestart();
-    void saveSteps();
-};
-
-// The steps for a desktop that does not start, as plain text with one step to
-// a paragraph; only what recab's own source and status confirm.
-QString backStepsText(const Status &status);
-
-// A release and the next system disagree: what recab stopped at, what each
-// kind of conflict is, what recab offers for it, and the facts to copy for an agent.
-class ClashPage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const Status &status);
-signals:
-    void later();
-    void byHand();
-    void adoptBaseline();
-    void reproduce(const QString &package);
-private:
-    // The real recab's merge: what it stopped at, kind by kind.
-    void showMerge(const Status &status);
+    void ended(const QString &title, const QString &words, bool bad);
+    QVBoxLayout *column_ = nullptr;
+    QProgressBar *bar_ = nullptr;
+    QLabel *state_ = nullptr;
+    QPlainTextEdit *output_ = nullptr;
+    QString reason_;
+    bool finished_ = false;
 };

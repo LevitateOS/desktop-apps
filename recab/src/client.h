@@ -1,10 +1,10 @@
-// The only place that runs `recab` and the restart. Reading goes
-// through as the desktop user; changes go through the root helper (pkexec),
-// which shows the desktop's own password prompt.
+// The only place that runs `recab` and the restart. Reading goes through as
+// the desktop user; copying and choosing the root to start go through the root
+// helper (pkexec), which shows the desktop's own password prompt.
 #pragma once
 
-#include "model.h"
 #include "run.h"
+#include "status.h"
 
 #include <QObject>
 
@@ -13,47 +13,27 @@ class RecabClient : public QObject {
 public:
     explicit RecabClient(QObject *parent = nullptr);
 
-    // `recab status --json`, as a run that does not hold the window up; its
-    // answer is read with `understand`.
-    // `asRoot`: through the root helper, when the person cannot read the
-    // boot entries themselves.
+    // `recab status --json`, as a run that does not hold the window up.
+    // `asRoot`: through the root helper, when the person cannot read the boot
+    // entries themselves.
     Run *read(bool asRoot = false);
-    // Reads the answer: the older stand-in's lifecycle (schema 3) or the real
-    // recab's slots, preparation and operations (schemas 7 to 10). `permission` is set when the
-    // read failed for lack of rights.
+    // Reads the answer. `permission` is set when the read failed for lack of rights.
     bool understand(Run *finished, bool ok, Status *into, QString *error, bool *permission = nullptr);
 
-    // `recab history --json`, read as the desktop user. `openPreparation` is
-    // the preparation the last status held. An older recab has no such command;
-    // `into->unknown` says so.
-    Run *readHistory();
-    bool understandHistory(Run *finished, bool ok, History *into, const QString &openPreparation);
-
-    // One change, named as this window names it (`finalize`, `discard`,
-    // `recover`, `prepare`, `set-next`, `rollback`, and the stand-in's
-    // `update apply` and `resolve`). For the stand-in that is the command
-    // itself, with `--machine-events`; for the real recab it becomes recab's
-    // own command, with the open preparation's id and revision.
-    Run *change(const QStringList &arguments);
+    // `recab copy`: make the other root a copy of the booted root. Its own
+    // words on standard error are the progress.
+    Run *copy();
+    // `recab boot-other`, or with `cancel` `recab boot-other --cancel`.
+    Run *bootOther(bool cancel);
     Run *reboot();
 
-    // What a change runs, as a person reads it: "recab finalize", "recab
-    // update apply". Only the verb, and the second word of `update` and
-    // `change`; the preparation, slot and release it is pinned to are left
-    // out. For the stand-in it is the command itself.
-    QString commandWords(const QStringList &arguments) const;
-    // Whether changes go through a root helper (pkexec), which asks the
-    // desktop user for the administrator password. Without one (the stand-in)
-    // this window runs them itself.
+    // Whether changes go through a root helper (pkexec), which asks for the
+    // administrator password. Without one (the stand-in) they run as the person.
     bool asksPassword() const { return !rootHelper_.isEmpty(); }
+    // What a command is, as it is typed: "recab copy".
+    QString commandWords(const QStringList &arguments) const;
 
 private:
-    QStringList realArguments(const QStringList &arguments) const;
-    QString program_, rootHelper_, reboot_, osRelease_;
-    // From the last status understood: which recab answers, and what its
-    // commands need to be told.
-    bool real_ = false;
-    QJsonArray operations_;
-    QString preparationId_, otherSlot_;
-    qint64 preparationRevision_ = -1;
+    Run *asRoot(const QString &program, const QStringList &arguments);
+    QString program_, rootHelper_, reboot_;
 };

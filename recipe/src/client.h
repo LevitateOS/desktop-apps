@@ -16,9 +16,9 @@
 struct Places {
     // One explicit store (RECIPE_GUI_PACKAGE_ROOT): the only place, no choice.
     bool one = false;
-    // The kernel command line says `recab.immutable`: the computer's software
-    // goes into the next system and is in effect after a restart.
-    bool locked = false;
+    // The kernel command line says `recab.immutable`: an A/B system. "For everyone"
+    // changes are written into the other root and become active when it is booted.
+    bool ab = false;
     // The computer's store when it is not locked, or the explicit store.
     QString systemRoot;
     // The computer's changes go through a root helper that asks for the password.
@@ -49,12 +49,16 @@ public:
     Run *goBack(const QString &name, Place place);
     // Keeps a package at its version (`recipe hold`) or lets it update again
     // (`recipe unhold`). Only where a store stands behind the software: `recipe`
-    // does not hold software in a locked computer's system (system_route takes
-    // install, update, remove, installed and isinstalled only).
+    // does not hold software on an A/B system (system_route takes install, update,
+    // remove, installed and isinstalled only).
     Run *hold(const QString &name, Place place);
     Run *unhold(const QString &name, Place place);
     // Deletes every earlier version a store keeps. Nothing installed changes.
     Run *clearEarlier(Place place);
+
+    // The file `recipe info` names as this recipe's: the one Recipe runs for that entry (for a
+    // remote source, the copy it fetches to read). `then` gets the path, or why there is none.
+    void recipeFile(const QString &qualifiedName, std::function<void(const QString &path, const QString &problem)> then);
 
     // Sources. Fetching a source's list again is a person's own business;
     // adding and removing one changes the system's list and needs root.
@@ -67,14 +71,16 @@ private:
     void query(const QStringList &arguments, Answered then);
     // `place`: the person's own store runs without the root helper.
     Run *change(const QStringList &arguments, Place place);
-    // What goes before the command (`--system` on a locked computer) and
+    // What goes before the command (`--system` on an A/B system) and
     // after it (the store), for a place.
     QStringList lead(Place place) const;
     QStringList at(Place place) const;
     QStringList collection() const;
     // The store whose sources are listed and fetched: the computer's.
     QStringList store() const;
-    bool locked() const;
+    bool ab() const;
+    // What this system's C library is, from `recipe info` of a recipe that declares one.
+    void askHostLibc(std::shared_ptr<Catalog> fresh, std::function<void()> then);
     QString program_, rootHelper_, recipesPath_, packageRoot_, systemRoot_;
     bool explicit_ = false;
     int loading_ = 0;

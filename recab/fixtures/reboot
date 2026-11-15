@@ -1,1 +1,5 @@
-recab
+#!/bin/sh
+# A stand-in for the restart: only makes a mark, so a story can see it was asked for.
+# RECAB_STANDIN_REBOOT_FAIL=1 makes it fail as a refused restart does.
+[ "$RECAB_STANDIN_REBOOT_FAIL" = 1 ] && { echo "Failed to connect to bus: Operation not permitted" >&2; exit 1; }
+touch "$RECAB_STANDIN_REBOOT_MARK"

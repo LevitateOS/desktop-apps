@@ -5,6 +5,7 @@
 #include "client.h"
 #include "model.h"
 #include "pages.h"
+#include "sourceview.h"
 
 #include <QMainWindow>
 #include <QMessageBox>
@@ -18,7 +19,6 @@ class BeforePage;
 class BrowsePage;
 class Frame;
 class InstalledPage;
-class NextSystem;
 class QStackedWidget;
 class RecipePage;
 class Refresher;
@@ -83,6 +83,12 @@ public:
     // whether to remove: open until answered, else null. For a check.
     QMessageBox *closeQuestion() const { return closeBox_; }
     RemoveDialog *removeQuestion() const { return removeBox_; }
+    // The read-only viewer of a recipe's file: open until closed, else null. For a check.
+    SourceViewer *sourceViewer() const { return viewer_; }
+    // Shows the file Recipe will really run for this recipe (`recipe info` names it), read-only.
+    void viewSource(const QString &name);
+    // Shows a recipe file at a path Recipe named (a recipe it could not read).
+    void viewFile(const QString &path, const QString &from);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -127,6 +133,9 @@ private:
     bool runUpdate_ = false;
     QPointer<QMessageBox> closeBox_;
     QPointer<RemoveDialog> removeBox_;
+    QPointer<SourceViewer> viewer_;
+    // The folder or address being added as a source; once added, the Sources page shows it.
+    QString addedWhere_;
     bool closing_ = false, closeAfterStop_ = false;
     // A read asked for while another is going: done as soon as that one ends.
     bool reloadQueued_ = false;
@@ -145,7 +154,6 @@ private:
     QString readWords_, buildingWords_;
 
     Frame *frame_;
-    NextSystem *next_;
     QStackedWidget *stack_;
     BrowsePage *browse_;
     RecipePage *recipe_;

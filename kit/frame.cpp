@@ -20,7 +20,7 @@
 
 namespace {
 
-// The paper the rail and the strip sit on: the window colour pulled a little
+// The paper the rail sits on: the window colour pulled a little
 // towards the text colour, so it is a shade lighter on a dark desktop and a
 // shade darker on a light one, whatever the palette is.
 QColor shade(const QPalette &palette, qreal by)
@@ -146,75 +146,7 @@ private:
     int count_ = 0;
 };
 
-// "The next system holds 2 changes.", what they are, and the button.
-class Strip : public QWidget {
-    Q_OBJECT
-public:
-    explicit Strip(QWidget *parent = nullptr)
-        : QWidget(parent)
-    {
-        auto *row = new QHBoxLayout(this);
-        row->setContentsMargins(18, 8, 16, 8);
-        row->setSpacing(12);
-        sentence_ = strong(QString());
-        detail_ = new ElidedLabel(QString());
-        QPalette p = detail_->palette();
-        p.setColor(QPalette::WindowText, moodColour(p, Mood::Plain));
-        detail_->setPalette(p);
-        button_ = new QPushButton(tr("Finish and restart…"));
-        button_->setAccessibleDescription(tr("Goes to where the next system is finished"));
-        row->addWidget(sentence_);
-        row->addWidget(detail_, 1);
-        row->addWidget(button_);
-        connect(button_, &QPushButton::clicked, this, &Strip::pressed);
-    }
-    void say(const QString &sentence, const QString &detail)
-    {
-        sentence_->setText(sentence);
-        detail_->setText(detail);
-        detail_->setToolTip(detail);
-    }
-    QString sentence() const { return sentence_->text(); }
-
-signals:
-    void pressed();
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter painter(this);
-        painter.fillRect(rect(), palette().color(QPalette::Base));
-        QColor line = palette().color(QPalette::WindowText);
-        line.setAlphaF(0.13f);
-        painter.fillRect(QRect(0, 0, width(), 1), line);
-        // Amber on the left edge: something here is not finished.
-        painter.fillRect(QRect(0, 1, 3, height() - 1), moodColour(palette(), Mood::Warn));
-    }
-
-private:
-    QLabel *sentence_;
-    ElidedLabel *detail_;
-    QPushButton *button_;
-};
-
 namespace {
-
-// "htop, installed" is a change's title; the strip names what changed.
-QString nameOf(QString title)
-{
-    static const QStringList tails{", installed", ", updated", ", removed", ", edited"};
-    bool cut = true;
-    while (cut) {
-        cut = false;
-        for (const QString &tail : tails) {
-            if (title.endsWith(tail)) {
-                title.chop(tail.size());
-                cut = true;
-            }
-        }
-    }
-    return title;
-}
 
 // A line down the side of the rail.
 class Divider : public QWidget {
@@ -306,10 +238,6 @@ Frame::Frame(App app, QWidget *parent)
     firstRun_ = new FirstRunPage(app);
     stack_->addWidget(firstRun_);
     middle->addWidget(stack_, 1);
-    strip_ = new Strip;
-    strip_->hide();
-    connect(strip_, &Strip::pressed, this, &Frame::finishRequested);
-    middle->addWidget(strip_);
     shell->addLayout(middle, 1);
     outer->addLayout(shell, 1);
 
@@ -479,49 +407,6 @@ void Frame::step(RailButton *from, int by)
         return;
     const int next = qBound(0, index + by, int(entries.size()) - 1);
     entries[next]->setFocus(Qt::TabFocusReason);
-}
-
-// ---- The strip
-
-void Frame::setNextSystem(const QStringList &titles)
-{
-    if (titles.isEmpty()) {
-        strip_->hide();
-        strip_->say(QString(), QString());
-        return;
-    }
-    QStringList names;
-    for (const QString &title : titles)
-        names << nameOf(title);
-    QString which;
-    if (names.size() == 1)
-        which = names.first();
-    else if (names.size() == 2)
-        which = tr("%1 and %2").arg(names[0], names[1]);
-    else
-        which = tr("%1, %2 and %3 more").arg(names[0], names[1]).arg(names.size() - 2);
-    strip_->say(titles.size() == 1 ? tr("The next system holds 1 change.")
-                                   : tr("The next system holds %1 changes.").arg(titles.size()),
-                names.size() == 1 ? tr("%1 takes effect after a restart.").arg(which)
-                                  : tr("%1 take effect after a restart.").arg(which));
-    // Shown unless the app keeps it away; `setStripAllowed` decides that.
-    strip_->setVisible(stripAllowed_);
-}
-
-void Frame::setStripAllowed(bool allowed)
-{
-    stripAllowed_ = allowed;
-    strip_->setVisible(allowed && !strip_->sentence().isEmpty());
-}
-
-bool Frame::stripShown() const
-{
-    return !strip_->isHidden();
-}
-
-QString Frame::stripText() const
-{
-    return strip_->sentence();
 }
 
 // ---- The status line

@@ -2,17 +2,18 @@
 
 #include "pages.h"
 #include "sources.h"
+#include "sourceview.h"
 #include "storage.h"
 
 #include "before.h"
 #include "frame.h"
-#include "nextsystem.h"
 #include "parts.h"
 #include "refresh.h"
 
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDir>
+#include <QJsonObject>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
@@ -50,8 +51,7 @@ Window::Window(QWidget *parent)
                           static_cast<QWidget *>(change_)})
         stack_->addWidget(page);
 
-    // The frame is the window: the rail, the pages in it, the strip about the
-    // next system, and the status line.
+    // The frame is the window: the rail, the pages in it, and the status line.
     frame_ = new Frame(Frame::Recipe);
     frame_->setContent(stack_);
     frame_->addEntry(QStringLiteral("browse"), tr("Browse"));
@@ -62,10 +62,6 @@ Window::Window(QWidget *parent)
     frame_->select(QStringLiteral("browse"));
     updateStatus();
     setCentralWidget(frame_);
-
-    // Only recab knows whether a next system holds changes; Recipe asks it.
-    next_ = new NextSystem(qEnvironmentVariable("RECIPE_GUI_RECAB", "recab"), this);
-    connect(next_, &NextSystem::known, this, [this] { frame_->setNextSystem(next_->titles()); });
 
     connect(frame_, &Frame::chosen, this, [this](const QString &key) {
         if (key == QLatin1String("browse"))
@@ -79,8 +75,6 @@ Window::Window(QWidget *parent)
         else if (key == QLatin1String("storage"))
             showStorage();
     });
-    // The next system is finished in Recab, the way its button starts it.
-    connect(frame_, &Frame::finishRequested, this, [this] { frame_->startApp(Frame::Recab); });
 
     connect(browse_->searchBox(), &QLineEdit::textChanged, this, [this] { showBrowse(category_); });
     connect(browse_->categoryBox(), &QComboBox::activated, this,
@@ -95,6 +89,7 @@ Window::Window(QWidget *parent)
     connect(updates_, &UpdatesPage::check, this, [this] { fetchSources(); });
     connect(sources_, &SourcesPage::refresh, this, &Window::fetchSources);
     connect(sources_, &SourcesPage::add, this, &Window::addSource);
+    connect(sources_, &SourcesPage::viewFile, this, [this](const QString &path) { viewFile(path, QString()); });
     connect(sources_, &SourcesPage::remove, this, [this](const QString &name) { removeSource(name); });
     connect(sources_, &SourcesPage::browse, this, [this](const QString &name) {
         chooseSource(name);
@@ -122,11 +117,7 @@ Window::Window(QWidget *parent)
     connect(recipe_, &RecipePage::open, this, &Window::open);
     connect(recipe_, &RecipePage::goBack, this, &Window::goBack);
     connect(recipe_, &RecipePage::hold, this, &Window::hold);
-    connect(recipe_, &RecipePage::readRecipe, this, [this](const QString &name) {
-        const Recipe *recipe = catalog_.recipe(name);
-        if (recipe && !recipe->path.isEmpty())
-            QDesktopServices::openUrl(QUrl::fromLocalFile(recipe->path));
-    });
+    connect(recipe_, &RecipePage::readRecipe, this, &Window::viewSource);
 
     // The Before step: what will happen, then Cancel or go on.
     connect(before_, &BeforePage::cancelled, this, [this] {
@@ -143,11 +134,7 @@ Window::Window(QWidget *parent)
     connect(before_, &BeforePage::confirmed, this, [this](const QString &key) {
         startInstall(ask_.name, ask_.update ? ask_.place : placeFromKey(key));
     });
-    connect(before_, &BeforePage::linkClicked, this, [this] {
-        const Recipe *recipe = catalog_.recipe(ask_.name);
-        if (recipe && !recipe->path.isEmpty())
-            QDesktopServices::openUrl(QUrl::fromLocalFile(recipe->path));
-    });
+    connect(before_, &BeforePage::linkClicked, this, [this] { viewSource(ask_.name); });
     connect(runPage_, &RunPage::back, this, [this] { showBrowse(); });
     connect(runPage_, &RunPage::retry, this, [this](const QString &name) { startInstall(name, runPlace_); });
     connect(runPage_, &RunPage::succeeded, this, [this](const QString &name) { runEnded(name, true); });
@@ -181,7 +168,7 @@ Window::Window(QWidget *parent)
         queue_.clear();
         for (const UpdateItem &item : catalog_.updates)
             // A program kept at its version is left alone.
-            if (item.place != Place::Next && !item.held)
+            if (item.place != Place::Other && !item.held)
                 queue_ << qMakePair(item.name, item.place);
         startQueued();
     });
@@ -251,8 +238,6 @@ void Window::reload(std::function<void()> then)
         fillSources();
         fillCategories();
         fillRail();
-        // The strip under every page: what the next system holds may have changed.
-        next_->read();
         if (then)
             then();
     });
@@ -355,6 +340,11 @@ void Window::showUpdates(const QString &selected, int place)
 // offered are the ones that do not hold the software yet.
 void Window::askInstall(const QString &name)
 {
+    // A recipe this system's C library cannot run is not installable: nothing starts, and one line says why.
+    if (const QString why = catalog_.unavailable(name); !why.isEmpty()) {
+        frame_->flash(tr("%1 is not available on this system. %2").arg(shownName(name), why));
+        return;
+    }
     QList<Place> choices = catalog_.installPlaces(name);
     if (choices.isEmpty())
         return;
@@ -409,7 +399,10 @@ void Window::startInstall(const QString &name, Place place)
     runName_ = name;
     runUpdate_ = installed;
     run_ = installed ? client_.update(named, place) : client_.install(named, place);
-    runPage_->begin(catalog_, name, run_, place);
+    // On an A/B system "for everyone" is written into the other root after the recipe has run: the
+    // recipe's own `done` is not the end of that run, its exit is.
+    const bool toOther = !client_.places().one && client_.places().ab && place != Place::Me;
+    runPage_->begin(catalog_, name, run_, place, toOther);
     stack_->setCurrentWidget(runPage_);
     run_->start();
 }
@@ -429,6 +422,16 @@ void Window::runEnded(const QString &name, bool ok)
         close();
         return;
     }
+    if (ok) {
+        // Said at once, before the lists are read again: what happened and where it is now.
+        const QString shown = shownName(name);
+        const QJsonObject answer = runPage_->answer();
+        const QString other = answer["other_root"].toString();
+        if (!answer.isEmpty() && answer.contains("other_root"))
+            frame_->flash(tr("%1 was written into the other root (%2). It becomes active when root %2 is started.").arg(shown, other));
+        else
+            frame_->flash(runUpdate_ ? tr("Updated %1").arg(shown) : tr("Installed %1").arg(shown));
+    }
     reload([this, name, ok] {
         if (!ok) {
             queue_.clear(); // the run page stays, with what went wrong
@@ -439,6 +442,44 @@ void Window::runEnded(const QString &name, bool ok)
         else
             showRecipe(name);
     });
+}
+
+// ---------------------------------------------------------------- The recipe's file
+
+// The file Recipe will really run for this entry is the one `recipe info` names (it looks the
+// recipe up as `recipe install` does, and for a remote source fetches the copy to read), so
+// that is what the viewer shows; the list's own `path` is not used for it.
+void Window::viewSource(const QString &name)
+{
+    const Recipe *recipe = catalog_.recipe(name);
+    if (!recipe)
+        return;
+    const QString title = recipe->shown();
+    const Origin *origin = catalog_.origin(recipe->origin);
+    QString from;
+    if (origin) {
+        from = origin->name == origin->shown() ? origin->name : tr("%1 (%2)").arg(origin->shown(), origin->name);
+        if (!origin->where().isEmpty())
+            from += tr(", %1").arg(origin->where());
+    }
+    client_.recipeFile(catalog_.qualified(name), [this, title, from](const QString &path, const QString &problem) {
+        if (viewer_)
+            viewer_->close();
+        viewer_ = new SourceViewer(title, from, path, problem, this);
+        viewer_->setAttribute(Qt::WA_DeleteOnClose);
+        viewer_->setModal(false);
+        viewer_->show();
+    });
+}
+
+void Window::viewFile(const QString &path, const QString &from)
+{
+    if (viewer_)
+        viewer_->close();
+    viewer_ = new SourceViewer(QFileInfo(path).fileName(), from, path, QString(), this);
+    viewer_->setAttribute(Qt::WA_DeleteOnClose);
+    viewer_->setModal(false);
+    viewer_->show();
 }
 
 // ---------------------------------------------------------------- Sources
@@ -476,6 +517,10 @@ void Window::addSource(const QString &addressOrFolder)
     words.failed = tr("Adding the source did not finish");
     words.left = tr("Sources shows which sources are listed now.");
     words.done = tr("Added the source");
+    QString where = addressOrFolder.trimmed();
+    if (where.startsWith(QLatin1Char('~')))
+        where = QDir::homePath() + where.mid(1);
+    addedWhere_ = where;
     change(words, [this, addressOrFolder] { return client_.addSource(addressOrFolder); });
 }
 
@@ -532,7 +577,7 @@ void Window::askRemove(const QString &name, Place place)
     gone.name = name;
     const Recipe *recipe = catalog_.recipe(name);
     // Asked without waiting: the window stays alive under it, and a check can answer it.
-    auto *dialog = new RemoveDialog(recipe ? *recipe : gone, *item, this);
+    auto *dialog = new RemoveDialog(recipe ? *recipe : gone, *item, catalog_.takenOutWords(*item), this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     removeBox_ = dialog;
     connect(dialog, &QDialog::accepted, this, [this, name, place] { removeNow(name, place); });
@@ -546,16 +591,18 @@ ChangePage::Words Window::removeWords(const QString &name, Place place) const
     const bool store = !item || item->inStore;
     ChangePage::Words words;
     words.title = tr("Removing %1").arg(shown);
-    words.subtitle = !store ? (place == Place::Next ? tr("It is taken out of the next system, which is the only one that holds it.")
-                                                    : tr("It is taken out of the next system. The running system keeps it until the restart."))
+    words.subtitle = !store ? catalog_.takenOutWords(*item)
                             : tr("Recipe keeps its files among the earlier versions until those are cleared, in Storage.");
     words.doing = tr("Asking Recipe to remove %1…").arg(shown);
     words.stopNote = store ? tr("Stopping it before it ends leaves %1 installed. You can remove it again from Installed.").arg(shown)
-                           : tr("Stopping it before it ends leaves the next system as it was. You can remove it again from Installed.");
+                           : tr("Stopping it before it ends leaves %1 as it was. You can remove it again from Installed.").arg(catalog_.otherWords());
     words.failed = tr("Removing %1 did not finish").arg(shown);
     words.left = store && item ? tr("%1 %2 is still installed.").arg(shown, item->version)
-                               : tr("The next system was not changed. Installed shows what it holds.");
-    words.done = tr("Removed %1").arg(shown);
+                               : tr("%1 was not changed. Installed shows what each root holds.")
+                                     .arg(catalog_.otherWords().left(1).toUpper() + catalog_.otherWords().mid(1));
+    words.done = store ? tr("Removed %1").arg(shown)
+                       : tr("Removed %1 from %2. It stays in %3 until the other root is started.")
+                             .arg(shown, catalog_.otherWords(), catalog_.bootedWords());
     return words;
 }
 
@@ -587,7 +634,7 @@ void Window::clearEarlier(Place place, bool askFirst)
                                  tr("Delete every earlier version Recipe keeps%1 (%2)?\n\nNothing that is installed "
                                     "changes. Afterwards no program there can be taken back to an earlier version "
                                     "until it is updated again.")
-                                     .arg(catalog_.twoPlaces ? (place == Place::Me ? tr(" for you") : tr(" for this computer")) : QString(),
+                                     .arg(catalog_.twoPlaces ? (place == Place::Me ? tr(" for you") : tr(" for everyone")) : QString(),
                                           bytesText(catalog_.stores[int(place)].earlierBytes)),
                                  QMessageBox::Yes | QMessageBox::Cancel)
                != QMessageBox::Yes)
@@ -595,7 +642,7 @@ void Window::clearEarlier(Place place, bool askFirst)
     ChangePage::Words words;
     words.title = tr("Clearing earlier versions");
     words.subtitle = tr("Recipe deletes every earlier version it keeps%1. Nothing that is installed changes.")
-                         .arg(catalog_.twoPlaces ? (place == Place::Me ? tr(" for you") : tr(" for this computer")) : QString());
+                         .arg(catalog_.twoPlaces ? (place == Place::Me ? tr(" for you") : tr(" for everyone")) : QString());
     words.doing = tr("Asking Recipe to delete them…");
     words.stopNote = tr("If you stop it, some earlier versions may already be deleted and the rest stay. What is installed does not "
                         "change. Clear again from Storage.");
@@ -609,7 +656,7 @@ void Window::hold(const QString &name, Place place, bool on)
 {
     // `recipe` holds software only where a store stands behind it.
     const InstalledItem *item = catalog_.installedItem(name, place);
-    if (!item || !item->inStore || place == Place::Next)
+    if (!item || !item->inStore || place == Place::Other)
         return;
     const QString shown = shownName(name);
     ChangePage::Words words;
@@ -663,10 +710,24 @@ void Window::changeEnded(bool ok)
         return;
     }
     const bool onThePage = stack_->currentWidget() == change_;
+    if (!ok)
+        addedWhere_.clear();
     if (ok) {
         frame_->flash(changeWords_.done);
         // Back where the person was, drawn from what was read after the change.
         reload([this] {
+            // A source just added: the Sources page shows that Recipe reads it now.
+            if (!addedWhere_.isEmpty()) {
+                const QString where = addedWhere_;
+                addedWhere_.clear();
+                for (const Origin &origin : catalog_.origins)
+                    if (QDir::cleanPath(origin.where()) == QDir::cleanPath(where)) {
+                        showSources();
+                        frame_->flash(tr("Recipe now reads recipes from %1 (%2).")
+                                          .arg(origin.shown(), counted(catalog_.countFrom(origin.name), tr("%1 recipe"), tr("%1 recipes"))));
+                        return;
+                    }
+            }
             if (stack_->currentWidget() == change_ || stack_->currentWidget() == nullptr) {
                 if (const auto draw = again_)
                     draw();
@@ -748,12 +809,13 @@ void Window::open(const QString &name, Place place)
     if (!item)
         return;
     const QString shown = shownName(name);
-    if (place == Place::Next) {
-        frame_->flash(tr("%1 is only in the next system, so it cannot be opened until after the restart.").arg(shown));
+    if (place == Place::Other) {
+        frame_->flash(tr("%1 is only in %2, so it cannot be opened until %3 is started.")
+                          .arg(shown, catalog_.otherWords(), catalog_.otherRoot.isEmpty() ? tr("that root") : tr("root %1").arg(catalog_.otherRoot)));
         return;
     }
     if (!item->inStore) {
-        frame_->flash(tr("%1 cannot be opened from here: the running system's list names the software and its version, "
+        frame_->flash(tr("%1 cannot be opened from here: the list of the running root names the software and its version, "
                          "not its programs.")
                           .arg(shown));
         return;

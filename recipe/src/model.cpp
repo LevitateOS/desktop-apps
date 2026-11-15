@@ -10,6 +10,8 @@
 #include <QLocale>
 #include <QUrl>
 
+#include <functional>
+
 static QStringList strings(const QJsonValue &value)
 {
     QStringList out;
@@ -77,6 +79,8 @@ Recipe Recipe::fromJson(const QJsonObject &object)
     r.deps = strings(object["deps"]);
     r.buildDeps = strings(object["build_deps"]);
     r.hooks = strings(object["hooks"]);
+    r.libc = strings(about["libc"]);
+    r.libcCarried = about["libc_carried"].toBool();
     return r;
 }
 
@@ -246,7 +250,7 @@ QString Origin::state() const
 
 const InstalledItem *Catalog::installedItem(const QString &name) const
 {
-    for (Place place : {Place::Me, Place::Computer, Place::Next})
+    for (Place place : {Place::Me, Place::Computer, Place::Other})
         if (const InstalledItem *found = installedItem(name, place))
             return found;
     return nullptr;
@@ -263,7 +267,7 @@ const InstalledItem *Catalog::installedItem(const QString &name, Place place) co
 QList<const InstalledItem *> Catalog::installedEverywhere(const QString &name) const
 {
     QList<const InstalledItem *> found;
-    for (Place place : {Place::Me, Place::Computer, Place::Next})
+    for (Place place : {Place::Me, Place::Computer, Place::Other})
         if (const InstalledItem *item = installedItem(name, place))
             found << item;
     return found;
@@ -285,34 +289,84 @@ const UpdateItem *Catalog::update(const QString &name, Place place) const
     return nullptr;
 }
 
-bool Catalog::waitsForRestart(const QString &name) const
+bool Catalog::inOtherRoot(const QString &name) const
 {
-    const QString action = nextChanges.value(name);
-    return action == QLatin1String("install") || action == QLatin1String("update");
+    return installedItem(name, Place::Other) != nullptr;
+}
+
+QString Catalog::otherWords() const
+{
+    return otherRoot.isEmpty() ? QObject::tr("the other root") : QObject::tr("the other root (%1)").arg(otherRoot);
+}
+
+QString Catalog::bootedWords() const
+{
+    return bootedRoot.isEmpty() ? QObject::tr("the running root") : QObject::tr("the running root (%1)").arg(bootedRoot);
+}
+
+QString Catalog::takenOutWords(const InstalledItem &item) const
+{
+    if (item.place == Place::Other)
+        return QObject::tr("It is taken out of %1, which is the only root that holds it.").arg(otherWords());
+    return QObject::tr("It is taken out of %1. %2 keeps it until %3 is started.")
+        .arg(otherWords(), bootedWords().left(1).toUpper() + bootedWords().mid(1),
+             otherRoot.isEmpty() ? QObject::tr("the other root") : otherRoot);
+}
+
+QString Catalog::unavailable(const QString &name) const
+{
+    if (hostLibc.isEmpty() || hostLibc == QLatin1String("unknown"))
+        return QString();
+    // The recipe and the recipes it needs when it runs (what `recipe install` checks).
+    QStringList seen;
+    std::function<QString(const QString &, const QString &)> check = [&](const QString &each, const QString &parent) -> QString {
+        if (seen.contains(each))
+            return QString();
+        seen << each;
+        const Recipe *found = recipe(each);
+        if (!found)
+            return QString();
+        if (!found->libc.isEmpty() && !found->libc.contains(hostLibc)) {
+            const QString build = found->libc.join(QObject::tr(" or "));
+            return parent.isEmpty()
+                       ? QObject::tr("Its build is linked against %1, and this system uses %2, so it would find no loader here.")
+                             .arg(build, hostLibc)
+                       : QObject::tr("It needs %1, whose build is linked against %2; this system uses %3.")
+                             .arg(found->shown(), build, hostLibc);
+        }
+        for (const QString &dep : found->deps) {
+            const QString why = check(dep, parent.isEmpty() ? each : parent);
+            if (!why.isEmpty())
+                return why;
+        }
+        return QString();
+    };
+    return check(name, QString());
 }
 
 QList<Place> Catalog::installPlaces(const QString &name) const
 {
     QList<Place> free;
-    // Next counts as held: installing again would repeat what is already waiting.
-    if (!installedItem(name, Place::Computer) && !installedItem(name, Place::Next) && !waitsForRestart(name))
-        free << Place::Computer;
+    // "For me" comes first: it is the default. The other root counts as held: installing
+    // again would repeat what is already written there.
     if (twoPlaces && !installedItem(name, Place::Me))
         free << Place::Me;
+    if (!installedItem(name, Place::Computer) && !installedItem(name, Place::Other))
+        free << Place::Computer;
     return free;
 }
 
-QString placeTitle(Place place)
+QString placeTitle(Place place, const QString &otherRoot)
 {
     switch (place) {
     case Place::Me:
         return QObject::tr("For me");
     case Place::Computer:
-        return QObject::tr("For this computer");
-    case Place::Next:
+        return QObject::tr("For everyone");
+    case Place::Other:
         break;
     }
-    return QObject::tr("In the next system, after a restart");
+    return otherRoot.isEmpty() ? QObject::tr("In the other root") : QObject::tr("In the other root (%1)").arg(otherRoot);
 }
 
 static const QList<QPair<QString, const char *>> &categoryTable()

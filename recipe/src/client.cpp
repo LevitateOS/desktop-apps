@@ -20,11 +20,11 @@ RecipeClient::RecipeClient(QObject *parent)
 {
 }
 
-// `recipe` itself sends root's changes to the next system when this is on the
+// `recipe` itself writes root's changes into the other root when this is on the
 // kernel command line (tools/recipe system_route); the window asks the same
 // question to say where things go. The file is read again each time so that
 // a check can swap it.
-bool RecipeClient::locked() const
+bool RecipeClient::ab() const
 {
     QFile file(qEnvironmentVariable("RECIPE_GUI_CMDLINE", "/proc/cmdline"));
     if (!file.open(QIODevice::ReadOnly))
@@ -37,7 +37,7 @@ Places RecipeClient::places() const
 {
     Places found;
     found.one = explicit_;
-    found.locked = !explicit_ && locked();
+    found.ab = !explicit_ && ab();
     found.systemRoot = explicit_ ? packageRoot_ : systemRoot_;
     found.password = !rootHelper_.isEmpty();
     return found;
@@ -58,19 +58,18 @@ QStringList RecipeClient::store() const
 }
 
 // Software "for me" is in the person's own store: no --package-root, which is
-// how `recipe` tells it from the computer's. On a locked computer the
-// computer's software is not a store at all: `--system` hands the change to
-// recab, which puts it into the next system.
+// how `recipe` tells it from the computer's. On an A/B system the computer's
+// software is not one store: `--system` writes the change into the other root.
 QStringList RecipeClient::lead(Place place) const
 {
-    return !explicit_ && place != Place::Me && locked() ? QStringList{"--system"} : QStringList();
+    return !explicit_ && place != Place::Me && ab() ? QStringList{"--system"} : QStringList();
 }
 
 QStringList RecipeClient::at(Place place) const
 {
     if (explicit_)
         return store();
-    if (place == Place::Me || locked())
+    if (place == Place::Me || ab())
         return {};
     return store();
 }
@@ -167,40 +166,48 @@ static void readInstalled(const QJsonObject &installed, Catalog &fresh, Place pl
     }
 }
 
-// What `recipe --system installed --json` answers (recab `changes()`): `active`
-// is the running system's selection, `prepared` the next system's, which only
-// root can read (null for a person), `preparation` the next system's state with
-// the list of its changes. Each selection is `{schema_version, packages: {name:
-// {name, version, recipe, ...}}}`: a name and a version, no sizes, no earlier
-// versions, no programs.
+// What `recipe --system installed --json` answers. On an A/B system:
+// `{booted: {root, packages}, other: {root, mount, packages}, not_done: [{package,
+// error}]}`, each package `{name, version, recipe, recipe_digest, dependencies}`:
+// a name and a version, no sizes, no earlier versions, no programs. On a system
+// without A/B it is the plain `{packages, profile}` and is read as a store.
 static void readSystem(const QJsonObject &answer, Catalog &fresh)
 {
-    const QJsonObject active = answer["active"].toObject()["packages"].toObject();
-    const QJsonObject prepared = answer["prepared"].toObject()["packages"].toObject();
-    const bool nextKnown = answer["prepared"].isObject();
-    for (auto it = active.begin(); it != active.end(); ++it) {
+    if (!answer["booted"].isObject()) {
+        readInstalled(answer, fresh, Place::Computer);
+        return;
+    }
+    fresh.ab = true;
+    fresh.bootedRoot = answer["booted"]["root"].toString();
+    fresh.otherRoot = answer["other"]["root"].toString();
+    fresh.otherMount = answer["other"]["mount"].toString();
+    QMap<QString, QString> booted, other;
+    for (const QJsonValue &value : answer["booted"]["packages"].toArray())
+        booted.insert(value.toObject()["name"].toString(), value.toObject()["version"].toString());
+    for (const QJsonValue &value : answer["other"]["packages"].toArray())
+        other.insert(value.toObject()["name"].toString(), value.toObject()["version"].toString());
+    for (auto it = booted.begin(); it != booted.end(); ++it) {
         InstalledItem item;
         item.place = Place::Computer;
         item.inStore = false;
         item.name = it.key();
-        item.version = it.value().toObject()["version"].toString();
-        item.leavesNext = nextKnown && !prepared.contains(it.key());
+        item.version = it.value();
+        item.leavesOther = !other.contains(it.key());
         fresh.installed << item;
     }
-    // What only the next system holds: new, or at another version.
-    for (auto it = prepared.begin(); it != prepared.end(); ++it) {
-        const QString version = it.value().toObject()["version"].toString();
-        if (active.contains(it.key()) && active[it.key()].toObject()["version"].toString() == version)
+    // What only the other root holds: new, or at another version.
+    for (auto it = other.begin(); it != other.end(); ++it) {
+        if (booted.contains(it.key()) && booted[it.key()] == it.value())
             continue;
         InstalledItem item;
-        item.place = Place::Next;
+        item.place = Place::Other;
         item.inStore = false;
         item.name = it.key();
-        item.version = version;
+        item.version = it.value();
         fresh.installed << item;
     }
-    for (const QJsonValue &change : answer["preparation"].toObject()["changes"].toArray())
-        fresh.nextChanges[change.toObject()["package"].toString()] = change.toObject()["action"].toString();
+    for (const QJsonValue &value : answer["not_done"].toArray())
+        fresh.notDone << NotDone{value.toObject()["package"].toString(), value.toObject()["error"].toString()};
 }
 
 static void readUpdates(const QJsonObject &updates, Catalog &fresh, Place place)
@@ -266,13 +273,13 @@ void RecipeClient::load(Loaded done)
     auto finish = [this, done, fresh](bool ok, const QString &problem) {
         --loading_;
         if (ok) {
-            // On a locked computer `recipe updates` cannot look at the running
-            // system's software; the collection's own version says what is newer.
+            // On an A/B system `recipe updates` cannot look at the booted root's
+            // software; the collection's own version says what is newer.
             for (const InstalledItem &item : fresh->installed) {
                 const Recipe *recipe = fresh->recipe(item.name);
-                // Not when the next system already holds the recipe's version, or has a change waiting for it.
-                const InstalledItem *next = fresh->installedItem(item.name, Place::Next);
-                const bool taken = (next && recipe && next->version == recipe->version) || fresh->waitsForRestart(item.name);
+                // Not when the other root already holds the recipe's version.
+                const InstalledItem *other = fresh->installedItem(item.name, Place::Other);
+                const bool taken = other && recipe && other->version == recipe->version;
                 if (item.place == Place::Computer && !item.inStore && recipe && recipe->version != item.version && !taken) {
                     UpdateItem newer{item.name, item.version, recipe->version, Place::Computer, true, {}};
                     newer.changesKnown = false;
@@ -291,7 +298,7 @@ void RecipeClient::load(Loaded done)
     // What is read, in order. The collection first; then each place's
     // software, updates and storage.
     auto steps = std::make_shared<QList<Step>>();
-    const bool one = explicit_, locked = !explicit_ && this->locked();
+    const bool one = explicit_, locked = !explicit_ && ab();
     fresh->twoPlaces = !one;
     steps->append({QStringList{"list", "--json"} + collection() + store(), [fresh](const QJsonObject &list) { readList(list, *fresh); }, nullptr});
     auto store_ = [&](Place place) {
@@ -316,9 +323,9 @@ void RecipeClient::load(Loaded done)
     }
 
     auto next = std::make_shared<std::function<void(int)>>();
-    *next = [this, steps, next, finish](int index) {
+    *next = [this, steps, next, finish, fresh](int index) {
         if (index >= steps->size())
-            return finish(true, QString());
+            return askHostLibc(fresh, [finish] { finish(true, QString()); });
         const Step &step = steps->at(index);
         query(step.arguments, [steps, next, finish, index](const QJsonObject &answer, const QString &problem) {
             const Step &step = steps->at(index);
@@ -333,6 +340,56 @@ void RecipeClient::load(Loaded done)
         });
     };
     (*next)(0);
+}
+
+// Recipe says this system's C library only in `recipe info` of a recipe that declares one
+// ("this system's C library is glibc (…)"); the list carries what each recipe declares and
+// nothing about the system. A recipe that cannot be asked about leaves it unknown: nothing is guessed.
+void RecipeClient::askHostLibc(std::shared_ptr<Catalog> fresh, std::function<void()> then)
+{
+    const Recipe *declaring = nullptr;
+    for (const Recipe &recipe : fresh->recipes)
+        if (!recipe.libc.isEmpty()) {
+            declaring = &recipe;
+            break;
+        }
+    if (!declaring) {
+        then();
+        return;
+    }
+    auto *run = new Run(program_, QStringList{"info", fresh->qualified(declaring->name)} + collection() + store(), this);
+    connect(run, &Run::finished, this, [run, fresh, then](bool ok) {
+        if (ok) {
+            static const QRegularExpression colour(QStringLiteral("\x1b\\[[0-9;]*[A-Za-z]"));
+            static const QRegularExpression says(QStringLiteral("this system's C library is (glibc|musl|unknown)"));
+            const QRegularExpressionMatch found = says.match(QString::fromUtf8(run->answer()).remove(colour));
+            if (found.hasMatch())
+                fresh->hostLibc = found.captured(1);
+        }
+        run->deleteLater();
+        then();
+    });
+    run->start();
+}
+
+void RecipeClient::recipeFile(const QString &qualifiedName,
+                              std::function<void(const QString &path, const QString &problem)> then)
+{
+    auto *run = new Run(program_, QStringList{"info", qualifiedName} + collection() + store(), this);
+    connect(run, &Run::finished, this, [run, then](bool ok) {
+        static const QRegularExpression colour(QStringLiteral("\x1b\\[[0-9;]*[A-Za-z]"));
+        static const QRegularExpression says(QStringLiteral("^Recipe:\\s+(\\S.*?)\\s*$"), QRegularExpression::MultilineOption);
+        const QString text = QString::fromUtf8(run->answer()).remove(colour);
+        const QRegularExpressionMatch found = says.match(text);
+        const QString problem = run->problem();
+        run->deleteLater();
+        if (ok && found.hasMatch())
+            then(found.captured(1), QString());
+        else
+            then(QString(), ok ? QObject::tr("`recipe info` did not say which file it is.")
+                               : QObject::tr("`recipe info` failed: %1").arg(problem));
+    });
+    run->start();
 }
 
 Run *RecipeClient::change(const QStringList &arguments, Place place)

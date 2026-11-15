@@ -14,6 +14,7 @@
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLineEdit>
 #include <QLocale>
 #include <QPlainTextEdit>
@@ -59,6 +60,22 @@ QHBoxLayout *recipeHeader(const Recipe &recipe, const QString &title, QLabel **t
     row->addLayout(words);
     row->addStretch();
     return row;
+}
+
+QLabel *tinted(QLabel *label, Mood mood)
+{
+    // Inside a Panel (whose background is the view colour) a label's text is the Text role.
+    QPalette palette = label->palette();
+    palette.setColor(QPalette::WindowText, moodColour(palette, mood));
+    palette.setColor(QPalette::Text, moodColour(palette, mood));
+    label->setPalette(palette);
+    return label;
+}
+
+// The flag shown before an install: proprietary software is chosen knowingly.
+QString proprietaryWords(const Recipe &recipe)
+{
+    return QObject::tr("Proprietary software. Its licence: %1.").arg(recipe.license);
 }
 
 QString fetchSentence(const Recipe &recipe)
@@ -279,6 +296,12 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
         words->addStretch();
         words->addWidget(link, 0, Qt::AlignLeft);
         words->addWidget(dim(text(recipe.description)));
+        // What a person should know before the button: proprietary, or not runnable here.
+        const QString unavailable = catalog.unavailable(recipe.name);
+        if (recipe.proprietary())
+            words->addWidget(tinted(text(tr("Proprietary software")), Mood::Warn));
+        if (!unavailable.isEmpty())
+            words->addWidget(dim(text(unavailable)));
         words->addStretch();
         grid->addLayout(words, row, 1);
         const Origin *its = catalog.origin(recipe.origin);
@@ -291,9 +314,9 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
         // Software can be in several places; the button is for what is next to do.
         const QList<const InstalledItem *> held = catalog.installedEverywhere(name);
         const UpdateItem *newer = catalog.update(name);
-        bool onlyNext = !held.isEmpty();
+        bool onlyOther = !held.isEmpty();
         for (const InstalledItem *item : held)
-            onlyNext = onlyNext && item->place == Place::Next;
+            onlyOther = onlyOther && item->place == Place::Other;
         if (newer && newer->held) {
             // Kept at its version: its update is not offered until it is released.
             grid->addWidget(dim(text(tr("Kept"))), row, 4, Qt::AlignRight);
@@ -302,12 +325,17 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
             auto *button = new QPushButton(tr("Update"));
             connect(button, &QPushButton::clicked, this, [this, name, where] { emit update(name, where); });
             grid->addWidget(button, row, 4, Qt::AlignRight);
-        } else if (held.isEmpty() && !catalog.waitsForRestart(name)) {
+        } else if (held.isEmpty() && !catalog.inOtherRoot(name) && !unavailable.isEmpty()) {
+            grid->addWidget(dim(text(tr("Not available"))), row, 4, Qt::AlignRight);
+        } else if (held.isEmpty() && !catalog.inOtherRoot(name)) {
             auto *button = new QPushButton(tr("Install"));
             connect(button, &QPushButton::clicked, this, [this, name] { emit install(name); });
             grid->addWidget(button, row, 4, Qt::AlignRight);
         } else {
-            grid->addWidget(dim(text(onlyNext || held.isEmpty() ? tr("After a restart") : tr("Installed"))), row, 4, Qt::AlignRight);
+            grid->addWidget(dim(text(onlyOther || held.isEmpty()
+                                         ? (catalog.otherRoot.isEmpty() ? tr("In the other root") : tr("In root %1").arg(catalog.otherRoot))
+                                         : tr("Installed"))),
+                            row, 4, Qt::AlignRight);
         }
         ++row;
     }
@@ -395,12 +423,13 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     const QList<const InstalledItem *> held = catalog.installedEverywhere(name);
     const QList<Place> free = catalog.installPlaces(name);
     const bool several = held.size() > 1;
-    // "for me", "for this computer": which place a button or a line is about.
+    // "for me", "for everyone": which place a button or a line is about.
     auto where = [&catalog](Place place) {
         if (!catalog.twoPlaces)
             return QString();
-        return place == Place::Me ? tr("for me") : place == Place::Computer ? tr("for this computer") : tr("in the next system");
+        return place == Place::Me ? tr("for me") : place == Place::Computer ? tr("for everyone") : tr("in the other root");
     };
+    const QString unavailable = catalog.unavailable(name);
 
     auto *backLink = new ClickLabel(tr("‹ All software"));
     dim(backLink);
@@ -427,6 +456,12 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     if (its)
         line += tr(" · from %1").arg(its->shown());
     words->addWidget(dim(text(line, true)));
+    // Said before anything can be installed: proprietary software is chosen knowingly, and a
+    // recipe this system cannot run is not offered.
+    if (recipe.proprietary())
+        words->addWidget(tinted(text(proprietaryWords(recipe), true), Mood::Warn));
+    if (!unavailable.isEmpty() && free.size() && held.isEmpty())
+        words->addWidget(text(tr("Not available on this system. %1").arg(unavailable), true));
     header->addLayout(words, 1);
 
     auto *actions = new QVBoxLayout;
@@ -434,20 +469,20 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     auto *buttons = new QHBoxLayout;
     // What it does for each place that holds it; with two, the button says which.
     auto named = [&](const QString &text, Place place) {
-        return several || (catalog.twoPlaces && place == Place::Next) ? tr("%1 %2").arg(text, where(place)) : text;
+        return several || (catalog.twoPlaces && place == Place::Other) ? tr("%1 %2").arg(text, where(place)) : text;
     };
     bool openOffered = false;
     for (const InstalledItem *item : held) {
         const Place place = item->place;
-        // Software only the next system holds, or the running system of a locked computer, has nothing
+        // Software only the other root holds, or the booted root's list on an A/B system, has nothing
         // to open: the sentences under "Where it is" say why.
-        if (!openOffered && item->inStore && place != Place::Next && !item->menu.isEmpty()) {
+        if (!openOffered && item->inStore && place != Place::Other && !item->menu.isEmpty()) {
             openOffered = true;
             // The update is the page's main button when there is one to offer.
             bool offered = false;
             for (const InstalledItem *other : held) {
                 const UpdateItem *update = catalog.update(name, other->place);
-                offered = offered || (update && !update->held && other->place != Place::Next);
+                offered = offered || (update && !update->held && other->place != Place::Other);
             }
             auto *open = offered ? new QPushButton(tr("Open")) : primary(tr("Open"));
             connect(open, &QPushButton::clicked, this, [this, name, place] { emit this->open(name, place); });
@@ -457,7 +492,7 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     bool anyUpdate = false;
     for (const InstalledItem *item : held) {
         const UpdateItem *update = catalog.update(name, item->place);
-        if (!update || item->place == Place::Next)
+        if (!update || item->place == Place::Other)
             continue;
         // A held program is not offered an update until it is released.
         if (update->held) {
@@ -469,15 +504,15 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
         connect(go, &QPushButton::clicked, this, [this, name, place] { emit this->update(name, place); });
         buttons->addWidget(go);
     }
-    if (!free.isEmpty() && !catalog.waitsForRestart(name)) {
+    if (!free.isEmpty() && unavailable.isEmpty()) {
         // Installed in one place and free in the other: the page offers that other place.
         auto *go = held.isEmpty() ? primary(tr("Install")) : new QPushButton(tr("Install %1").arg(where(free.first())));
         connect(go, &QPushButton::clicked, this, [this, name] { emit install(name); });
         buttons->addWidget(go);
     }
     QString note = tr("You see what will happen before anything starts");
-    if (catalog.waitsForRestart(name) && !catalog.installedItem(name, Place::Next))
-        note = tr("The next system holds a change for it. It takes effect after a restart.");
+    if (!free.isEmpty() && !unavailable.isEmpty() && held.isEmpty())
+        note = tr("Not available on this system");
     else if (!held.isEmpty() && !anyUpdate)
         note = tr("Installed");
     // Several buttons, each saying where, do not fit beside the name: they take a row of their own.
@@ -560,7 +595,7 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     if (!recipe.keeps.isEmpty())
         fact(with, tr("It keeps"), tr("its settings in %1. They stay when it is removed.").arg(recipe.keeps.join(tr(", "))));
     if (!recipe.license.isEmpty())
-        fact(with, tr("Licence"), recipe.license == QLatin1String("proprietary") ? tr("proprietary, not free software") : recipe.license);
+        fact(with, tr("Licence"), recipe.proprietary() ? tr("%1 (proprietary, not free software)").arg(recipe.license) : recipe.license);
     if (!recipe.homepage.isEmpty()) {
         auto *home = new QLabel(QStringLiteral("<a href=\"%1\">%2</a>")
                                     .arg(recipe.homepage.toHtmlEscaped(), QUrl(recipe.homepage).host().toHtmlEscaped()));
@@ -616,18 +651,17 @@ void RecipePage::whereItIs(QVBoxLayout *body, const Catalog &catalog, const QStr
     grid->setVerticalSpacing(6);
     grid->setColumnStretch(1, 1);
     int row = 0;
-    for (Place place : {Place::Me, Place::Computer, Place::Next}) {
+    for (Place place : {Place::Me, Place::Computer, Place::Other}) {
         const InstalledItem *item = catalog.installedItem(name, place);
-        const bool waiting = place == Place::Next && !item && catalog.waitsForRestart(name);
-        if (place == Place::Next && !item && !waiting)
+        if (place == Place::Other && !item)
             continue;
         if (!catalog.twoPlaces && place != Place::Computer)
             continue;
-        const QString label = catalog.twoPlaces ? placeTitle(place) : tr("In this store");
+        const QString label = catalog.ab && place == Place::Computer ? tr("For everyone, in %1").arg(catalog.bootedWords())
+                              : catalog.twoPlaces ? placeTitle(place, catalog.otherRoot)
+                                                  : tr("In this store");
         QString state;
-        if (waiting) {
-            state = tr("A change for it waits in the next system.");
-        } else if (!item) {
+        if (!item) {
             state = tr("Not installed");
         } else {
             QStringList parts{tr("Version %1").arg(item->version)};
@@ -635,21 +669,21 @@ void RecipePage::whereItIs(QVBoxLayout *body, const Catalog &catalog, const QStr
                 parts << tr("installed on %1").arg(QLocale().toString(item->installedOn, "d MMMM yyyy"));
             if (item->sizeBytes)
                 parts << bytesText(item->sizeBytes);
-            if (place == Place::Next)
-                parts << tr("works after a restart");
+            if (place == Place::Other)
+                parts << tr("active when %1 is started").arg(catalog.otherRoot.isEmpty() ? tr("that root") : tr("root %1").arg(catalog.otherRoot));
             state = parts.join(tr(" · "));
             QStringList sentences;
-            if (item->leavesNext)
-                sentences << tr("The next system no longer holds it.");
-            if (place == Place::Next)
+            if (item->leavesOther)
+                sentences << tr("%1 no longer holds it.").arg(catalog.otherWords().left(1).toUpper() + catalog.otherWords().mid(1));
+            if (place == Place::Other)
                 sentences << tr("It cannot be opened until then.");
             else if (!item->inStore)
-                sentences << tr("This window cannot open it: the running system's list names the software and its version, "
+                sentences << tr("This window cannot open it: the list of the running root names the software and its version, "
                                 "not its programs.");
             if (item->held)
                 sentences << tr("Kept at this version.");
             const UpdateItem *update = catalog.update(name, place);
-            if (update && place != Place::Next)
+            if (update && place != Place::Other)
                 sentences << (item->held ? tr("%1 is ready, and is not offered while it is kept.").arg(update->to)
                                          : tr("%1 is ready.").arg(update->to));
             if (!sentences.isEmpty())
@@ -657,7 +691,7 @@ void RecipePage::whereItIs(QVBoxLayout *body, const Catalog &catalog, const QStr
         }
         grid->addWidget(dim(text(label)), row, 0, Qt::AlignTop);
         QLabel *value = text(state, true);
-        if (!item && !waiting)
+        if (!item)
             dim(value);
         grid->addWidget(value, row, 1);
         ++row;
@@ -673,7 +707,7 @@ void RecipePage::actionRows(QVBoxLayout *body, const Catalog &catalog, const QSt
     auto where = [&catalog](Place place) {
         if (!catalog.twoPlaces)
             return QString();
-        return place == Place::Me ? tr("for me") : place == Place::Computer ? tr("for this computer") : tr("in the next system");
+        return place == Place::Me ? tr("for me") : place == Place::Computer ? tr("for everyone") : tr("in the other root");
     };
     if (!held.isEmpty()) {
         Rows rows;
@@ -681,7 +715,7 @@ void RecipePage::actionRows(QVBoxLayout *body, const Catalog &catalog, const QSt
             const Place place = item->place;
             const QString at = several ? tr(" (%1)").arg(where(place)) : QString();
             // `recipe` holds software only where a store stands behind it.
-            if (item->inStore && place != Place::Next) {
+            if (item->inStore && place != Place::Other) {
                 if (item->held) {
                     auto *release = new QPushButton(tr("Let it update again"));
                     connect(release, &QPushButton::clicked, this, [this, name, place] { emit hold(name, place, false); });
@@ -703,8 +737,7 @@ void RecipePage::actionRows(QVBoxLayout *body, const Catalog &catalog, const QSt
             connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
             QString removed;
             if (!item->inStore)
-                removed = place == Place::Next ? tr("Taken out of the next system, which is the only one that holds it.")
-                                               : tr("Taken out of the next system. The running system keeps it until the restart.");
+                removed = catalog.takenOutWords(*item);
             else
                 removed = tr("No longer installed. Its files stay among the earlier versions until those are cleared, in Storage.");
             rows.add(tr("Remove%1").arg(at), removed, {remove});
@@ -743,7 +776,7 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
     header->addLayout(words, 1);
     auto *buttons = new QHBoxLayout;
     for (const InstalledItem *item : held) {
-        if (item->inStore && item->place != Place::Next && !item->menu.isEmpty()) {
+        if (item->inStore && item->place != Place::Other && !item->menu.isEmpty()) {
             const Place place = item->place;
             auto *open = primary(tr("Open"));
             connect(open, &QPushButton::clicked, this, [this, name, place] { emit this->open(name, place); });
@@ -761,7 +794,7 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
         auto *panel = new Panel;
         QString title = tr("What its receipt says");
         if (several)
-            title = tr("What its receipt says (%1)").arg(placeTitle(item->place).toLower());
+            title = tr("What its receipt says (%1)").arg(placeTitle(item->place, catalog.otherRoot).toLower());
         panel->column()->addWidget(strong(title));
         auto *form = new QFormLayout;
         form->setHorizontalSpacing(16);
@@ -817,11 +850,14 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
 
 // ---------------------------------------------------------------- A run
 
-void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place)
+void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place, bool toOther)
 {
     catalog_ = catalog;
     name_ = name;
     run_ = run;
+    concluded_ = false;
+    toOther_ = toOther;
+    answer_ = QJsonObject();
     marks_.clear();
     lines_.clear();
     log_.clear();
@@ -892,9 +928,11 @@ void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place
         if (found.hasMatch())
             log_ = found.captured(1);
     });
+    // The command's exit ends the run when no last event did (or the run is written into the
+    // other root afterwards). A command that lingers after its last event changes nothing.
     connect(run, &Run::finished, this, [this, run](bool ok) {
         if (run == run_)
-            onFinished(ok);
+            conclude(ok);
         run->deleteLater();
     });
     emit status(tr("Starting %1").arg(recipe.shown()));
@@ -993,13 +1031,65 @@ void RunPage::onEvent(const QJsonObject &event)
         state_->setText(tr("Building %1: %2 of %3").arg(shown).arg(event["done"].toInt()).arg(event["total"].toInt()));
     } else if (kind == QLatin1String("say")) {
         state_->setText(event["text"].toString());
+    } else if (kind == QLatin1String("done")) {
+        // The recipe's last event. For software written into the other root, the writing is still to
+        // come: say so. Otherwise this is the end, whenever the command exits.
+        for (StepMark *stepMark : marks_)
+            if (stepMark->state() == StepMark::Running)
+                stepMark->setState(StepMark::Done);
+        if (toOther_) {
+            bar_->setRange(0, 0);
+            state_->setText(tr("%1 is ready. Writing it into %2…").arg(shown, catalog_.otherWords()));
+            emit status(tr("Writing %1 into %2").arg(shown, catalog_.otherWords()));
+        } else {
+            conclude(true);
+        }
+    } else if (kind == QLatin1String("failed")) {
+        // `Run` has the reason and the step by now. On an A/B system the command still says more
+        // (nothing was written), so its exit is waited for.
+        if (!toOther_)
+            conclude(false);
     }
+}
+
+void RunPage::conclude(bool ok)
+{
+    if (concluded_)
+        return;
+    concluded_ = true;
+    onFinished(ok);
+}
+
+bool RunPage::showsRunning() const
+{
+    return stop_ && stop_->isVisibleTo(this) && bar_ && bar_->isVisibleTo(this);
+}
+
+QString RunPage::stateWords() const
+{
+    return state_ ? state_->text() : QString();
 }
 
 void RunPage::onFinished(bool ok)
 {
     emit status(QString());
     if (ok) {
+        // Shown now, not when the lists have been read again: the run is over.
+        const Recipe *found = catalog_.recipe(name_);
+        const QString shown = found ? found->shown() : name_;
+        answer_ = QJsonDocument::fromJson(run_->answer()).object();
+        for (StepMark *stepMark : marks_)
+            if (stepMark->state() == StepMark::Running)
+                stepMark->setState(StepMark::Done);
+        bar_->hide();
+        stop_->hide();
+        stopNote_->hide();
+        title_->setText(updatingFrom_.isEmpty() ? tr("Installed %1").arg(shown) : tr("Updated %1").arg(shown));
+        if (answer_.contains("other_root"))
+            state_->setText(tr("Written into the other root (%1). It becomes active when root %1 is started. Reading what is installed now…")
+                                .arg(answer_["other_root"].toString()));
+        else
+            state_->setText(tr("Done. Reading what is installed now…"));
         emit succeeded(name_);
         return;
     }
@@ -1286,32 +1376,50 @@ namespace {
 
 // Where a row is, in the words of a sentence about what the place means for
 // this software, said only when there are two places to tell apart.
-QString whereSentence(const InstalledItem &item)
+QString whereSentence(const InstalledItem &item, const Catalog &catalog)
 {
+    const QString other = catalog.otherWords();
     switch (item.place) {
     case Place::Me:
         return QObject::tr("It is in your own store: only you have it.");
     case Place::Computer:
-        if (!item.inStore) // recab's list of a locked computer: the running system
-            return (item.leavesNext ? QObject::tr("It is in the running system, for everyone. The next system no longer holds it.")
-                                    : QObject::tr("It is in the running system, for everyone."))
-                   + QObject::tr(" This window cannot open it: the running system's list names the software and its "
+        if (!item.inStore) // `recipe --system installed` on an A/B system: the booted root
+            return (item.leavesOther ? QObject::tr("It is in %1, for everyone, and active now. %2 no longer holds it.")
+                                           .arg(catalog.bootedWords(), other.left(1).toUpper() + other.mid(1))
+                                     : QObject::tr("It is in %1, for everyone, and active now.").arg(catalog.bootedWords()))
+                   + QObject::tr(" This window cannot open it: the list of the running root names the software and its "
                                  "version, not its programs.");
         return QObject::tr("It is on this computer, for everyone.");
-    case Place::Next:
+    case Place::Other:
         break;
     }
-    return QObject::tr("Only the next system holds it. It works after a restart, and cannot be opened until then.");
+    return QObject::tr("Only %1 holds it. It becomes active when %2 is started, and cannot be opened until then.")
+        .arg(other, catalog.otherRoot.isEmpty() ? QObject::tr("that root") : QObject::tr("root %1").arg(catalog.otherRoot));
 }
 
-QLabel *tinted(QLabel *label, Mood mood)
+// System changes that were in the other root, were wiped from it (`recab copy`), and could not be
+// written again: each with Recipe's error and the button that copies it for the person's own agent.
+void addNotDone(QVBoxLayout *into, const Catalog &catalog)
 {
-    // Inside a Panel (whose background is the view colour) a label's text is the Text role.
-    QPalette palette = label->palette();
-    palette.setColor(QPalette::WindowText, moodColour(palette, mood));
-    palette.setColor(QPalette::Text, moodColour(palette, mood));
-    label->setPalette(palette);
-    return label;
+    for (const NotDone &each : catalog.notDone) {
+        auto *panel = new Panel;
+        panel->column()->addWidget(tinted(strong(QObject::tr("Not done yet: %1").arg(each.package)), Mood::Warn));
+        panel->column()->addWidget(text(QObject::tr("%1 was written into %2 and is gone from it, because %2 was made a copy of %3. Writing it "
+                                           "again did not work. Recipe tries again by itself the next time you change system software.")
+                                            .arg(each.package, catalog.otherWords(), catalog.bootedWords()),
+                                        true));
+        panel->column()->addWidget(text(each.error, true));
+        QString issue = QObject::tr("Recipe could not write %1 into %2 again after it was wiped from there.")
+                            .arg(each.package, catalog.otherWords());
+        QString copied = QObject::tr("The issue:\n%1\n\nThe facts:\n- Recipe's own message: %2\n- %3 is gone from %4 because it was made a "
+                            "copy of %5.\n- Recipe tries again by itself on the next system action.\n")
+                             .arg(issue, each.error, each.package, catalog.otherWords(), catalog.bootedWords());
+        auto *row = new QHBoxLayout;
+        row->addStretch();
+        row->addWidget(copyForAgentButton([copied] { return copied; }));
+        panel->column()->addLayout(row);
+        into->addWidget(panel);
+    }
 }
 
 // What a row says about a newer version, and whether the program is kept.
@@ -1344,15 +1452,15 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
     } else if (!catalog.twoPlaces) {
         summary = tr("%1, %2.").arg(counted(catalog.installed.size(), tr("%1 program"), tr("%1 programs")), bytesText(size));
     } else {
-        // Sizes only where a store measured them: the running system of a locked computer has none.
-        int me = 0, computer = 0, next = 0;
+        // Sizes only where a store measured them: the booted root's list has none.
+        int me = 0, computer = 0, other = 0;
         for (const InstalledItem &item : catalog.installed)
-            (item.place == Place::Me ? me : item.place == Place::Computer ? computer : next)++;
-        summary = tr("%1: %2 for me, %3 for this computer.")
-                      .arg(counted(catalog.installed.size() - next, tr("%1 program"), tr("%1 programs")),
+            (item.place == Place::Me ? me : item.place == Place::Computer ? computer : other)++;
+        summary = tr("%1: %2 for me, %3 for everyone.")
+                      .arg(counted(catalog.installed.size() - other, tr("%1 program"), tr("%1 programs")),
                            QString::number(me), QString::number(computer));
-        if (next)
-            summary += tr(" %1 more only in the next system.").arg(next);
+        if (other)
+            summary += tr(" %1 more only in %2.").arg(other).arg(catalog.otherWords());
     }
     top->addWidget(dim(text(summary, true)));
     // The earlier versions and clearing them are in Storage.
@@ -1367,6 +1475,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         top->addWidget(dim(text(tr("This computer's own software could not be read: %1").arg(catalog.computerProblem), true)));
     column->addLayout(top);
     if (catalog.installed.isEmpty()) {
+        addNotDone(column, catalog);
         column->addStretch();
         return;
     }
@@ -1386,7 +1495,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
     groups->setContentsMargins(0, 0, 2, 0);
     groups->setSpacing(8);
     QTreeWidgetItem *chosenLine = nullptr, *firstLine = nullptr;
-    for (Place place : {Place::Me, Place::Computer, Place::Next}) {
+    for (Place place : {Place::Me, Place::Computer, Place::Other}) {
         QList<const InstalledItem *> here;
         for (const InstalledItem &item : catalog.installed)
             if (item.place == place)
@@ -1395,12 +1504,13 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             continue;
         if (catalog.twoPlaces) {
             const bool inStore = here.first()->inStore;
+            const QString start = catalog.otherRoot.isEmpty() ? tr("that root") : tr("root %1").arg(catalog.otherRoot);
             QString title = place == Place::Me ? tr("For me · works at once, for you only")
-                            : place == Place::Computer ? (inStore ? tr("For this computer · works for everyone")
-                                                                  : tr("For this computer · the running system, for everyone"))
-                                                       : tr("%1 · not in effect yet").arg(placeTitle(Place::Next));
+                            : place == Place::Computer ? (inStore ? tr("For everyone · works at once")
+                                                                  : tr("For everyone · in %1, active now").arg(catalog.bootedWords()))
+                                                       : tr("%1 · active when %2 is started").arg(placeTitle(Place::Other, catalog.otherRoot), start);
             title += tr(" · %1").arg(counted(here.size(), tr("%1 program"), tr("%1 programs")));
-            if (catalog.stores[int(place)].has && place != Place::Next)
+            if (catalog.stores[int(place)].has && place != Place::Other)
                 title += tr(", %1").arg(bytesText(catalog.stores[int(place)].activeBytes));
             groups->addWidget(strong(title));
         }
@@ -1430,6 +1540,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         groups->addWidget(tree);
         trees->append(tree);
     }
+    addNotDone(groups, catalog);
     groups->addStretch();
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
@@ -1466,7 +1577,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                              .arg(item->source, shared->origin(item->source) ? QString() : tr(", which is not among the sources any more"));
         }
         if (shared->twoPlaces)
-            about += (about.isEmpty() ? QString() : tr(" ")) + whereSentence(*item);
+            about += (about.isEmpty() ? QString() : tr(" ")) + whereSentence(*item, *shared);
         if (item->menu.isEmpty() && !item->programs.isEmpty())
             about += tr(" Run it in a terminal as %1.").arg(item->programs.join(tr(", ")));
         if (item->held)
@@ -1482,7 +1593,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         }
         // A command-line tool has nothing to open; it is used from a terminal. Only software in a
         // store that is in effect has programs to start.
-        if (!item->menu.isEmpty() && item->inStore && place != Place::Next) {
+        if (!item->menu.isEmpty() && item->inStore && place != Place::Other) {
             auto *open = new QPushButton(tr("Open"));
             connect(open, &QPushButton::clicked, this, [this, name, place] { emit this->open(name, place); });
             row->addWidget(open);
@@ -1493,7 +1604,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             row->addWidget(older);
         }
         // `recipe` holds software only where a store stands behind it.
-        if (item->inStore && place != Place::Next) {
+        if (item->inStore && place != Place::Other) {
             auto *keep = new QPushButton(item->held ? tr("Let it update again") : tr("Keep at this version"));
             const bool hold = !item->held;
             connect(keep, &QPushButton::clicked, this, [this, name, place, hold] { emit this->hold(name, place, hold); });
@@ -1503,7 +1614,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
         row->addWidget(remove);
         // A held program is not offered an update until it is released.
-        if (update && place != Place::Next && !update->held) {
+        if (update && place != Place::Other && !update->held) {
             auto *newer = primary(tr("Update to %1").arg(update->to));
             connect(newer, &QPushButton::clicked, this, [this, name, place] { emit this->update(name, place); });
             row->addWidget(newer);
@@ -1607,7 +1718,7 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
         const QString asks = item.held ? tr("Kept at this version")
                              : !item.changesKnown ? tr("Not compared")
                              : item.asksMore() ? tr("More: %1").arg(item.asksMoreWords()) : tr("Nothing more");
-        auto *line = new QTreeWidgetItem(tree, {recipe ? recipe->shown() : item.name, placeTitle(item.place),
+        auto *line = new QTreeWidgetItem(tree, {recipe ? recipe->shown() : item.name, placeTitle(item.place, catalog.otherRoot),
                                                 item.sameVersion ? tr("%1, another recipe").arg(item.from)
                                                                  : tr("%1 → %2").arg(item.from, item.to),
                                                 asks});
@@ -1756,7 +1867,7 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
 
 // ---------------------------------------------------------------- Remove
 
-RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, QWidget *parent)
+RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Remove %1").arg(recipe.shown()));
@@ -1770,10 +1881,8 @@ RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, QWid
     column->addWidget(question);
     QString words;
     if (!item.inStore) {
-        // On a locked computer the change goes into the next system.
-        words = item.place == Place::Next
-                    ? tr("It is taken out of the next system, which is the only one that holds it.")
-                    : tr("It is taken out of the next system. The running system keeps it until the restart.");
+        // On an A/B system the change goes into the other root.
+        words = takenOut;
     } else {
         words = recipe.menu.isEmpty() && item.menu.isEmpty()
                     ? tr("It is no longer installed.")

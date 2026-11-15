@@ -40,7 +40,7 @@ QString listWords(const QStringList &names)
 }
 
 // The two lines under a place's name.
-BeforePage::Choice placeCard(const Places &places, Place place)
+BeforePage::Choice placeCard(const Catalog &catalog, const Places &places, Place place)
 {
     BeforePage::Choice card;
     card.key = placeKey(place);
@@ -54,9 +54,11 @@ BeforePage::Choice placeCard(const Places &places, Place place)
         card.name = placeTitle(Place::Me);
         card.first = QObject::tr("Into your own folder. It works at once, for you only.");
         card.second = QObject::tr("No password.");
-    } else if (places.locked) {
+    } else if (catalog.ab) {
         card.name = placeTitle(Place::Computer);
-        card.first = QObject::tr("Into the next system. It works after a restart, for everyone.");
+        const QString root = catalog.otherRoot.isEmpty() ? QObject::tr("that root") : QObject::tr("root %1").arg(catalog.otherRoot);
+        card.first = QObject::tr("Written into %1, not into the running root. It becomes active, for everyone, when %2 is started.")
+                         .arg(catalog.otherWords(), root);
         card.second = password;
     } else {
         card.name = placeTitle(Place::Computer);
@@ -94,7 +96,7 @@ QString fetchSentence(const Recipe &recipe)
 QString needsSentence(const Catalog &catalog, const Recipe &recipe, Place place)
 {
     auto there = [&](const QString &name) {
-        return catalog.installedItem(name, place) || (place == Place::Computer && catalog.installedItem(name, Place::Next));
+        return catalog.installedItem(name, place) || (place == Place::Computer && catalog.installedItem(name, Place::Other));
     };
     auto shown = [&](const QString &name) {
         const Recipe *found = catalog.recipe(name);
@@ -183,7 +185,7 @@ BeforePage::Content beforeContent(const Catalog &catalog, const Places &places, 
                                                        : QObject::tr("Update %1?").arg(shown);
     else if (ask.choices.size() > 1)
         content.title = place == Place::Me ? QObject::tr("Install %1 for me?").arg(shown)
-                                           : QObject::tr("Install %1 for this computer?").arg(shown);
+                                           : QObject::tr("Install %1 for everyone?").arg(shown);
     else
         content.title = QObject::tr("Install %1?").arg(shown);
     content.go = ask.update ? QObject::tr("Update") : QObject::tr("Install");
@@ -191,7 +193,7 @@ BeforePage::Content beforeContent(const Catalog &catalog, const Places &places, 
     // Where it goes: a choice for an install, a statement for an update.
     content.whereTitle = ask.update ? QObject::tr("Where it is") : QObject::tr("Where it goes");
     for (Place each : ask.update ? QList<Place>{ask.place} : ask.choices)
-        content.choices << placeCard(places, each);
+        content.choices << placeCard(catalog, places, each);
     content.chosen = placeKey(place);
 
     // What happens: only what the catalog says.
@@ -202,12 +204,15 @@ BeforePage::Content beforeContent(const Catalog &catalog, const Places &places, 
                                               "and that one is used.").arg(shown, update->from)
                                 : QObject::tr("%1 goes from version %2 to %3.").arg(shown, update->from, update->to));
     }
+    // Proprietary software is chosen knowingly: the flag comes before anything else is said.
+    if (recipe.proprietary())
+        content.happens << QObject::tr("%1 is proprietary software. Its licence: %2.").arg(shown, recipe.license);
     content.happens << fetchSentence(recipe);
     const QString needs = needsSentence(catalog, recipe, place);
     if (!needs.isEmpty())
         content.happens << needs;
-    if (places.locked && !places.one && place != Place::Me)
-        content.happens << QObject::tr("The running system is not touched.");
+    if (catalog.ab && !places.one && place != Place::Me)
+        content.happens << QObject::tr("The running root is not touched.");
 
     // What the recipe may use. For an update: what `recipe updates` said changed.
     content.tableTitle = QObject::tr("What the recipe may use");

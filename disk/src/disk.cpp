@@ -107,24 +107,14 @@ Described describe(const Partition &part, const DiskInfo &info)
 {
     const QString device = part.path;
     if (!device.isEmpty() && device == info.runningDevice)
-        return {QObject::tr("The running system"), QObject::tr("The system you are using now · %1").arg(device), QString()};
+        return {QObject::tr("Root %1 — booted, locked").arg(info.bootedRoot), QObject::tr("The root you are using now · %1").arg(device),
+                QString()};
     if (!device.isEmpty() && device == info.otherDevice) {
-        QString title = QObject::tr("The other system"), note;
-        if (info.otherRole == QLatin1String("previous")) {
-            title = QObject::tr("The system from before");
-            note = QObject::tr("What ran before the last change");
-        } else if (info.otherRole == QLatin1String("next")) {
-            title = QObject::tr("The next system");
-            note = QObject::tr("Holds a change that is not started yet");
-        } else if (info.otherRole == QLatin1String("copy")) {
-            title = QObject::tr("The second copy");
-            note = QObject::tr("Made as a copy of the running system");
-        }
-        note = (note.isEmpty() ? QString() : note + QObject::tr(" · ")) + device;
+        QString note = device;
         if (info.compared && device == info.otherDeviceCompared)
             note += QObject::tr(" · its files took %1 when compared on %2")
                         .arg(bytesText(info.otherFilesBytes), QLocale().toString(info.comparedWhen.date(), QLocale::ShortFormat));
-        return {title, note, QStringLiteral("compare")};
+        return {QObject::tr("Root %1 — other, unlocked").arg(info.otherRoot), note, QStringLiteral("compare")};
     }
     const bool homeHere = (!info.homeDevice.isEmpty() && device == info.homeDevice) || (!info.homeMount.isEmpty() && part.mount == info.homeMount);
     if (homeHere)
@@ -418,7 +408,7 @@ void DiskPage::show(const DiskInfo &info)
                 connect(go, &QPushButton::clicked, this, &DiskPage::showBrowse);
                 grid->addWidget(go, row, 4, Qt::AlignRight);
             } else if (what.action == QLatin1String("compare")) {
-                auto *go = small(tr("Compare the two…"));
+                auto *go = small(tr("Compare the two roots…"));
                 connect(go, &QPushButton::clicked, this, &DiskPage::showSystems);
                 grid->addWidget(go, row, 4, Qt::AlignRight);
             }

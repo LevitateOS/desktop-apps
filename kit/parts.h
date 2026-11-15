@@ -38,19 +38,6 @@ private:
     Tone tone_;
 };
 
-// A small drawn picture for a card. Drawn, not typed or loaded, so it needs
-// no icon theme and no font.
-class Glyph : public QWidget {
-public:
-    enum Kind { Lock, Plus, Before, Check, Cross };
-    Glyph(Kind kind, bool filled, QWidget *parent = nullptr);
-protected:
-    void paintEvent(QPaintEvent *event) override;
-private:
-    Kind kind_;
-    bool filled_;
-};
-
 // A panel outlined in the colour for "this went wrong".
 class Verdict : public Panel {
 public:
@@ -127,15 +114,4 @@ public:
     QSize minimumSizeHint() const override { return {0, QLabel::minimumSizeHint().height()}; }
 protected:
     void paintEvent(QPaintEvent *event) override;
-};
-
-// A small outlined count or state ("1 running"), in the colour of its mood.
-class Chip : public QLabel {
-public:
-    explicit Chip(const QString &words, Mood mood = Mood::Plain, QWidget *parent = nullptr);
-    QSize sizeHint() const override;
-protected:
-    void paintEvent(QPaintEvent *event) override;
-private:
-    Mood mood_;
 };

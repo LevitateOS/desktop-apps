@@ -373,6 +373,10 @@
     },
     "keeps": [
      "~/.config/htop"
+    ],
+    "libc": [
+     "glibc",
+     "musl"
     ]
    },
    "sources": {
@@ -661,6 +665,111 @@
    "build_deps": [],
    "hooks": [
     "build",
+    "install",
+    "remove"
+   ]
+  },
+  {
+   "name": "claude-code",
+   "version": "2.1.323",
+   "description": "Claude Code terminal coding agent",
+   "about": {
+    "kind": "tool",
+    "category": "development",
+    "title": "Claude Code",
+    "details": "Runs Anthropic's Claude Code coding agent in the terminal. Needs a Claude account or API key and network access to Anthropic.",
+    "homepage": "https://claude.com/product/claude-code",
+    "license": "proprietary (Anthropic Commercial Terms, all rights reserved)",
+    "libc": [
+     "glibc"
+    ],
+    "adds": {
+     "programs": [
+      "claude"
+     ],
+     "menu": []
+    },
+    "steps": {
+     "acquire": "Downloads the pinned file from Anthropic and checks it against the digest in Anthropic's signed release manifest.",
+     "build": "Copies the file into place and checks it against its digest; nothing is compiled.",
+     "install": "Puts the claude command in bin."
+    },
+    "keeps": []
+   },
+   "sources": {
+    "claude-code": {
+     "url": "https://downloads.claude.ai/claude-code-releases/{version}/linux-x64/claude",
+     "sha256": "7a1c0d4b9a1f0b6c7e8f90123456789abcdef0123456789abcdef0123456789b",
+     "checksum_from": "publisher"
+    }
+   },
+   "needs": {
+    "network": [
+     "downloads.claude.ai:443"
+    ],
+    "memory_mib": 2048,
+    "storage_max_bytes": null,
+    "timeout_secs": 3600,
+    "network_max_bytes": 398458880
+   },
+   "deps": [],
+   "build_deps": [],
+   "hooks": [
+    "acquire",
+    "build",
+    "install",
+    "remove"
+   ]
+  },
+  {
+   "name": "steam",
+   "version": "1.0.0.82",
+   "description": "The Steam game client",
+   "about": {
+    "kind": "app",
+    "category": "games",
+    "title": "Steam",
+    "details": "Valve's game store and launcher. It is a glibc program and needs the 32-bit glibc libraries.",
+    "homepage": "https://store.steampowered.com",
+    "license": "proprietary (Steam Subscriber Agreement)",
+    "libc": [
+     "glibc"
+    ],
+    "adds": {
+     "programs": [
+      "steam"
+     ],
+     "menu": [
+      "Steam"
+     ]
+    },
+    "steps": {
+     "install": "Unpacks Valve's bootstrap package and adds it to the menu."
+    },
+    "keeps": [
+     "~/.local/share/Steam"
+    ]
+   },
+   "sources": {
+    "steam": {
+     "url": "https://repo.steampowered.com/steam/archive/stable/steam_{version}.tar.gz",
+     "sha256": "3b1c0d4b9a1f0b6c7e8f90123456789abcdef0123456789abcdef0123456789c",
+     "checksum_from": "publisher"
+    }
+   },
+   "needs": {
+    "network": [
+     "repo.steampowered.com:443"
+    ],
+    "memory_mib": 1024,
+    "storage_max_bytes": null,
+    "timeout_secs": 900,
+    "network_max_bytes": 104857600
+   },
+   "deps": [],
+   "build_deps": [],
+   "hooks": [
+    "acquire",
     "install",
     "remove"
    ]

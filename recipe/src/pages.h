@@ -6,6 +6,7 @@
 #include "page.h"
 
 #include <QDialog>
+#include <QJsonObject>
 #include <QMap>
 #include <QWidget>
 
@@ -84,7 +85,15 @@ class RunPage : public Page {
     Q_OBJECT
 public:
     using Page::Page;
-    void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer);
+    // `toOther`: the change is written into the other root of an A/B system after the recipe has
+    // run, so the recipe's own `done` is not the end of it; the command's exit is.
+    void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer, bool toOther = false);
+    // What the command printed on its standard output when it ended (`recipe --system install`
+    // says which root it wrote into); empty before.
+    QJsonObject answer() const { return answer_; }
+    // The run as the page shows it now, for a check.
+    bool showsRunning() const;
+    QString stateWords() const;
 signals:
     void back();
     void retry(const QString &name);
@@ -93,6 +102,8 @@ signals:
     void status(const QString &words);
 private:
     void onEvent(const QJsonObject &event);
+    // The end of the run, once: from its last event, or from the command's exit.
+    void conclude(bool ok);
     void onFinished(bool ok);
     StepMark *mark(const QString &recipe, const QString &hook);
     void addPlanRow(const QString &recipe, const QStringList &hooks);
@@ -111,6 +122,8 @@ private:
     QPushButton *stop_ = nullptr;
     QLabel *stopNote_ = nullptr;
     int stepsTotal_ = 0, stepsStarted_ = 0;
+    bool concluded_ = false, toOther_ = false;
+    QJsonObject answer_;
     // The run's output, and where `recipe` said it keeps its log.
     QStringList lines_;
     QString log_;
@@ -184,5 +197,6 @@ signals:
 
 class RemoveDialog : public QDialog {
 public:
-    RemoveDialog(const Recipe &recipe, const InstalledItem &item, QWidget *parent = nullptr);
+    // `takenOut`: what removing does where no store stands behind the software (an A/B system).
+    RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, QWidget *parent = nullptr);
 };

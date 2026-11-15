@@ -1,6 +1,6 @@
 # gui/kit
 
-What `gui/recipe`, `gui/recab` and `gui/disk` share. Each app lists the kit
+What `gui/recipe`, `gui/recab` and `gui/disk` share (Recab uses the page base, the Before page, the run, the refresher and the window size; the frame, Help and the first page are for Recipe and Recdirstat). Each app lists the kit
 sources it uses in its own `CMakeLists.txt` (`../kit/frame.cpp` and so on) and
 adds `../kit` to its include path. Colours come from the desktop's palette
 only: no stylesheet.
@@ -8,24 +8,21 @@ only: no stylesheet.
 | File | What |
 |---|---|
 | `look.*` | a stand-in look from a checkout (`--look`), and `settle` for the picture modes |
-| `parts.*` | small widgets: text, `Card`, `Panel`, `Chip`, `ElidedLabel`, `ClickLabel`, `Mood` colours |
+| `parts.*` | small widgets: text, `Card`, `Panel`, `ElidedLabel`, `ClickLabel`, `Mood` colours |
 | `page.*` | `Page`, the base of every page (it rebuilds itself; says "loading") |
 | `run.*` | `Run`, one command and its JSON events; `stop()` asks it to end |
-| `work.*` | `WorkPage`, a long run with its steps and output, and a "Copy for agent" button for the output |
 | `refresh.*` | `Refresher`: F5, Ctrl+R and coming back to the window |
-| `frame.*` | the window frame (below) |
+| `frame.*` | the window frame (below), for Recipe and Recdirstat |
 | `windowsize.*` | `rememberWindowSize`: a window opens at the size it had |
 | `help.*` | the Help page, owned by the frame, and `helpText(app)`: the words of Help for each app (below) |
 | `firstrun.*` | the page before the app's own the first time, owned by the frame (below) |
 | `helpstory.*` | the checks of the stories about Help and the first page, the same in the three apps; only the picture modes use it |
-| `nextsystem.*` | `NextSystem`: reads `recab status --json` for the strip |
 | `before.*` | `BeforePage`: what will happen, shown before anything starts (below) |
 
 ## The frame
 
 One widget that an app's window sets as its central widget. It is the rail on
-the left (the app's name, then the app's own entries, then Help), the app's pages in the middle, a strip under them about the next
-system, and a status line. Do not add entries that lead nowhere: only Help is shared, and the frame adds it under the app's own
+the left (the app's name, then the app's own entries, then Help), the app's pages in the middle, and a status line. Do not add entries that lead nowhere: only Help is shared, and the frame adds it under the app's own
 entries.
 
 ```cpp
@@ -37,8 +34,6 @@ void select(key);                        // mark an entry and show the content (
 void follow(key);                        // your pages moved on by themselves: mark that entry,
                                          //   but stay on Help when it is showing
 void choose(key);                        // as a click would (marks, shows, emits chosen)
-void setNextSystem(QStringList titles);  // the strip; empty hides it
-void setStripAllowed(bool);              // keep the strip away from the page that says it itself
 void setStatus(QString);                 // left of the status line: what was read and when
 void addStatusWidget(QWidget *);         // beside it, e.g. "Read again"
 void flash(QString);                     // said for a few seconds in place of the status; empty ends it at once
@@ -50,7 +45,7 @@ static QString helpKey();                // "help"
 bool helpShown() const;
 void showFirstRun();                     // the page before the app's own (below)
 bool firstRunShown() const;
-signals: chosen(key)  finishRequested()
+signals: chosen(key)
 ```
 
 - `chosen(key)` comes from the person's click or keyboard, for the app's entries. Switch your stack to the page of that key.
@@ -59,30 +54,12 @@ signals: chosen(key)  finishRequested()
   a click on the rail would be, so an app's `chosen` handler already shows the
   page. Help draws a thing to do only when its page exists (a rail entry), so no
   link leads nowhere.
-- `finishRequested()` is the strip's button, "Finish and restart…". Show the
-  page where the next system is finished.
 - The rail has no switcher: each window is one app. `startApp` starts another
-  app's program detached for a labelled button or link only (Help's "Open …", Recab's
-  "Finish and restart…" and Recdirstat's "Open Recab…"; `recipe-gui`, `recab-gui`, `disk-gui`; override with `LEVITATE_APP_RECIPE`,
+  app's program detached for a labelled button or link only (Help's "Open …" and Recdirstat's "Open Recab…"; `recipe-gui`, `recab-gui`, `disk-gui`; override with `LEVITATE_APP_RECIPE`,
   `LEVITATE_APP_SYSTEM`, `LEVITATE_APP_DISK`). If that fails the status line
   says so.
 - The rail is reachable by Tab; Up and Down move between entries; Space or
   Return chooses. Every entry has an accessible name, with its badge.
-
-The strip says "The next system holds N changes." with the changes in a few
-words and the button. Recipe and Recdirstat do not hold the status, so they ask:
-
-```cpp
-auto *next = new NextSystem(recabProgram, this);   // runs `recab status --json`
-connect(next, &NextSystem::known, this, [this, next] { frame_->setNextSystem(next->titles()); });
-next->read();   // again after what changes it, and when Refresher asks
-```
-
-It reports nothing when there is no next system or the status cannot be read, and
-nothing while the running system is on trial: recab still calls the other system
-"next" then (the preparation that made the running system is kept until the trial
-is kept), but it is the system from before, so there is nothing to finish and the
-strip would say what is not so (Recab's own model reads it the same way).
 
 ### An app adopting the frame
 
@@ -99,7 +76,6 @@ setCentralWidget(frame_);                         // and drop the QStatusBar
 connect(frame_, &Frame::chosen, this, [this](const QString &key) {
     stack_->setCurrentWidget(pageFor(key));
 });
-connect(frame_, &Frame::finishRequested, this, [this] { /* open Overview of Recab, or show a note */ });
 ```
 
 ## Before
@@ -116,7 +92,7 @@ before_ = new BeforePage;                       // once, into the stack
 BeforePage::Content c;
 c.title = tr("Install Krita?");
 c.whereTitle = tr("Where it goes");             // a choice between places: two or more are
-c.choices = {{"pc", tr("For this computer"), tr("Into the next system."), tr("Asks for the password.")},
+c.choices = {{"pc", tr("For this computer"), tr("Into the other root."), tr("Asks for the password.")},
              {"me", tr("For me"), tr("Into your own folder."), tr("No password.")}};
 c.chosen = "pc";                                // ...one is a statement, none is no section
 c.happensTitle = tr("What happens");            // plain sentences, one line each
@@ -146,7 +122,7 @@ connect(before_, &BeforePage::linkClicked, ...);
   `choiceNames()`, `chosen()`, `choose(key)`. A page drawn just now is shown
   once the event loop has run, so a check settles before clicking its button.
 - The Recipe app is the first user (`gui/recipe/src/beforewords.*` has its
-  words); Recab and Recdirstat list `before.cpp` in their `CMakeLists.txt` to use it.
+  words); Recab (the copy, the restart) and Recdirstat (the comparison) list `before.cpp` in their `CMakeLists.txt` to use it.
 
 ## The size of a window
 
@@ -163,15 +139,14 @@ knows which it is; the app adds nothing). `helpText(app)` holds every word of it
 so the first page can take Help's ideas. In order:
 
 1. What the app is for in a few sentences, and what it never does by itself.
-2. "The ideas you need": a short heading and two or three sentences each. Recab:
-   the running system and the next system, finishing, the restart on trial,
-   coming back. Recipe: recipes, the sandbox and what a recipe may use, the two
-   places software goes. Recdirstat: mess, the two systems.
+2. "The ideas you need": a short heading and two or three sentences each. Recipe:
+   recipes, the sandbox and what a recipe may use, the two places software goes.
+   Recdirstat: mess. (The Recab app has no frame, so it has no Help page; `helpText`
+   keeps a short text for `Frame::Recab` that nothing shows.)
 3. "How do I…": what the app can do, each row ending in "Go to PAGE", a link
    (underlined, in the palette's link colour) to the page where it is done.
-4. "When something is wrong": Recab: a run stopped (its output has "Copy for
-   agent"), the desktop does not start (a link to Getting back); Recipe: an
-   install or update stopped; Recdirstat has none and the section is left out.
+4. "When something is wrong": Recipe: an install or update stopped; Recdirstat has
+   none and the section is left out.
 5. "The other two apps", one line each with "Open APP" (`Frame::startApp`), and
    "Show the first page again".
 
@@ -212,14 +187,14 @@ nothing. It has: "Welcome to APP", what the app is for and never does (Help's),
 ## Checks
 
 There are no unit tests. Each app's picture mode (`--shots`) is the check; the
-frame and the strip are checked in `gui/recab/src/shots.cpp`. Help and the first
-page are checked by `helpstory.*` in all three stories: the rail ends with Help;
+frame is checked in the stories of Recipe and Recdirstat. Help and the first
+page are checked by `helpstory.*` in the stories of Recipe and Recdirstat: the rail ends with Help;
 the Help page of the app (picture `h-help`) with every idea, row and link of
 `helpText`; every link goes where it says (the rail marks that entry and the
 app's page is the one showing; `h-help-went` after two); "Open APP" asks the
 frame to start the app; the first page (`h-firstrun`), "Read Help first", and
 going on to the app (`h-firstrun-went-on`); a picture run wants no first page
-and keeps no setting. The real-recab story of Recab uses the prefix `rh`.
+and keeps no setting.
 
 **The guard.** A picture run starts the app's backend programs and a root helper,
 and writes settings: run bare it would do that to the person's real computer.

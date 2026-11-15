@@ -25,7 +25,7 @@ struct HelpIdea {
 // A thing the app can do, or a trouble, with the page that is its way on.
 // `target` is a rail key ("next"); with no target the row has no link.
 struct HelpRow {
-    QString title, words, target, page; // `page`: how the link names it ("The next system")
+    QString title, words, target, page; // `page`: how the link names it ("Browse")
 };
 
 struct HelpText {

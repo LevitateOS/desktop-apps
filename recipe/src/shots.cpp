@@ -4,7 +4,7 @@
 #include "frame.h"
 #include "helpstory.h"
 #include "look.h"
-#include "nextsystem.h"
+#include "sourceview.h"
 
 #include "pages.h"
 #include "parts.h"
@@ -31,6 +31,7 @@
 #include <QRegularExpression>
 #include <QPushButton>
 #include <QPalette>
+#include <QPlainTextEdit>
 #include <QStyleFactory>
 #include <QTextStream>
 #include <QTimer>
@@ -321,126 +322,16 @@ void helpShots(Window &window, const Save &save, const Expect &expect)
     settle(100);
 }
 
-void stripShots(Window &window, const QString &folder, const Save &save, const Expect &expect, QTextStream &out)
-{
-    Frame *frame = window.frame();
-    const QString recab = qEnvironmentVariable("RECIPE_GUI_RECAB");
-    if (recab.isEmpty()) {
-        out << "not as expected: the strip needs RECIPE_GUI_RECAB (gui/recab/fixtures/recab-real), see README.md\n";
-        expect(QStringLiteral("a recab to read the next system from"), false);
-        return;
-    }
-    expect(QStringLiteral("no strip while no next system holds changes"), !frame->stripShown());
-    auto recabRuns = [&](const QStringList &arguments) {
-        QProcess run;
-        run.start(recab, arguments);
-        run.waitForFinished(120000);
-        return run.exitStatus() == QProcess::NormalExit && run.exitCode() == 0;
-    };
-    expect(QStringLiteral("the next system could be prepared"), recabRuns({"--json", "prepare"}));
-    window.refresh();
-    waitUntilIdle(window);
-    expect(QStringLiteral("a prepared next system with no change shows no strip"), !frame->stripShown());
-    expect(QStringLiteral("a change could be made in it"),
-           recabRuns({"--json", "change", "install", "htop", "--preparation", "p2", "--revision", "1"}));
-    window.refresh();
-    waitFor([&] { return frame->stripShown(); }, 20);
-    expect(QStringLiteral("the strip says the next system holds the change (%1)").arg(frame->stripText()),
-           frame->stripShown() && frame->stripText() == QStringLiteral("The next system holds 1 change."));
-    save(window, "s1-strip-browse");
-    window.showUpdates();
-    expect(QStringLiteral("the strip shows on Updates"), frame->stripShown());
-    save(window, "s2-strip-updates");
-    window.showInstalled();
-    window.showSources();
-    window.showRecipe("htop");
-    expect(QStringLiteral("and on every other page"), frame->stripShown());
-    window.showBrowse();
-
-    // Its button starts Recab; here no Recab exists, and the status line says so.
-    qputenv("LEVITATE_APP_SYSTEM", "/nonexistent/recab-gui");
-    emit frame->finishRequested();
-    expect(QStringLiteral("Finish and restart starts Recab, and says when it cannot (%1)").arg(frame->statusText()),
-           frame->statusText().contains("Recab could not be started"));
-    qunsetenv("LEVITATE_APP_SYSTEM");
-
-    // The running system on trial: recab still calls the other system "next" (the preparation
-    // that made the running system is kept until the trial is kept), but it is the system from
-    // before, so there is no next system to finish and the strip goes.
-    {
-        const QString trial = QDir(folder).filePath("trial-recab");
-        QDir(trial).removeRecursively();
-        QDir().mkpath(trial);
-        const QByteArray stateBefore = qgetenv("RECAB_STANDIN_STATE");
-        const QString reboot = QFileInfo(recab).absolutePath() + "/reboot-real";
-        QProcessEnvironment trialEnv = QProcessEnvironment::systemEnvironment();
-        trialEnv.insert("RECAB_STANDIN_STATE", trial);
-        trialEnv.insert("RECAB_STANDIN_KEEP", "hand"); // the restarted system stays on trial until it is kept
-        auto standIn = [&](const QString &program, const QStringList &arguments) {
-            QProcess run;
-            run.setProcessEnvironment(trialEnv);
-            run.start(program, arguments);
-            run.waitForFinished(60000);
-            return run.exitStatus() == QProcess::NormalExit && run.exitCode() == 0 ? QString::fromUtf8(run.readAllStandardOutput())
-                                                                                    : QString();
-        };
-        const bool made = !standIn(recab, {"--json", "prepare"}).isEmpty()
-                          && !standIn(recab, {"--json", "change", "install", "htop", "--preparation", "p2", "--revision", "1"}).isEmpty()
-                          && !standIn(recab, {"--json", "finalize", "--preparation", "p2", "--revision", "2"}).isEmpty()
-                          && !standIn(recab, {"--json", "set-next", "B"}).isEmpty();
-        standIn(reboot, {}); // plays the restart: the computer comes up on the next system, not yet kept
-        const QByteArray status = standIn(recab, {"status", "--json"}).toUtf8();
-        const QJsonObject lifecycle = QJsonDocument::fromJson(status).object()["lifecycle"].toObject();
-        expect(QStringLiteral("the stand-in recab has the running system on trial and still calls the other one next (%1)")
-                   .arg(QString::fromUtf8(QJsonDocument(lifecycle).toJson(QJsonDocument::Compact))),
-               made && lifecycle["state"] == "on_trial" && lifecycle["other"] == "next"
-                   && QJsonDocument::fromJson(status).object()["preparation"].toObject()["changes"].toArray().size() == 1);
-        QStringList titles;
-        expect(QStringLiteral("the reader of the strip finds no change to finish then"),
-               NextSystem::parse(status, &titles) && titles.isEmpty());
-        qputenv("RECAB_STANDIN_STATE", trial.toUtf8());
-        window.refresh();
-        waitUntilIdle(window);
-        settle(300);
-        expect(QStringLiteral("no strip while the running system is on trial (%1)").arg(frame->stripText()),
-               !frame->stripShown() && frame->stripText().isEmpty());
-        window.showUpdates();
-        expect(QStringLiteral("not on any other page either"), !frame->stripShown());
-        save(window, "s4-no-strip-on-trial");
-        if (stateBefore.isEmpty())
-            qunsetenv("RECAB_STANDIN_STATE");
-        else
-            qputenv("RECAB_STANDIN_STATE", stateBefore);
-        window.showBrowse();
-    }
-
-    // A recab that does not exist: no strip, and no complaint in the window.
-    qputenv("RECIPE_GUI_RECAB", "/nonexistent/recab");
-    {
-        Window other;
-        other.show();
-        waitUntilIdle(other);
-        settle(300);
-        expect(QStringLiteral("no strip when recab cannot be run"), !other.frame()->stripShown());
-        expect(QStringLiteral("and no error about it (%1)").arg(other.frame()->statusText()),
-               !other.frame()->statusText().contains("recab") && other.catalog().recipes.size() > 3);
-        save(other, "s3-no-recab");
-    }
-    qputenv("RECIPE_GUI_RECAB", recab.toUtf8());
-}
-
-
-// The two places software can go, in two windows of their own: a locked
-// computer (`recab.immutable` on a scratch command line), where "for this
-// computer" is the next system, and a computer that is not locked, where it is
-// the system's store (a scratch folder). Each has its own stand-in state, and
-// the stand-in logs every command's arguments, which are checked here.
+// The two places software can go, in two windows of their own: an A/B system
+// (`recab.immutable` on a scratch command line), where "for everyone" is written
+// into the other root, and a system with one root, where it is the system's store (a
+// scratch folder). Each has its own stand-in state, and the stand-in logs every
+// command's arguments, which are checked here.
 void placesShots(const QString &folder, const Save &save, const Expect &expect)
 {
-    const QString recab = qEnvironmentVariable("RECIPE_GUI_RECAB");
     const QString recipe = qEnvironmentVariable("RECIPE_GUI_RECIPE");
-    if (recab.isEmpty() || recipe.isEmpty()) {
-        expect(QStringLiteral("the two places need RECIPE_GUI_RECAB and RECIPE_GUI_RECIPE, see README.md"), false);
+    if (recipe.isEmpty()) {
+        expect(QStringLiteral("the two places need RECIPE_GUI_RECIPE, see README.md"), false);
         return;
     }
     const QString scratch = QDir(folder).filePath("places");
@@ -454,8 +345,15 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
     write(scratch + "/open-cmdline", "BOOT_IMAGE=/vmlinuz root=/dev/vda1 ro quiet\n");
     auto kinds = [](const QStringList &arguments, const QStringList &want) { return arguments == want; };
     auto asked = [](qsizetype from) { return changesAsked().mid(from); };
+    // Words that belong to a system with two roots, and must not appear on one with a single root.
+    auto abWords = [](const QString &words) {
+        for (const char *word : {"other root", "running root", "root A", "root B", "A/B"})
+            if (words.contains(QString::fromLatin1(word), Qt::CaseInsensitive))
+                return QString::fromLatin1(word);
+        return QString();
+    };
 
-    // ---- A locked computer.
+    // ---- An A/B system.
     {
         Environment env;
         env.unset("RECIPE_GUI_PACKAGE_ROOT");
@@ -463,11 +361,9 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         env.set("RECIPE_STANDIN_STATE", scratch + "/locked-state");
         env.unset("RECIPE_STANDIN_LOG");
         env.unset("RECIPE_GUI_SYSTEM_ROOT");
-        // The stand-in answers `prepared` as it does to root, so the next system's list can be shown.
-        env.set("RECIPE_STANDIN_PREPARED", "1");
-        env.set("RECIPE_RECAB_BIN", recab);
-        env.set("RECAB_STANDIN_STATE", scratch + "/locked-recab");
-        // A helper that notes what it was given and runs it: only changes for the computer go through it.
+        env.unset("RECIPE_STANDIN_AB");
+        env.unset("RECIPE_STANDIN_NOT_DONE");
+        // A helper that notes what it was given and runs it: only changes for everyone go through it.
         env.set("RECIPE_GUI_ROOT_HELPER", QFileInfo(recipe).absolutePath() + "/helper-log");
         env.set("HELPER_LOG", scratch + "/locked-helper.log");
 
@@ -477,33 +373,41 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         waitUntilIdle(window, 30);
         const Catalog &catalog = window.catalog();
         const Places places = window.places();
-        expect(QStringLiteral("a locked computer is told from its command line"), places.locked && !places.one && catalog.twoPlaces);
-        expect(QStringLiteral("it holds the person's own software and the running system's, which says only name and version"),
+        expect(QStringLiteral("an A/B system is told from its command line, and names its roots"),
+               places.ab && !places.one && catalog.twoPlaces && catalog.ab && catalog.bootedRoot == "A" && catalog.otherRoot == "B");
+        expect(QStringLiteral("it holds the person's own software and the booted root's, which says only name and version"),
                catalog.installedItem("tree", Place::Me) && catalog.installedItem("gimp", Place::Computer)
                    && !catalog.installedItem("gimp", Place::Computer)->inStore
                    && catalog.installedItem("gimp", Place::Computer)->version == "3.0.4"
                    && !catalog.installedItem("gimp", Place::Computer)->sizeBytes
                    && catalog.installedItem("gimp", Place::Computer)->kept.isEmpty());
-        expect(QStringLiteral("updates: the person's store by `recipe updates`, the system's from the collection's versions"),
+        expect(QStringLiteral("the other root starts as a copy of the booted one: nothing is only in it"),
+               !catalog.installedItem("gimp", Place::Other) && !catalog.installedItem("element", Place::Other)
+                   && !catalog.installedItem("gimp", Place::Computer)->leavesOther);
+        expect(QStringLiteral("updates: the person's store by `recipe updates`, the booted root's from the collection's versions"),
                catalog.update("tree", Place::Me) && !catalog.update("tree", Place::Me)->fromCollection
                    && catalog.update("gimp", Place::Computer) && catalog.update("gimp", Place::Computer)->fromCollection);
         expect(QStringLiteral("only the person's store has storage figures"),
                catalog.stores[int(Place::Me)].has && !catalog.stores[int(Place::Computer)].has);
+        expect(QStringLiteral("Recipe said this system's C library, and the status line is not about a next system"),
+               catalog.hostLibc == "glibc" && !window.frame()->statusText().contains("next system"));
         qsizetype before = changesAsked().size();
 
-        // Install: where it goes, with the sentences for the place picked.
+        // Install: where it goes, with the sentences for the place picked. "For me" is the default.
         window.showBrowse();
         window.askInstall("htop");
         BeforePage *page = window.beforePage();
-        expect(QStringLiteral("Before: a question, and nothing has started (%1)").arg(page->pageText().left(60)),
-               page->isVisible() && page->pageText().contains("Install htop for this computer?")
+        expect(QStringLiteral("Before: both places, and for me is picked (%1)").arg(page->pageText().left(60)),
+               page->isVisible() && page->choiceNames() == QStringList({"For me", "For everyone"})
+                   && page->chosen() == placeKey(Place::Me) && page->pageText().contains("Install htop for me?")
                    && page->pageText().contains("Nothing has started. This is what will happen if you go on."));
-        expect(QStringLiteral("it offers both places, the computer first and picked"),
-               page->choiceNames() == QStringList({"For this computer", "For me"}) && page->chosen() == placeKey(Place::Computer));
-        expect(QStringLiteral("for this computer on a locked one: into the next system, after a restart, for everyone"),
-               page->pageText().contains("Into the next system. It works after a restart, for everyone.")
+        page->choose(placeKey(Place::Computer));
+        expect(QStringLiteral("for everyone on an A/B system: written into the other root, active when it is started, the booted one untouched"),
+               page->pageText().contains("Install htop for everyone?")
+                   && page->pageText().contains("Written into the other root (B), not into the running root. It becomes active, for everyone, when root B is started.")
                    && page->pageText().contains("Asks for the administrator password.")
-                   && page->pageText().contains("The running system is not touched."));
+                   && page->pageText().contains("The running root is not touched.")
+                   && !page->pageText().contains("next system") && !page->pageText().contains("restart"));
         expect(QStringLiteral("it says what the catalog says: where it is fetched from and the sandbox"),
                page->pageText().contains("is fetched from") && page->pageText().contains("inside the sandbox")
                    && page->pageText().contains("The sandbox refuses anything else."));
@@ -513,26 +417,35 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                page->pageText().contains("From ") && page->pageText().contains("Read the recipe"));
         save(window, "p1-before-install-choice");
         page->choose(placeKey(Place::Me));
-        expect(QStringLiteral("choosing For me changes the sentences: your own folder, at once, and the system is not mentioned"),
+        expect(QStringLiteral("choosing For me: your own folder, at once, and the roots are not mentioned"),
                page->chosen() == placeKey(Place::Me) && page->pageText().contains("Install htop for me?")
                    && page->pageText().contains("Into your own folder. It works at once, for you only.")
-                   && !page->pageText().contains("The running system is not touched."));
+                   && !page->pageText().contains("The running root is not touched."));
         save(window, "p2-before-install-for-me");
         page->choose(placeKey(Place::Computer));
         goOn(window, "Install");
         waitUntilIdle(window, 30);
-        waitFor([&] { return window.frame()->stripShown(); });
         QList<Asked> now = asked(before);
-        expect(QStringLiteral("for this computer, locked: `recipe --system install NAME` through the root helper"),
+        expect(QStringLiteral("for everyone on A/B: `recipe --system install NAME` through the root helper"),
                now.size() == 1 && now[0].route == "system"
                    && kinds(now[0].arguments, {"--system", "install", "levitate:htop", "--machine-events"}));
-        expect(QStringLiteral("the root helper was given that command"),
-               QFile(scratch + "/locked-helper.log").exists());
-        expect(QStringLiteral("it shows as in the next system, after a restart, not in the running system"),
-               window.catalog().installedItem("htop", Place::Next) && !window.catalog().installedItem("htop", Place::Computer));
-        expect(QStringLiteral("the strip was read again after the change (%1)").arg(window.frame()->stripText()),
-               window.frame()->stripShown() && window.frame()->stripText() == QStringLiteral("The next system holds 1 change."));
+        expect(QStringLiteral("the root helper was given that command"), QFile(scratch + "/locked-helper.log").exists());
+        expect(QStringLiteral("it is in the other root and not in the booted one"),
+               window.catalog().installedItem("htop", Place::Other) && !window.catalog().installedItem("htop", Place::Computer));
+        expect(QStringLiteral("the status line said it was written into the other root (B), active when B is started (%1)")
+                   .arg(window.frame()->statusText()),
+               window.frame()->statusText().contains("htop was written into the other root (B). It becomes active when root B is started."));
         before = changesAsked().size();
+        // The program page: it is in the other root, not active now, and cannot be opened.
+        window.showRecipe("htop");
+        settle(100);
+        {
+            const QString there = wordsOn(window);
+            expect(QStringLiteral("its page says it is in the other root (B), active when B is started, and offers no Open (%1)").arg(buttonTexts(window).join("|")),
+                   there.contains("In the other root (B)") && there.contains("active when root B is started")
+                       && !buttonTexts(window).contains("Open") && !buttonTexts(window).contains("Install"));
+        }
+        save(window, "p10-program-in-other-root");
 
         // For me: the person's own store, no root helper, no --system, no --package-root.
         auto helperLines = [&] {
@@ -549,8 +462,9 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         expect(QStringLiteral("for me: `recipe install NAME` with no store named and no --system"),
                now.size() == 1 && now[0].route == "me" && kinds(now[0].arguments, {"install", "levitate:krita", "--machine-events"}));
         expect(QStringLiteral("for me goes through no root helper"), helperAfter == helperBefore);
-        expect(QStringLiteral("it is there at once, in the person's store"),
-               window.catalog().installedItem("krita", Place::Me) && window.catalog().installedItem("krita", Place::Me)->inStore);
+        expect(QStringLiteral("it is there at once, in the person's store, and said so (%1)").arg(window.frame()->statusText()),
+               window.catalog().installedItem("krita", Place::Me) && window.catalog().installedItem("krita", Place::Me)->inStore
+                   && window.frame()->statusText().contains("Installed Krita") && !window.frame()->statusText().contains("other root"));
         // "Open" starts the program from the profile of the store it is in (the person's own: its bin is not
         // on PATH), and the one its menu entry names, not the first program the package put in bin.
         {
@@ -591,35 +505,35 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         window.showUpdates("gimp", int(Place::Computer));
         window.askUpdate("gimp", Place::Computer);
         expect(QStringLiteral("an update has no choice, only the statement of where it is"),
-               page->choiceNames() == QStringList({"For this computer"}) && page->pageText().contains("Where it is")
+               page->choiceNames() == QStringList({"For everyone"}) && page->pageText().contains("Where it is")
                    && page->pageText().contains("Update GIMP to 3.0.6?")
                    && page->pageText().contains("GIMP goes from version 3.0.4 to 3.0.6."));
-        expect(QStringLiteral("what the system's version was allowed to use is not known, and the page says so"),
+        expect(QStringLiteral("what the booted root's version was allowed to use is not known, and the page says so"),
                page->pageText().contains("is not known here, so the two cannot be compared"));
-        save(window, "p3-before-update-locked");
+        save(window, "p3-before-update-ab");
         goOn(window, "Update");
         waitUntilIdle(window, 30);
         now = asked(before);
         expect(QStringLiteral("updating system software: `recipe --system update NAME`"),
                now.size() == 1 && now[0].route == "system"
                    && kinds(now[0].arguments, {"--system", "update", "levitate:gimp", "--machine-events"}));
-        expect(QStringLiteral("the next system holds the new version beside the running one"),
-               window.catalog().installedItem("gimp", Place::Next) && window.catalog().installedItem("gimp", Place::Next)->version == "3.0.6"
+        expect(QStringLiteral("the other root holds the new version beside the booted root's"),
+               window.catalog().installedItem("gimp", Place::Other) && window.catalog().installedItem("gimp", Place::Other)->version == "3.0.6"
                    && window.catalog().installedItem("gimp", Place::Computer)->version == "3.0.4");
         before = changesAsked().size();
-        // The recipe's page for software in the running system and the next one: buttons that say where.
+        // The recipe's page for software in the booted root and the other one: buttons that say where.
         window.showRecipe("gimp");
         settle(100);
         {
             const QString there = wordsOn(window);
-            expect(QStringLiteral("what only the next system holds, and the running system's list, offer no Open and say why"),
+            expect(QStringLiteral("what only the other root holds, and the booted root's list, offer no Open and say why"),
                    !buttonTexts(window).contains("Open") && there.contains("It cannot be opened until then.")
-                       && there.contains("This window cannot open it: the running system's list names the software and its version, not its programs."));
-            window.open("gimp", Place::Next);
+                       && there.contains("This window cannot open it: the list of the running root names the software and its version, not its programs."));
+            window.open("gimp", Place::Other);
             expect(QStringLiteral("asking anyway says why (%1)").arg(window.frame()->statusText()),
-                   window.frame()->statusText().contains("only in the next system, so it cannot be opened until after the restart"));
+                   window.frame()->statusText().contains("only in the other root (B), so it cannot be opened until root B is started"));
         }
-        save(window, "p3b-recipe-two-places");
+        save(window, "p3b-recipe-two-roots");
 
         // The person's own update, with what `recipe updates` said changed in the recipe.
         window.askUpdate("tree", Place::Me);
@@ -632,30 +546,62 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                now.size() == 1 && now[0].route == "me" && kinds(now[0].arguments, {"update", "local:tree", "--machine-events"}));
         before = changesAsked().size();
 
-        // What is installed, from both places; what a store cannot do is not offered for the system's.
+        // What is installed, from both places and both roots; what a store cannot do is not offered for the booted root's.
         window.showInstalled("gimp", int(Place::Computer));
         settle(100);
         QStringList buttons;
         for (QPushButton *button : window.findChildren<QPushButton *>())
             if (button->isVisible())
                 buttons << button->text();
-        expect(QStringLiteral("a running-system row offers Remove but not Go back (%1)").arg(buttons.join("|")),
+        expect(QStringLiteral("a booted-root row offers Remove but not Go back (%1)").arg(buttons.join("|")),
                buttons.contains("Remove…") && !buttons.filter("Go back").size());
-        expect(QStringLiteral("no store stands behind the system's software, so nothing to clear for it"),
-               !buttons.filter("Clear earlier versions, for this computer").size());
+        expect(QStringLiteral("no store stands behind the booted root's software, so nothing to clear for it"),
+               !buttons.filter("Clear earlier versions, for everyone").size());
         const QString installed = wordsOn(window);
-        for (const char *where : {"For me", "For this computer", "In the next system, after a restart"})
+        for (const char *where : {"For me", "For everyone", "In the other root (B)", "active now", "active when root B is started"})
             expect(QStringLiteral("Installed says %1").arg(where), installed.contains(QString::fromLatin1(where)));
+        expect(QStringLiteral("Installed does not talk of a next system or a restart"),
+               !installed.contains("next system") && !installed.contains("restart"));
         expect(QStringLiteral("no page made the window wider than it was (%1)").arg(window.width()), window.width() == 1100);
-        save(window, "p4-installed-both-places");
+        save(window, "p4-installed-both-roots");
         window.showUpdates();
-        save(window, "p5-updates-both-places");
-        expect(QStringLiteral("what the next system holds already is not offered as an update again (%1)").arg(window.catalog().updates.size()),
+        save(window, "p5-updates-both-roots");
+        expect(QStringLiteral("what the other root holds already is not offered as an update again (%1)").arg(window.catalog().updates.size()),
                !window.catalog().update("gimp", Place::Computer) && window.catalog().update("element", Place::Computer));
         window.showBrowse();
         settle(100);
-        expect(QStringLiteral("Browse says software that waits for the restart waits for it"), wordsOn(window).contains("After a restart"));
-        save(window, "p7-browse-both-places");
+        expect(QStringLiteral("Browse says software only the other root holds is in root B"), wordsOn(window).contains("In root B"));
+        save(window, "p7-browse-both-roots");
+
+        // A system change that was wiped from the other root and could not be written again: said with its error
+        // and "Copy for agent"; nothing is suggested for the booted root.
+        {
+            Environment notDone;
+            notDone.set("RECIPE_STANDIN_NOT_DONE", "htop:the recipe failed; nothing was written to the other root");
+            window.refresh();
+            waitUntilIdle(window, 30);
+            window.showInstalled();
+            settle(100);
+            const QString words = wordsOn(window);
+            expect(QStringLiteral("a not done entry: named with Recipe's error (%1)").arg(window.catalog().notDone.size()),
+                   window.catalog().notDone.size() == 1 && window.catalog().notDone[0].package == "htop"
+                       && words.contains("Not done yet: htop")
+                       && words.contains("the recipe failed; nothing was written to the other root")
+                       && words.contains("Recipe tries again by itself the next time you change system software."));
+            expect(QStringLiteral("it offers Copy for agent, and no way to change the booted root (%1)").arg(buttonTexts(window).join("|")),
+                   buttonTexts(window).contains("Copy for agent") && !words.contains("Change the running root"));
+            save(window, "p11-installed-not-done");
+            const qsizetype ran = changesAsked().size();
+            QApplication::clipboard()->clear();
+            clickButton(window.installedPage(), "Copy for agent");
+            const QString copied = QApplication::clipboard()->text();
+            expect(QStringLiteral("Copy for agent puts the issue, the facts and Recipe's error on the clipboard and starts nothing"),
+                   copied.contains("The issue:\n") && copied.contains("The facts:\n")
+                       && copied.contains("the recipe failed; nothing was written to the other root") && changesAsked().size() == ran);
+        }
+        window.refresh();
+        waitUntilIdle(window, 30);
+        expect(QStringLiteral("when Recipe lists nothing not done, the entry is gone"), window.catalog().notDone.isEmpty());
 
         // Remove for me, and from the system.
         window.removeNow("krita", Place::Me);
@@ -670,48 +616,99 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         expect(QStringLiteral("removing system software: `recipe --system remove NAME`"),
                now.size() == 1 && now[0].route == "system"
                    && kinds(now[0].arguments, {"--system", "remove", "element", "--machine-events"}));
-        expect(QStringLiteral("the running system still holds it, and says it goes in the next system"),
-               window.catalog().installedItem("element", Place::Computer) && window.catalog().installedItem("element", Place::Computer)->leavesNext);
+        expect(QStringLiteral("the booted root still holds it, and says the other root no longer does"),
+               window.catalog().installedItem("element", Place::Computer) && window.catalog().installedItem("element", Place::Computer)->leavesOther);
+        expect(QStringLiteral("the status line said where it was taken out (%1)").arg(window.frame()->statusText()),
+               window.frame()->statusText().contains("Removed Element from the other root (B). It stays in the running root (A) until the other root is started."));
     }
 
-    // ---- A computer that is not locked.
+    // ---- A system that says it is A/B on its command line but answers in the plain shape: no A/B wording.
+    {
+        Environment env;
+        env.unset("RECIPE_GUI_PACKAGE_ROOT");
+        env.set("RECIPE_GUI_CMDLINE", scratch + "/locked-cmdline");
+        env.set("RECIPE_STANDIN_STATE", scratch + "/plain-state");
+        env.unset("RECIPE_STANDIN_LOG");
+        env.set("RECIPE_STANDIN_AB", "0");
+        env.unset("RECIPE_GUI_SYSTEM_ROOT");
+        env.set("RECIPE_GUI_ROOT_HELPER", QFileInfo(recipe).absolutePath() + "/helper-log");
+        env.set("HELPER_LOG", scratch + "/plain-helper.log");
+
+        Window window;
+        window.resize(1100, 700);
+        window.show();
+        waitUntilIdle(window, 30);
+        expect(QStringLiteral("`--system installed` answered in the plain shape: it is read as a store, with no A/B"),
+               !window.catalog().ab && window.catalog().bootedRoot.isEmpty() && window.catalog().notDone.isEmpty()
+                   && window.catalog().installedItem("tree", Place::Me) && !window.catalog().installedItem("anything", Place::Other));
+        qsizetype before = changesAsked().size();
+        window.askInstall("htop");
+        BeforePage *page = window.beforePage();
+        page->choose(placeKey(Place::Computer));
+        expect(QStringLiteral("Before says nothing of roots (%1)").arg(abWords(page->pageText())),
+               abWords(page->pageText()).isEmpty() && page->pageText().contains("Install htop for everyone?"));
+        goOn(window, "Install");
+        waitUntilIdle(window, 30);
+        const QList<Asked> now = asked(before);
+        expect(QStringLiteral("the change still goes through `--system` and the helper"),
+               now.size() == 1 && now[0].route == "system" && kinds(now[0].arguments, {"--system", "install", "levitate:htop", "--machine-events"}));
+        expect(QStringLiteral("it is installed for everyone, in effect at once, and said so plainly (%1)").arg(window.frame()->statusText()),
+               window.catalog().installedItem("htop", Place::Computer) && window.catalog().installedItem("htop", Place::Computer)->inStore
+                   && !window.catalog().installedItem("htop", Place::Other) && window.frame()->statusText().contains("Installed htop")
+                   && abWords(window.frame()->statusText()).isEmpty());
+        for (const char *shown : {"installed", "updates", "storage", "recipe"}) {
+            if (QLatin1String(shown) == "installed")
+                window.showInstalled("htop", int(Place::Computer));
+            else if (QLatin1String(shown) == "updates")
+                window.showUpdates();
+            else if (QLatin1String(shown) == "storage")
+                window.showStorage();
+            else
+                window.showRecipe("htop");
+            settle(100);
+            expect(QStringLiteral("the %1 page has no A/B word (%2)").arg(QString::fromLatin1(shown), abWords(wordsOn(window))),
+                   abWords(wordsOn(window)).isEmpty());
+        }
+        save(window, "p12-no-ab-recipe-page");
+    }
+
+    // ---- A system with one root and no recab on its command line.
     {
         Environment env;
         env.unset("RECIPE_GUI_PACKAGE_ROOT");
         env.set("RECIPE_GUI_CMDLINE", scratch + "/open-cmdline");
         env.set("RECIPE_STANDIN_STATE", scratch + "/open-state");
         env.unset("RECIPE_STANDIN_LOG");
+        env.unset("RECIPE_STANDIN_AB");
         env.set("RECIPE_GUI_SYSTEM_ROOT", scratch + "/system-store");
-        env.unset("RECIPE_STANDIN_PREPARED");
         env.set("RECIPE_GUI_ROOT_HELPER", QFileInfo(recipe).absolutePath() + "/helper-log");
         env.set("HELPER_LOG", scratch + "/open-helper.log");
-        env.set("RECAB_STANDIN_STATE", scratch + "/open-recab");
 
         Window window;
         window.resize(1100, 700);
         window.show();
         waitUntilIdle(window, 30);
-        expect(QStringLiteral("a computer that is not locked holds the person's store and the system's store"),
-               !window.places().locked && window.catalog().twoPlaces && window.catalog().installedItem("gimp", Place::Computer)
+        expect(QStringLiteral("a system with one root holds the person's store and the system's store, and no A/B"),
+               !window.places().ab && !window.catalog().ab && window.catalog().twoPlaces && window.catalog().installedItem("gimp", Place::Computer)
                    && window.catalog().installedItem("gimp", Place::Computer)->inStore
                    && window.catalog().stores[int(Place::Computer)].has && window.catalog().installedItem("tree", Place::Me));
         qsizetype before = changesAsked().size();
         window.askInstall("htop");
         BeforePage *page = window.beforePage();
-        expect(QStringLiteral("for this computer, not locked: into the system's folder, at once, for everyone, and no restart"),
+        expect(QStringLiteral("for me is the default here too"), page->chosen() == placeKey(Place::Me));
+        page->choose(placeKey(Place::Computer));
+        expect(QStringLiteral("for everyone, one root: into the system's folder, at once, and no word of roots (%1)").arg(abWords(page->pageText())),
                page->pageText().contains("Into this computer's software folder, " + scratch + "/system-store. It works at once, for everyone.")
-                   && !page->pageText().contains("The running system is not touched.")
-                   && !page->pageText().contains("next system"));
+                   && abWords(page->pageText()).isEmpty() && !page->pageText().contains("next system"));
         goOn(window, "Install");
         waitUntilIdle(window, 30);
         QList<Asked> now = changesAsked().mid(before);
-        expect(QStringLiteral("not locked: `recipe install NAME --package-root` the system's store, through the helper"),
+        expect(QStringLiteral("one root: `recipe install NAME --package-root` the system's store, through the helper"),
                now.size() == 1 && now[0].route == "store"
                    && kinds(now[0].arguments, {"install", "levitate:htop", "--machine-events", "--package-root", scratch + "/system-store"})
                    && QFile(scratch + "/open-helper.log").exists());
-        expect(QStringLiteral("it is in effect at once for everyone: it shows as for this computer"),
-               window.catalog().installedItem("htop", Place::Computer) && !window.catalog().installedItem("htop", Place::Next));
-        expect(QStringLiteral("there is no next system to read: no strip"), !window.frame()->stripShown());
+        expect(QStringLiteral("it is in effect at once for everyone: it shows as for everyone"),
+               window.catalog().installedItem("htop", Place::Computer) && !window.catalog().installedItem("htop", Place::Other));
         before = changesAsked().size();
         window.goBack("gimp", Place::Computer);
         waitUntilIdle(window, 30);
@@ -736,7 +733,8 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                    && window.catalog().installedItem("fd", Place::Computer)->version == "10.1.0"
                    && window.catalog().installedItem("fd", Place::Computer)->kept == "10.2.0");
         window.showInstalled("htop", int(Place::Computer));
-        save(window, "p6-installed-not-locked");
+        expect(QStringLiteral("Installed on one root has no A/B word (%1)").arg(abWords(wordsOn(window))), abWords(wordsOn(window)).isEmpty());
+        save(window, "p6-installed-one-root");
     }
 }
 
@@ -1183,6 +1181,267 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
     settle(100);
 }
 
+// How a run ends. The recipe's last event ("done" or "failed") ends it on the page at once: the
+// window must not keep saying "Installing…" with a running bar and a Stop button until the command
+// has exited, and until the lists have been read again. Both are slowed here: the stand-in lingers
+// after its last event (as a recipe that tears its sandbox down slowly does), and its reads are slow.
+// Pictures `l1`-`l3`.
+void lagShots(Window &window, const Save &save, const Expect &expect)
+{
+    window.showBrowse();
+    settle(100);
+    Environment env;
+    env.set("RECIPE_STANDIN_SPEED", "0");
+    env.set("RECIPE_STANDIN_LINGER", "5");
+    env.set("RECIPE_STANDIN_SLOW_READS", "1");
+    expect(QStringLiteral("claude-code is not installed yet"), !window.catalog().installedItem("claude-code"));
+    window.startInstall("claude-code", Place::Computer);
+    QElapsedTimer clock;
+    clock.start();
+    // The page says the run is over as soon as the recipe's last event came.
+    waitFor([&] { return window.runPage()->stateWords().startsWith("Done"); }, 30);
+    const qint64 over = clock.elapsed();
+    const bool alive = processesRunning(QStringLiteral("install levitate:claude-code"));
+    const QString words = wordsOn(window);
+    expect(QStringLiteral("the page showed the end after %1 ms, well before the command exited (5000 ms of lingering)").arg(over),
+           over < 3000 && alive);
+    expect(QStringLiteral("the command was still alive then"), alive);
+    expect(QStringLiteral("no running bar, no Stop, no \"step 3 of 3\" any more (%1)").arg(buttonTexts(window).join("|")),
+           !window.runPage()->showsRunning() && !buttonTexts(window).contains("Stop")
+               && !words.contains("step 3 of 3") && !window.frame()->statusText().contains("step"));
+    expect(QStringLiteral("it says what happened and what comes next (%1)").arg(window.runPage()->stateWords()),
+           words.contains("Installed Claude Code") && window.runPage()->stateWords() == "Done. Reading what is installed now…");
+    expect(QStringLiteral("every step check is ticked, none still running"),
+           !words.contains("Fetching Claude Code") && !words.contains("Building Claude Code"));
+    expect(QStringLiteral("the window said it was installed, while the lists are still being read (busy: %1)").arg(window.busy()),
+           window.frame()->statusText().contains("Installed Claude Code") && window.busy());
+    expect(QStringLiteral("the output is the run's own, up to the end"),
+           window.runPage()->findChild<QPlainTextEdit *>() && window.runPage()->findChild<QPlainTextEdit *>()->toPlainText().contains("recipe: diagnostics:"));
+    save(window, "l1-run-over-command-lingering");
+    waitUntilIdle(window, 60);
+    expect(QStringLiteral("then the lists were read, and the program's page shows it installed"),
+           window.catalog().installedItem("claude-code") && window.recipePage()->isVisible()
+               && buttonTexts(window).contains("Remove…"));
+    save(window, "l2-installed-after-reading");
+    waitFor([] { return !processesRunning(QStringLiteral("install levitate:claude-code")); }, 20);
+
+    // A failure ends the page the same way: the facts and "Copy for agent" are there while the command lingers.
+    env.set("RECIPE_STANDIN_REFUSE_NEW", "onlyoffice");
+    window.startInstall("onlyoffice", Place::Computer);
+    waitFor([&] { return buttonTexts(window).contains("Copy for agent"); }, 30);
+    expect(QStringLiteral("a failed run shows its end at once too: no Stop, the way on (%1)").arg(buttonTexts(window).join("|")),
+           buttonTexts(window).contains("Try again") && !buttonTexts(window).contains("Stop")
+               && processesRunning(QStringLiteral("install levitate:onlyoffice")));
+    save(window, "l3-failed-command-lingering");
+    waitUntilIdle(window, 60);
+    waitFor([] { return !processesRunning(QStringLiteral("install levitate:onlyoffice")); }, 20);
+    window.showBrowse();
+    settle(100);
+}
+
+// What `recipe info` says the file is, asked of the same stand-in and store the window uses.
+QString infoFile(const QString &qualified)
+{
+    QProcess run;
+    run.start(qEnvironmentVariable("RECIPE_GUI_RECIPE"),
+              {"info", qualified, "--package-root", qEnvironmentVariable("RECIPE_GUI_PACKAGE_ROOT")});
+    run.waitForFinished(60000);
+    const QRegularExpressionMatch found = QRegularExpression(QStringLiteral("^Recipe:\\s+(\\S.*?)\\s*$"), QRegularExpression::MultilineOption)
+                                              .match(QString::fromUtf8(run.readAllStandardOutput()));
+    return found.hasMatch() ? found.captured(1) : QString();
+}
+
+// The recipe's file, read-only, with Rhai highlighting and where it came from. Pictures `v1`-`v3`.
+void sourceShots(Window &window, const Save &save, const Expect &expect)
+{
+    window.showRecipe("htop");
+    settle(100);
+    expect(QStringLiteral("the recipe's page offers to read it"), buttonTexts(window).contains("Read it"));
+    clickButton(window.recipePage(), "Read it");
+    waitFor([&] { return window.sourceViewer() && window.sourceViewer()->isVisible(); }, 15);
+    SourceViewer *viewer = window.sourceViewer();
+    expect(QStringLiteral("a viewer opened"), viewer && viewer->isVisible());
+    if (!viewer)
+        return;
+    const QString real = infoFile(window.catalog().qualified("htop"));
+    expect(QStringLiteral("it names the file `recipe info` names (%1)").arg(viewer->pathWords()),
+           !real.isEmpty() && viewer->pathWords() == real && viewer->pathWords().endsWith("/htop.rhai"));
+    QFile file(real);
+    const bool opened = file.open(QIODevice::ReadOnly);
+    expect(QStringLiteral("it shows that file's own text, whole"), opened && viewer->code() == QString::fromUtf8(file.readAll()));
+    expect(QStringLiteral("it is read-only, and has no way to save or run anything (%1)").arg(buttonTexts(*viewer).join("|")),
+           viewer->readOnly() && buttonTexts(*viewer) == QStringList({"Close"}));
+    expect(QStringLiteral("it says which source it is from, and where (%1)").arg(viewer->fromWords()),
+           viewer->fromWords().contains("LevitateOS recipes") && viewer->fromWords().contains("levitate")
+               && viewer->fromWords().contains("https://raw.githubusercontent.com/LevitateOS/recipes/"));
+    expect(QStringLiteral("Rhai is highlighted: keywords (%1)").arg(viewer->highlighted("keyword").join(",")),
+           viewer->highlighted("keyword").contains("fn") && viewer->highlighted("keyword").contains("let")
+               && viewer->highlighted("keyword").contains("if") && viewer->highlighted("keyword").contains("return")
+               && viewer->highlighted("keyword").contains("const"));
+    expect(QStringLiteral("strings, numbers, calls and both kinds of comment (%1 | %2 | %3 | %4)")
+               .arg(viewer->highlighted("string").join(","), viewer->highlighted("number").join(","),
+                    viewer->highlighted("call").join(","), viewer->highlighted("comment").join(",")),
+           viewer->highlighted("string").contains("\"tool\"") && viewer->highlighted("number").contains("3")
+               && viewer->highlighted("call").contains("print") && viewer->highlighted("call").contains("install")
+               && viewer->highlighted("comment").contains("// the stand-in's recipe for htop")
+               && viewer->highlighted("comment").contains("/* what a recipe says about itself */"));
+    expect(QStringLiteral("code in a string is not read as keywords"),
+           !viewer->highlighted("keyword").contains("putting"));
+    save(*viewer, "v1-source-viewer");
+    viewer->close();
+    settle(100);
+
+    // The Before step offers the same file.
+    window.askInstall("htop");
+    settle(100);
+    emit window.beforePage()->linkClicked();
+    waitFor([&] { return window.sourceViewer() && window.sourceViewer()->isVisible(); }, 15);
+    expect(QStringLiteral("the Before step's \"Read the recipe\" opens the same viewer"),
+           window.sourceViewer() && window.sourceViewer()->pathWords() == real);
+    if (window.sourceViewer())
+        window.sourceViewer()->close();
+    settle(100);
+    clickButton(window.beforePage(), "Cancel");
+
+    // When Recipe does not say where the file is, the viewer says so and shows no code.
+    {
+        Environment env;
+        env.set("RECIPE_STANDIN_INFO", "nofile");
+        window.viewSource("htop");
+        waitFor([&] { return window.sourceViewer() && window.sourceViewer()->isVisible(); }, 15);
+        expect(QStringLiteral("no file named: the viewer says so, and guesses nothing (%1)").arg(window.sourceViewer() ? window.sourceViewer()->problemWords() : QString()),
+               window.sourceViewer() && window.sourceViewer()->problemWords().contains("did not say which file it is")
+                   && window.sourceViewer()->code().isEmpty() && window.sourceViewer()->pathWords().isEmpty());
+        if (window.sourceViewer()) {
+            save(*window.sourceViewer(), "v2-source-no-file");
+            window.sourceViewer()->close();
+        }
+    }
+    window.viewFile("/nonexistent/missing.rhai", QString());
+    expect(QStringLiteral("a named file that cannot be read says why"),
+           window.sourceViewer() && window.sourceViewer()->problemWords().contains("could not be read"));
+    if (window.sourceViewer())
+        window.sourceViewer()->close();
+    settle(100);
+    window.showBrowse();
+}
+
+// "Use your own recipes, and your own agent": the words on Sources, and the flow that ends with the
+// folder added and the window saying it reads recipes from there. Pictures `o1`-`o2`.
+void ownRecipesShots(Window &window, const QString &folder, const Save &save, const Expect &expect)
+{
+    window.showSources();
+    settle(100);
+    const QString words = wordsOn(window);
+    expect(QStringLiteral("Sources teaches: the recipes root, a folder of one's own, adding it, and where it ends"),
+           words.contains("Use your own recipes, and your own agent") && words.contains("recipes root")
+               && words.contains("one .rhai file for each") && words.contains("recipe source add --path ~/my-recipes")
+               && words.contains("recipe source list") && words.contains("recipe source remove NAME")
+               && words.contains("Browse shows them under it") && buttonTexts(window).contains("Add my recipe folder…"));
+    expect(QStringLiteral("it names the folder Recipe reads now, so an agent can be pointed at it"),
+           words.contains("The folders of recipes Recipe reads now: "));
+    expect(QStringLiteral("it says nothing about an agent inside this window, or a choice of agents"),
+           !words.contains("Ask an agent") && !words.contains("Choose an agent"));
+    save(window, "o1-sources-own-recipes");
+
+    const QString mine = QDir(folder).filePath("my-recipes");
+    QDir().mkpath(mine);
+    const qsizetype before = changesAsked().size();
+    window.addSource(mine);
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("`recipe source add --path FOLDER` was asked"),
+           timesAsked({"source", "add", "--path", mine}) == 1 && loggedCommands().size() > before);
+    expect(QStringLiteral("the folder is a source now, and its recipes are offered"),
+           window.catalog().origin("my-recipes") && window.catalog().countFrom("my-recipes") == 2
+               && window.catalog().recipe("zellij"));
+    settle(150);
+    expect(QStringLiteral("Sources shows it, and the window says it reads recipes from there (%1)").arg(window.frame()->statusText()),
+           window.frame()->selected() == "sources" && wordsOn(window).contains(mine)
+               && window.frame()->statusText().contains("Recipe now reads recipes from my-recipes (2 recipes)."));
+    save(window, "o2-sources-folder-added");
+    window.removeSource("my-recipes", false);
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("and it can be removed again"), !window.catalog().origin("my-recipes"));
+    window.showBrowse();
+}
+
+// Per-OS availability and the proprietary flag. A recipe whose `ABOUT.libc` this system's C library cannot
+// run is not offered, with the reason in one line; a recipe whose licence is `proprietary …` shows that flag
+// before the install. Pictures `a1`-`a4`.
+void availabilityShots(Window &window, const Save &save, const Expect &expect)
+{
+    // The flag, before anything is installed (a glibc system).
+    expect(QStringLiteral("this system says glibc, and steam is installable"),
+           window.catalog().hostLibc == "glibc" && window.catalog().unavailable("steam").isEmpty());
+    window.showBrowse();
+    window.browsePage()->searchBox()->setText("steam");
+    settle(150);
+    expect(QStringLiteral("Browse flags steam as proprietary, with Install (%1)").arg(buttonTexts(window).join("|")),
+           wordsOn(window).contains("Proprietary software") && buttonTexts(window).contains("Install"));
+    window.browsePage()->searchBox()->clear();
+    window.showRecipe("steam");
+    settle(100);
+    expect(QStringLiteral("its page shows the flag and the licence before Install"),
+           wordsOn(window).contains("Proprietary software. Its licence: proprietary (Steam Subscriber Agreement).")
+               && buttonTexts(window).contains("Install"));
+    save(window, "a1-proprietary-recipe-page");
+    window.askInstall("steam");
+    settle(100);
+    BeforePage *page = window.beforePage();
+    expect(QStringLiteral("the Before step says it first, in What happens (%1)").arg(page->pageText().left(120).replace('\n', '|')),
+           page->isVisible() && page->pageText().contains("Steam is proprietary software. Its licence: proprietary (Steam Subscriber Agreement).")
+               && page->pageText().indexOf("is proprietary software") < page->pageText().indexOf("is fetched from"));
+    save(window, "a2-proprietary-before");
+    clickButton(page, "Cancel");
+    window.askInstall("htop");
+    settle(100);
+    expect(QStringLiteral("free software carries no such flag"), !window.beforePage()->pageText().contains("proprietary"));
+    clickButton(window.beforePage(), "Cancel");
+
+    // A system whose C library is musl: steam and claude-code declare glibc, htop declares both.
+    {
+        Environment env;
+        env.set("RECIPE_STANDIN_HOST_LIBC", "musl");
+        Window other;
+        other.resize(1100, 700);
+        other.show();
+        waitUntilIdle(other, 30);
+        const Catalog &catalog = other.catalog();
+        const QString why = catalog.unavailable("steam");
+        expect(QStringLiteral("on musl: steam is not available, and one line says why (%1)").arg(why),
+               catalog.hostLibc == "musl"
+                   && why == "Its build is linked against glibc, and this system uses musl, so it would find no loader here.");
+        expect(QStringLiteral("claude-code too; htop, which declares glibc or musl, and recipes that declare nothing, are"),
+               !catalog.unavailable("claude-code").isEmpty() && catalog.unavailable("htop").isEmpty()
+                   && catalog.unavailable("krita").isEmpty());
+        other.showBrowse();
+        other.browsePage()->searchBox()->setText("steam");
+        settle(150);
+        QString words = wordsOn(other);
+        expect(QStringLiteral("Browse says why in a line and offers no Install for it (%1)").arg(buttonTexts(other).join("|")),
+               words.contains(why) && words.contains("Not available") && !buttonTexts(other).contains("Install"));
+        save(other, "a3-unavailable-browse");
+        other.browsePage()->searchBox()->clear();
+        other.showRecipe("steam");
+        settle(100);
+        words = wordsOn(other);
+        expect(QStringLiteral("its page says it is not available on this system, why, and has no Install (%1)").arg(buttonTexts(other).join("|")),
+               words.contains("Not available on this system. " + why) && !buttonTexts(other).contains("Install")
+                   && words.contains("Proprietary software."));
+        save(other, "a4-unavailable-recipe-page");
+        const qsizetype before = changesAsked().size();
+        other.askInstall("steam");
+        settle(100);
+        expect(QStringLiteral("asking for it anyway starts nothing and says why (%1)").arg(other.frame()->statusText()),
+               !other.beforePage()->isVisible() && changesAsked().size() == before && other.frame()->statusText().contains(why));
+        other.askInstall("htop");
+        settle(100);
+        expect(QStringLiteral("what it can run is still offered"), other.beforePage()->isVisible());
+        clickButton(other.beforePage(), "Cancel");
+    }
+    window.showBrowse();
+}
+
 } // namespace
 
 int tryRecipe(Window &window, const QString &name, const QString &folder, bool keep, bool readOnly)
@@ -1341,7 +1600,7 @@ int takeShots(Window &window, const QString &folder)
                  && page->pageText().contains("The sandbox refuses anything else."));
         hold("it does not say how much is downloaded or how much disk is used: recipe does not report either",
              !page->pageText().contains("is downloaded") && !page->pageText().contains("is used"));
-        hold("no running system to mention: this is not a locked computer", !page->pageText().contains("The running system is not touched."));
+        hold("no running system to mention: this is not a locked computer", !page->pageText().contains("The running root is not touched."));
         ok &= save(window, "2b-before-install");
         // Cancel comes back to where the person was; nothing was run.
         const qsizetype asked = changesAsked().size();
@@ -1415,7 +1674,7 @@ int takeShots(Window &window, const QString &folder)
     const Recipe *recipe = window.catalog().recipe("gimp");
     const InstalledItem *item = window.catalog().installedItem("gimp");
     if (recipe && item) {
-        RemoveDialog dialog(*recipe, *item, &window);
+        RemoveDialog dialog(*recipe, *item, window.catalog().takenOutWords(*item), &window);
         dialog.show();
         ok &= save(dialog, "6-remove");
         dialog.close();
@@ -1537,14 +1796,17 @@ int takeShots(Window &window, const QString &folder)
         storageAfter(window, save_, expect);
     }
 
-    // The frame: the rail, the strip about the next system.
+    // The frame: the rail.
     auto saved = [&](QWidget &widget, const QString &name) { ok &= save(widget, name); };
     auto held = [&](const QString &what, bool holds) { expect(what, holds); };
     frameShots(window, saved, held);
     holdShots(window, saved, held);
     gapShots(window, saved, held);
     helpShots(window, saved, held);
-    stripShots(window, folder, saved, held, out);
+    lagShots(window, saved, held);
+    sourceShots(window, saved, held);
+    ownRecipesShots(window, folder, saved, held);
+    availabilityShots(window, saved, held);
     placesShots(folder, saved, held);
     out << (ok ? "all flows ended where they should\n" : "some flows did not end where they should\n");
     return ok ? 0 : 1;

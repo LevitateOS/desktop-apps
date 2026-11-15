@@ -1,5 +1,5 @@
-// The two systems side by side, each as a map of blocks: how alike the
-// running system and the other one are, and what differs. recab reads both
+// The two roots side by side, each as a map of blocks: how alike the
+// booted root and the other one are, and what differs. recab reads both
 // and compares them; this only draws what recab answered.
 #pragma once
 
@@ -31,7 +31,7 @@ struct Difference {
     QString detail; // for Metadata: what differs, in recab's words
 };
 
-// A folder's whole size in each system.
+// A folder's whole size in each root.
 struct FolderSize {
     QString path;
     qint64 runningBytes = 0, otherBytes = 0;
@@ -39,14 +39,10 @@ struct FolderSize {
 
 struct Comparison {
     Side running, other;
-    // What the other system is to this one, in recab's words: "copy" (made
-    // as one), "previous" (the system from before the last change) or "next"
-    // (holds a change that is not started yet).
-    QString role;
     qint64 sameFiles = 0, sameBytes = 0;
     QList<Difference> differences;
     QList<FolderSize> folders; // what the maps are drawn from
-    QStringList own;  // files that differ by design: each system names its own partition
+    QStringList own;  // files that differ by design: each root names its own partition
     qint64 more = 0;  // differences recab left out of the list
 
     // Reads recab's answer. An empty `error` means it was understood.
@@ -55,36 +51,27 @@ struct Comparison {
     qint64 count() const { return differences.size() + more; }
     // The room taken by what differs: for each difference, the bigger side.
     qint64 differingBytes() const;
-    // How much of the two systems is the same, by room taken, 0 to 1.
+    // How much of the two roots is the same, by room taken, 0 to 1.
     double alike() const;
-    // One sentence on what the other system is.
-    QString roleWords() const;
+    // One sentence on which root is booted and which is the other.
+    QString rootsWords() const;
     // What the differences are, as plain text for "Copy for agent".
     QString issue() const;
     QStringList facts() const;
     QString copyText() const;
 };
 
-// What recab says about the two systems without reading them through: quick
-// to ask, and enough to say what is there before anything is compared.
+// What `recab status --json` says about the two roots: quick to ask, and
+// enough to say which is which before anything is compared.
 struct SystemsState {
     bool known = false;
     QString problem; // why it is not known
-    QString distro, runningRelease, otherRelease, otherRole;
-    // The partitions of the two systems, when recab says them.
-    QString runningDevice, otherDevice;
-    // Changes whenever either system does: a comparison made under another
-    // key is out of date.
+    QString booted, other, otherMount; // "A" or "B"; where the other is mounted, if it is
+    // Changes whenever the roots swap: a comparison made under another key is out of date.
     QString key;
 
-    // Reads `recab status --json`: the real recab's (schema 6: two slots and
-    // a preparation; the running system's name comes from `osRelease`) or
-    // its stand-in's (schema 3).
-    static SystemsState fromJson(const QJsonObject &object, const QString &osRelease);
-    QString runningName() const;
-    QString otherName() const;
-    // "The system from before.", "The next system, not started yet."
-    QString otherIs() const;
+    // Reads `recab status --json` (schema 11).
+    static SystemsState fromJson(const QJsonObject &object);
 };
 
 class SideFrame;

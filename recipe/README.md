@@ -14,7 +14,7 @@ beyond the red for "this went wrong", so it takes each desktop's own style.
 The window is `gui/kit/frame.*` (see `../kit/README.md`): the rail on the left
 (the three apps, then Browse, Installed, Updates with the number of updates as
 its badge, Sources, Storage, then Help, which the frame owns), the pages in the
-middle, a strip under them and a status line. There is no sidebar any more:
+middle and a status line. There is no sidebar any more:
 the search, the box for the source and the box for the kind of software are
 the top of the Browse page. Help is the frame's own page, the same in all three
 apps (`gui/kit/README.md`). The story opens Help and the first page (pictures
@@ -22,11 +22,8 @@ apps (`gui/kit/README.md`). The story opens Help and the first page (pictures
 
 - The status line says where the recipes are from and when they were read (and
   what is being built); "Read again" sits beside it.
-- The strip ("The next system holds N changes.") is read with `recab status
-  --json` (`RECIPE_GUI_RECAB`, default `recab`) after every read of the recipes.
-  It shows on every page; when recab cannot be run there is no strip and no
-  error. "Finish and restart…" starts Recab (`LEVITATE_APP_SYSTEM`, default
-  `recab-gui`).
+- There is no strip and no "next system" any more (2026-11-15): see "System
+  installs go into the other root" below. Recipe no longer runs `recab`.
 
 ## What the audit of 2026-11-11 changed
 
@@ -150,8 +147,6 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
 `qt6-qtsvg-devel` on Rocky and Fedora).
 
 - `RECIPE_GUI_RECIPE`: the `recipe` to run (default: `recipe` on `PATH`).
-- `RECIPE_GUI_RECAB`: the `recab` that tells the strip what the next system
-  holds (default: `recab` on `PATH`).
 - `RECIPE_GUI_ROOT_HELPER`: what changes are run through (default: `pkexec`;
   empty runs them directly, for the stand-in).
 - `RECIPE_GUI_RECIPES_PATH`: the collection to list and install from
@@ -170,30 +165,24 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
   `QT_QPA_PLATFORM=offscreen` it needs no display. **It refuses to start (exit code 2,
   and a sentence naming what is missing) unless every program it could run and every
   folder it could write is named in the environment**: `RECIPE_GUI_RECIPE`,
-  `RECIPE_GUI_RECAB`, `RECIPE_GUI_PACKAGE_ROOT`,
+  `RECIPE_GUI_PACKAGE_ROOT`,
   `RECIPE_GUI_ROOT_HELPER` (empty is a name), and `HOME` (not your own) and the XDG
   folders in scratch space. No app is started that `LEVITATE_APP_*` does not name. The
   story runs itself bare to check that.
 
-The story also checks the frame and the strip, so it needs a recab that speaks the real
-shape with a scratch state of its own:
+The story needs no recab. Run it with scratch state of its own:
 
 ```sh
-F=$PWD/gui/recipe/fixtures; S=/tmp/recipe-shots   # all state of the check lives here
+F=$PWD/tools/gui/recipe/fixtures; S=/tmp/recipe-shots   # all state of the check lives here
 rm -rf $S; mkdir -p $S/home $S/store $S/run; chmod 700 $S/run
 QT_QPA_PLATFORM=offscreen HOME=$S/home XDG_CONFIG_HOME=$S/home/config XDG_STATE_HOME=$S/home/state \
   XDG_DATA_HOME=$S/home/data XDG_RUNTIME_DIR=$S/run \
   RECIPE_GUI_RECIPE=$F/recipe RECIPE_GUI_ROOT_HELPER= \
   RECIPE_GUI_PACKAGE_ROOT=$S/store RECIPE_STANDIN_STATE=$S/state RECIPE_STANDIN_SPEED=0 \
-  RECIPE_GUI_RECAB=$PWD/gui/recab/fixtures/recab-real RECAB_STANDIN_STATE=$S/recab RECAB_STANDIN_SPEED=0 \
-  .artifacts/recipe-gui/build/recipe-gui --look levitate --shots $S/shots
+  recipe-gui --look levitate --shots $S/shots
 ```
 
-After the strip checks the story puts the stand-in recab's running system on trial, where recab
-still calls the other system "next", and checks that no strip is shown (`s4-no-strip-on-trial`).
-
-The state folders must be new (the `rm -rf` above): the story expects no next system at the start, then
-makes one with one `prepare` and one `change`. The story needs
+The state folders must be new (the `rm -rf` above). The story needs
 `RECIPE_GUI_PACKAGE_ROOT` (its first window is on one explicit store, so the
 Before page has no choice) and says so when it is missing. Pictures: `1-…` to
 `14-…` are the flows (`2b-before-install`, `4b-before-update` are the Before
@@ -267,7 +256,7 @@ QT_QPA_PLATFORM=offscreen RECIPE_GUI_RECIPE=$PWD/target/debug/recipe \
 | `src/model.*` | the data: recipes, what is installed, updates, as read from JSON |
 | `src/client.*` | the only code that runs `recipe`; a `Run` reports one change as events |
 | `../kit/` | shared with `gui/recab` and `gui/disk`: small widgets (step mark, letter tile, panels, the "Copy for agent" button), the page base, the work page, the command runner, sizes and counts as words, the stand-in looks |
-| `../kit/frame.*`, `nextsystem.*` | the window frame and the strip's reader |
+| `../kit/frame.*` | the window frame |
 | `../kit/before.*` | the Before page: a question, "Nothing has started...", sections the app fills, Cancel and one button |
 | `src/beforewords.*` | the words for it, from what `recipe` reported |
 | `src/pages.*` | Browse (with its search and boxes), a program's page, a run, Installed, Updates, the remove question |
@@ -323,6 +312,52 @@ the real `recipe` (the others need a Ginux run).
 Without a `plan`, the front end adds a row of three steps for each recipe as
 its first step arrives.
 
+## System installs go into the other root (2026-11-15)
+
+This section replaces everything below that speaks of a next system, recab's
+`prepared` answer, a strip or a restart; those parts are the old design.
+
+- On an A/B system (`recab.immutable` on the command line) the booted root is
+  locked and the other root is unlocked. "For everyone" is written into the
+  other root and becomes active when that root is booted. `recipe --system
+  install|update|remove --json` answers `{action, package, packages, other_root,
+  other_mount, running_root, active_now: false, in_other_root}`; the window says
+  "NAME was written into the other root (B). It becomes active when root B is
+  started." and never suggests the booted root can be changed.
+- `recipe --system installed --json` is `{booted: {root, packages}, other: {root,
+  mount, packages}, not_done: [{package, error}]}`. Installed groups it as "For
+  me", "For everyone · in the running root (A), active now" and "In the other root
+  (B) · active when root B is started". A `not_done` entry (a system change wiped
+  from the other root by `recab copy` whose writing again failed) is shown with
+  Recipe's error and "Copy for agent"; Recipe retries it itself on the next system
+  action. A plain `{packages, profile}` answer is read as a store, with no A/B word,
+  as is a system without `recab.immutable`.
+- "For me" is the default of the Before step's choice.
+- A run ends on its last event: `done` or `failed` shows the end at once (no Stop,
+  no bar, no "step 3 of 3"), whenever the command exits and before the lists are
+  read again. The cause of the lag seen on 2026-11-15 was that the run page learned
+  of the end only from the command's exit, and then read five lists one after the
+  other before moving; the page had said nothing about the end meanwhile. On A/B
+  the recipe's `done` comes before the other root is written, so there the exit is
+  the end and the page says "Writing it into the other root (B)…" between.
+- The recipe's file: "Read it" and the Before step's "Read the recipe" open a
+  read-only viewer (`src/sourceview.*`) of the file `recipe info NAME` names (for a
+  remote source `recipe info` fetches the copy to read; the list's own `path` is not
+  reliable for those), with Rhai highlighting and the source it is from.
+- Sources teaches how to use one's own recipes and agent, with `recipe source add
+  --path`, and shows "Recipe now reads recipes from NAME (N recipes)" after the
+  folder is added.
+- A recipe whose `ABOUT.libc` this system's C library cannot run is not offered
+  (one line says why); a licence starting `proprietary` is flagged before install.
+  The list says what each recipe declares; this system's C library is read from
+  the `recipe info` line "this system's C library is …" of a recipe that declares
+  one (Recipe has no machine-readable field for it).
+- The story runs with stand-in settings `RECIPE_STANDIN_AB=0|1`,
+  `RECIPE_STANDIN_NOT_DONE`, `RECIPE_STANDIN_HOST_LIBC`, `RECIPE_STANDIN_LINGER`,
+  `RECIPE_STANDIN_SLOW_READS` and `RECIPE_STANDIN_INFO=nofile` (see the top of
+  `fixtures/recipe`). Pictures: `l1`–`l3` (the end of a run), `v1`–`v2` (the
+  viewer), `o1`–`o2` (own recipes), `a1`–`a4` (proprietary, unavailable), `p1`–`p12`.
+
 ## The two places
 
 Software goes to one of two places, and the window says which, in words, on
@@ -331,9 +366,9 @@ the Before page, on every row of Installed and Updates, and on the recipe's page
 | Place | Where | What `recipe` is run with |
 |---|---|---|
 | For me | the person's own store (`~/.local/share/recipe`); in effect at once, for them only | no `--package-root`, no root helper: `recipe install NAME`, `update`, `remove`, `go-back`, `storage`, as the person |
-| For this computer, not locked | the system's store (`/var/lib/recipe`, or `RECIPE_GUI_SYSTEM_ROOT`); in effect at once, for everyone | through the root helper: `recipe install NAME --package-root /var/lib/recipe` (and the same for the others) |
-| For this computer, locked | the next system; in effect after a restart, for everyone; the running system is not touched | through the root helper: `recipe --system install\|update\|remove NAME`, which `recipe` hands to `recab change`. What is installed: `recipe --system installed --json`, as the person |
-| In the next system, after a restart | software only the next system holds | shown only when the answer carries it (below); removed with `recipe --system remove NAME` |
+| For everyone, one root | the system's store (`/var/lib/recipe`, or `RECIPE_GUI_SYSTEM_ROOT`); in effect at once, for everyone | through the root helper: `recipe install NAME --package-root /var/lib/recipe` (and the same for the others) |
+| For everyone, A/B | written into the other root; active when that root is booted; the booted root is never written | through the root helper: `recipe --system install\|update\|remove NAME`. What is installed: `recipe --system installed --json` |
+| In the other root | software only the other root holds | listed from `--system installed --json`'s `other` section; removed with `recipe --system remove NAME` |
 | One explicit store (`RECIPE_GUI_PACKAGE_ROOT`) | that store; the only place, so no column, no choice | as before: the root helper with `--package-root` that store |
 
 The tells, from `tools/recipe` and `tools/recab` (what the window relies on, with

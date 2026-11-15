@@ -99,65 +99,6 @@ void Card::paintEvent(QPaintEvent *event)
     painter.drawRoundedRect(QRectF(rect()).adjusted(0.75, 0.75, -0.75, -0.75), 4, 4);
 }
 
-Glyph::Glyph(Kind kind, bool filled, QWidget *parent)
-    : QWidget(parent)
-    , kind_(kind)
-    , filled_(filled)
-{
-    setFixedSize(52, 52);
-}
-
-void Glyph::paintEvent(QPaintEvent *)
-{
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    QColor ground = palette().color(QPalette::WindowText);
-    ground.setAlphaF(0.09f);
-    QColor ink = palette().color(QPalette::WindowText);
-    ink.setAlphaF(0.72f);
-    if (filled_) {
-        ground = palette().color(QPalette::Highlight);
-        ink = palette().color(QPalette::HighlightedText);
-    }
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(ground);
-    painter.drawRoundedRect(rect(), 11, 11);
-
-    // The pictures are drawn in a 24 by 24 box in the middle of the tile.
-    painter.translate((width() - 24) / 2.0, (height() - 24) / 2.0);
-    painter.setPen(QPen(ink, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    painter.setBrush(Qt::NoBrush);
-    switch (kind_) {
-    case Lock: {
-        painter.drawRoundedRect(QRectF(5.5, 11, 13, 9.5), 2, 2);
-        QPainterPath shackle;
-        shackle.moveTo(8.5, 11);
-        shackle.lineTo(8.5, 8);
-        shackle.arcTo(QRectF(8.5, 4.5, 7, 7), 180, -180);
-        shackle.lineTo(15.5, 11);
-        painter.drawPath(shackle);
-        break;
-    }
-    case Plus:
-        painter.drawRoundedRect(QRectF(4, 4, 16, 16), 3, 3);
-        painter.drawLine(QPointF(12, 8), QPointF(12, 16));
-        painter.drawLine(QPointF(8, 12), QPointF(16, 12));
-        break;
-    case Before:
-        painter.drawArc(QRectF(4.5, 4.5, 15, 15), 150 * 16, -300 * 16);
-        painter.drawPolyline(QPolygonF{QPointF(3.2, 4.6), QPointF(5.3, 8.4), QPointF(9.2, 6.6)});
-        painter.drawPolyline(QPolygonF{QPointF(12, 8.5), QPointF(12, 12), QPointF(14.6, 13.6)});
-        break;
-    case Check:
-        painter.drawPolyline(QPolygonF{QPointF(5, 12.5), QPointF(10, 17.5), QPointF(19, 7)});
-        break;
-    case Cross:
-        painter.drawLine(QPointF(6, 6), QPointF(18, 18));
-        painter.drawLine(QPointF(18, 6), QPointF(6, 18));
-        break;
-    }
-}
-
 void Verdict::paintEvent(QPaintEvent *event)
 {
     Panel::paintEvent(event);
@@ -398,31 +339,4 @@ void ElidedLabel::paintEvent(QPaintEvent *)
     painter.setFont(font());
     painter.drawText(rect(), Qt::AlignVCenter | Qt::AlignLeft,
                      fontMetrics().elidedText(text(), Qt::ElideRight, width()));
-}
-
-Chip::Chip(const QString &words, Mood mood, QWidget *parent)
-    : QLabel(words, parent)
-    , mood_(mood)
-{
-    setAlignment(Qt::AlignCenter);
-}
-
-QSize Chip::sizeHint() const
-{
-    return {fontMetrics().horizontalAdvance(text()) + 18, fontMetrics().height() + 6};
-}
-
-void Chip::paintEvent(QPaintEvent *)
-{
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    const QColor colour = moodColour(palette(), mood_);
-    QColor line = mood_ == Mood::Plain ? palette().color(QPalette::WindowText) : colour;
-    if (mood_ == Mood::Plain)
-        line.setAlphaF(0.25f);
-    painter.setPen(QPen(line, 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), height() / 2.0, height() / 2.0);
-    painter.setPen(colour);
-    painter.drawText(rect(), Qt::AlignCenter, text());
 }

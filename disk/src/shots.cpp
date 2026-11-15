@@ -1,6 +1,7 @@
 #include "shots.h"
 
 #include "frame.h"
+#include "help.h"
 #include "helpstory.h"
 #include "look.h"
 #include "window.h"
@@ -57,65 +58,22 @@ QPushButton *buttonNamed(QWidget *inside, const QString &words)
     return nullptr;
 }
 
-// The strip: it is read with a recab of the real shape, named by
-// DISK_STANDIN_STRIP_RECAB (gui/recab/fixtures/recab-real, with its own state,
-// after one `prepare` and one change). The comparison keeps using the
-// window's own recab, the Recdirstat stand-in, which answers `status` in an older
-// shape the strip cannot read.
-void stripShots(Window &window, const Save &save, const Expect &expect, QTextStream &out)
+// "Open Recab…" starts the Recab app (the stand-in named by LEVITATE_APP_SYSTEM makes a mark).
+void openRecabShots(Window &window, const Expect &expect)
 {
-    Frame *frame = window.frame();
-    const QString real = qEnvironmentVariable("DISK_STANDIN_STRIP_RECAB");
     const QString mark = qEnvironmentVariable("DISK_STANDIN_SYSTEM_MARK");
-    if (real.isEmpty() || mark.isEmpty()) {
-        out << "not as expected: the strip needs DISK_STANDIN_STRIP_RECAB (gui/recab/fixtures/recab-real after one "
-               "prepare and one change) and DISK_STANDIN_SYSTEM_MARK (a file the stand-in Recab app makes), see README.md\n";
-        expect(QStringLiteral("the strip could be checked"), false);
+    if (mark.isEmpty() || qEnvironmentVariable("LEVITATE_APP_SYSTEM").isEmpty()) {
+        expect(QStringLiteral("the Recab app could be started: LEVITATE_APP_SYSTEM and DISK_STANDIN_SYSTEM_MARK, see README.md"), false);
         return;
     }
-    frame->choose(QStringLiteral("mess"));
-    window.readStripFrom(real);
-    waitFor([&] { return frame->stripShown(); }, 10);
-    expect(QStringLiteral("the strip says what the next system holds (%1)").arg(frame->stripText()),
-           frame->stripShown() && frame->stripText() == QStringLiteral("The next system holds 1 change."));
-    save("s1-strip-mess");
-    out << "the strip: " << frame->stripText() << "\n";
-
-    // On every page of the window.
-    frame->choose(QStringLiteral("systems"));
+    window.frame()->choose(QStringLiteral("systems"));
     settle(100);
-    expect(QStringLiteral("the strip shows on the two systems too"), frame->stripShown());
-    save("s2-strip-systems");
-
-    // "Finish and restart…" and "Open Recab…" start the Recab app the same way.
-    QFile::remove(mark);
-    if (QPushButton *finish = buttonNamed(frame, QStringLiteral("Finish and restart…")))
-        finish->click();
-    waitFor([&] { return QFileInfo::exists(mark); }, 10);
-    expect(QStringLiteral("the strip's button starts the Recab app"), QFileInfo::exists(mark));
     QFile::remove(mark);
     if (QPushButton *open = buttonNamed(&window, QStringLiteral("Open Recab…")))
         open->click();
     waitFor([&] { return QFileInfo::exists(mark); }, 10);
-    expect(QStringLiteral("\"Open Recab…\" starts it the same way"), QFileInfo::exists(mark));
+    expect(QStringLiteral("\"Open Recab…\" starts the Recab app"), QFileInfo::exists(mark));
     QFile::remove(mark);
-}
-
-// Where the strip must not be: a recab that cannot be read, and the older
-// shape of the Recdirstat stand-in. Neither says anything about it.
-void noStripShots(Window &window, const QString &own, const Expect &expect)
-{
-    Frame *frame = window.frame();
-    window.readStripFrom(QStringLiteral("/nonexistent/recab"));
-    settle(600);
-    expect(QStringLiteral("no strip when recab cannot be started"), !frame->stripShown());
-    // Put the real one back first, so that going away is seen.
-    const QString real = qEnvironmentVariable("DISK_STANDIN_STRIP_RECAB");
-    window.readStripFrom(real);
-    waitFor([&] { return frame->stripShown(); }, 10);
-    window.readStripFrom(own);
-    settle(600);
-    expect(QStringLiteral("no strip when recab answers in a shape the strip cannot read"), !frame->stripShown());
 }
 
 // The pages the frame owns: Help for Recdirstat, and the page a person
@@ -133,7 +91,7 @@ void helpShots(Window &window, const Save &save, const Expect &expect)
         QWidget *page = key == QLatin1String("disk")      ? static_cast<QWidget *>(window.diskPage())
                         : key == QLatin1String("browse")  ? static_cast<QWidget *>(window.browsePage())
                         : key == QLatin1String("mess")    ? static_cast<QWidget *>(window.messPage())
-                        : key == QLatin1String("systems") ? static_cast<QWidget *>(window.findChild<SystemsPage *>())
+                        : key == QLatin1String("systems") ? static_cast<QWidget *>(window.systemsPage())
                                                           : nullptr;
         return page && page->isVisible();
     };
@@ -275,8 +233,7 @@ void diskShots(Window &window, const Save &save, const Expect &expect, QTextStre
            layout.found && layout.disk == QStringLiteral("/dev/vda") && layout.parts.size() == 6);
     expect(QStringLiteral("the other disk's partition is not listed"), !words.contains(QStringLiteral("backup")));
     for (const QString &phrase :
-         {QStringLiteral("The running system"), QStringLiteral("The system from before"),
-          QStringLiteral("Your files and what programs keep"), QStringLiteral("Start-up files"),
+         {QStringLiteral("Your files and what programs keep"), QStringLiteral("Start-up files"),
           QStringLiteral("Partition “scratch”"), QStringLiteral("Swap space")})
         expect(QStringLiteral("a partition row says \"%1\"").arg(phrase), words.contains(phrase));
     expect(QStringLiteral("sizes are lsblk's (20 GiB, 512 MiB)"), words.contains(QStringLiteral("20 GiB")) && words.contains(QStringLiteral("512 MiB")));
@@ -512,7 +469,7 @@ void passwordShots(Window &window, const Expect &expect)
         return; // a kept comparison is shown instead, and says nothing of it
     const QString words = pageText(window.systemsPage());
     const bool helper = !qEnvironmentVariable("DISK_GUI_ROOT_HELPER").isEmpty();
-    expect(QStringLiteral("the page of the two systems says the truth about the password (%1)").arg(helper ? QStringLiteral("asked") : QStringLiteral("none asked")),
+    expect(QStringLiteral("the page of the two roots says the truth about the password (%1)").arg(helper ? QStringLiteral("asked") : QStringLiteral("none asked")),
            helper ? words.contains(QStringLiteral("needs the administrator's password"))
                   : (words.contains(QStringLiteral("no password is asked")) && !words.contains(QStringLiteral("administrator's password"))));
 }
@@ -524,11 +481,11 @@ void compareShots(Window &window, const Save &save, const Expect &expect)
     window.askCompare();
     settle(250);
     const QString words = pageText(window.beforePage());
-    expect(QStringLiteral("comparing asks first, on the Before page, under The two systems"),
+    expect(QStringLiteral("comparing asks first, on the Before page, under The two roots"),
            window.showingBefore() && window.frame()->selected() == "systems" && words.contains(QStringLiteral("Nothing has started."))
                && !window.comparing());
-    expect(QStringLiteral("it says both systems are read from start to end, neither is changed, it takes a few minutes, and the command that runs"),
-           words.contains(QStringLiteral("read from start to end")) && words.contains(QStringLiteral("Neither system is changed"))
+    expect(QStringLiteral("it says both roots are read from start to end, neither is changed, it takes a few minutes, and the command that runs"),
+           words.contains(QStringLiteral("read from start to end")) && words.contains(QStringLiteral("Neither root is changed"))
                && words.contains(QStringLiteral("a few minutes")) && words.contains(QStringLiteral("compare --json --machine-events")));
     // The stories run as the person, so no password is asked, and the page says so.
     expect(QStringLiteral("it says the truth about the password (%1)").arg(qEnvironmentVariable("DISK_GUI_ROOT_HELPER").isEmpty() ? "none asked" : "asked"),
@@ -538,7 +495,7 @@ void compareShots(Window &window, const Save &save, const Expect &expect)
     if (QPushButton *cancel = buttonNamed(window.beforePage(), QStringLiteral("Cancel")))
         cancel->click();
     settle(200);
-    expect(QStringLiteral("Cancel compares nothing: The two systems shows, nothing runs, the kept comparison is as it was"),
+    expect(QStringLiteral("Cancel compares nothing: The two roots shows, nothing runs, the kept comparison is as it was"),
            window.showingSystems() && !window.comparing() && !window.busy() && (window.comparison() != nullptr) == had);
     window.askCompare();
     settle(250);
@@ -546,6 +503,40 @@ void compareShots(Window &window, const Save &save, const Expect &expect)
         go->click();
     else
         expect(QStringLiteral("the Before page has a \"Compare\" button"), false);
+}
+
+} // namespace
+
+namespace {
+
+// Whether the window has the page of the two roots is decided by two things:
+// recab can be run, and the kernel command line has `recab.immutable`. Checked
+// on its own for every combination, with command lines written here.
+void twoRootsShots(Window &window, const QString &folder, const Expect &expect)
+{
+    const QString recab = qEnvironmentVariable("DISK_GUI_RECAB");
+    auto cmdline = [&](const QString &name, const QByteArray &words) {
+        const QString path = QDir(folder).filePath(name);
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            file.write(words);
+        return path;
+    };
+    const QString ab = cmdline("cmdline-ab", "BOOT_IMAGE=/vmlinuz root=PARTUUID=1 ro recab.immutable quiet\n");
+    const QString option = cmdline("cmdline-option", "root=PARTUUID=1 ro recab.immutable=1\n");
+    const QString single = cmdline("cmdline-single", "BOOT_IMAGE=/vmlinuz root=PARTUUID=1 rw quiet\n");
+    const QString near = cmdline("cmdline-near", "root=PARTUUID=1 ro notrecab.immutable recab.immutable-not\n");
+    expect(QStringLiteral("two roots: recab runs and the command line has recab.immutable"), Window::hasTwoRoots(recab, ab));
+    expect(QStringLiteral("two roots: recab.immutable=value counts as the option"), Window::hasTwoRoots(recab, option));
+    expect(QStringLiteral("one root: recab runs but the command line lacks recab.immutable"), !Window::hasTwoRoots(recab, single));
+    expect(QStringLiteral("one root: only words that merely contain recab.immutable"), !Window::hasTwoRoots(recab, near));
+    expect(QStringLiteral("one root: the command line has recab.immutable but there is no recab to run"),
+           !Window::hasTwoRoots(QStringLiteral("/nonexistent/recab"), ab) && !Window::hasTwoRoots(QStringLiteral("recab-not-installed-anywhere"), ab));
+    expect(QStringLiteral("one root: the command line cannot be read"), !Window::hasTwoRoots(recab, QDir(folder).filePath("nonexistent")));
+    // And the window itself followed the same decision, with the command line it was given.
+    const QString given = qEnvironmentVariable("DISK_GUI_CMDLINE");
+    expect(QStringLiteral("the window has the page of the two roots exactly when its own command line says so (%1)").arg(given),
+           window.twoRoots() == Window::hasTwoRoots(recab, given) && (window.systemsPage() != nullptr) == window.twoRoots());
 }
 
 } // namespace
@@ -568,7 +559,6 @@ int takeShots(Window &window, const QString &folder)
                window.width() == 1100 && window.height() == 700);
         ok &= window.grab().save(QDir(folder).filePath(name + ".png"));
     };
-    const QString ownRecab = qEnvironmentVariable("DISK_GUI_RECAB", "recab");
     window.show();
     // A picture run that is not told of its stand-ins refuses to start.
     helpstory::guardRefuses(expect, folder, "DISK_GUI_RECAB");
@@ -582,15 +572,16 @@ int takeShots(Window &window, const QString &folder)
         out << "  " << bytesText(finding.bytes) << "  " << finding.what << "  " << finding.path << "\n";
     Frame *frame = window.frame();
     expect(QStringLiteral("the window is 1100 x 700"), window.width() == 1100 && window.height() == 700);
-    expect(QStringLiteral("the rail offers The disk, Browse, Mess, The two systems and Help, nothing else (%1)")
-               .arg(frame->entryTitles().join(QStringLiteral(", "))),
-           frame->entryTitles() == QStringList({"The disk", "Browse", "Mess", "The two systems", "Help"}));
+    twoRootsShots(window, folder, expect);
+    expect(QStringLiteral("the rail offers The disk, Browse, Mess, %1Help, nothing else (%2)")
+               .arg(window.twoRoots() ? QStringLiteral("The two roots, ") : QString(), frame->entryTitles().join(QStringLiteral(", "))),
+           frame->entryTitles() == (window.twoRoots() ? QStringList({"The disk", "Browse", "Mess", "The two roots", "Help"})
+                                                      : QStringList({"The disk", "Browse", "Mess", "Help"})));
     expect(QStringLiteral("the Mess badge is the number of places listed (%1 and %2)")
                .arg(frame->badge("mess")).arg(window.found().size()),
            frame->badge("mess") == window.found().size() && window.found().size() > 0);
     expect(QStringLiteral("the status line says when the disk was looked at (%1)").arg(frame->statusText()),
            frame->statusText().startsWith(QStringLiteral("Looked at the disk at ")));
-    expect(QStringLiteral("no strip while recab's status cannot be read as the real one"), !frame->stripShown());
     diskShots(window, save, expect, out);
     // "Look again" reads everything again, and the page is as true after it.
     if (QPushButton *again = buttonNamed(window.diskPage(), QStringLiteral("Look again")))
@@ -599,7 +590,19 @@ int takeShots(Window &window, const QString &folder)
     waitUntilIdle(window, 300);
     expect(QStringLiteral("Look again reads again and the page shows the same leftovers"),
            pageText(window.diskPage()).contains(bytesText(sumOf(window.found()))) && window.layout().found);
-    helpShots(window, save, expect);
+    if (window.twoRoots()) {
+        helpShots(window, save, expect);
+    } else {
+        // Help is the same page; its row about the two roots has no page to go to, so it is not there.
+        frame->choose(Frame::helpKey());
+        settle(300);
+        const QString help = frame->help()->pageText();
+        expect(QStringLiteral("Help has no row about comparing the two roots, and no link to a page that is not there"),
+               help.contains(QStringLiteral("How do I")) && !help.contains(QStringLiteral("Compare the two roots"))
+                   && !frame->help()->links().contains(QStringLiteral("Go to The two roots")));
+        save("h-help-one-root");
+        frame->choose(QStringLiteral("disk"));
+    }
     browseShots(window, folder, save, expect, out);
     messShots(window, save, expect);
 
@@ -610,14 +613,32 @@ int takeShots(Window &window, const QString &folder)
     expect(QStringLiteral("what was picked by hand is in the Mess list"),
            pageText(window.messPage()).contains(QStringLiteral("Picked by you")) && listsPath(window, picked));
     save("3-picked");
-    stripShots(window, save, expect, out);
+    if (!window.twoRoots()) {
+        // One root: no page, and recab was never asked anything.
+        const QString log = qEnvironmentVariable("DISK_STANDIN_LOG");
+        expect(QStringLiteral("without two roots recab was never run (%1)").arg(log),
+               !log.isEmpty() && !QFileInfo::exists(log) && !window.showingSystems());
+        window.refresh();
+        settle(300);
+        expect(QStringLiteral("not even when reading again"), !QFileInfo::exists(log));
+        out << (ok ? "all as expected\n" : "some things were not as expected\n");
+        return ok ? 0 : 1;
+    }
+    openRecabShots(window, expect);
 
-    // The two systems: compare.
+    // The two roots: compare.
     frame->choose(QStringLiteral("systems"));
     waitUntilIdle(window, 30);
     ok &= window.state().known;
-    expect(QStringLiteral("The two systems is marked and shows"), frame->selected() == "systems" && window.showingSystems());
+    expect(QStringLiteral("The two roots is marked and shows"), frame->selected() == "systems" && window.showingSystems());
     passwordShots(window, expect);
+    {
+        const QString said = pageText(window.systemsPage());
+        expect(QStringLiteral("before comparing, the page says which root is booted and which is the other (%1)").arg(said.left(120)),
+               window.state().booted == "A" && window.state().other == "B" && said.contains(QStringLiteral("Root A"))
+                   && said.contains(QStringLiteral("Booted — locked")) && said.contains(QStringLiteral("Root B"))
+                   && said.contains(QStringLiteral("Other — unlocked")) && said.contains(QStringLiteral("have not been compared")));
+    }
     save("5-systems");
     // Slowly once, to see the two sides fill while they are read.
     const QByteArray speed = qgetenv("DISK_STANDIN_SPEED");
@@ -630,15 +651,22 @@ int takeShots(Window &window, const QString &folder)
     waitUntilIdle(window, 300);
     const Comparison *compared = window.comparison();
     if (!compared) {
-        out << "the two systems could not be compared\n";
+        out << "the two roots could not be compared\n";
         save("6-compared");
         return 1;
     }
-    out << "the two systems: " << compared->count() << " differences, " << bytesText(compared->differingBytes())
+    out << "the two roots: " << compared->count() << " differences, " << bytesText(compared->differingBytes())
         << "; " << compared->sameFiles << " files the same\n";
     expect(QStringLiteral("the two maps and the list fit the window without making it wider (%1 x %2)")
                .arg(window.width()).arg(window.height()),
            window.width() == 1100 && window.height() == 700);
+    {
+        const QString said = pageText(window.systemsPage());
+        expect(QStringLiteral("the comparison names the roots: A booted and locked, B the other and unlocked"),
+               said.contains(QStringLiteral("Root A")) && said.contains(QStringLiteral("Booted — locked."))
+                   && said.contains(QStringLiteral("Root B")) && said.contains(QStringLiteral("Other — unlocked."))
+                   && said.contains(QStringLiteral("Root A is booted and locked; root B is the other root and unlocked.")));
+    }
     save("6-compared");
     if (!compared->identical()) {
         // "Copy for agent" puts the differences on the clipboard, and nothing else happens.
@@ -656,10 +684,27 @@ int takeShots(Window &window, const QString &folder)
     waitUntilIdle(window, 60);
     expect(QStringLiteral("The disk says what the other system's files took when compared"),
            pageText(window.diskPage()).contains(QStringLiteral("its files took %1 when compared").arg(bytesText(compared->other.bytes))));
+    expect(QStringLiteral("and its partitions are named as the booted root and the other root"),
+           pageText(window.diskPage()).contains(QStringLiteral("Root A — booted, locked"))
+               && pageText(window.diskPage()).contains(QStringLiteral("Root B — other, unlocked")));
     save("6b-disk-compared");
+    // A comparison made while the other root was booted is out of date.
+    qputenv("DISK_STANDIN_SCENARIO", "booted-b");
+    frame->choose(QStringLiteral("systems"));
+    window.readState();
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("after the roots swapped, the kept comparison says it is out of date"),
+           window.stale() && pageText(window.systemsPage()).contains(QStringLiteral("Another root is booted now than when this was compared")));
+    save("6c-stale");
+    // recab cannot be read.
+    qputenv("DISK_STANDIN_SCENARIO", "failing");
+    window.readState();
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("a status that fails: the state is not known, and the kept comparison stays on the page"),
+           !window.state().known && window.comparison() != nullptr);
+    qputenv("DISK_STANDIN_SCENARIO", "normal");
     frame->choose(QStringLiteral("mess"));
     expect(QStringLiteral("Mess is marked and shows again"), frame->selected() == "mess" && window.showingMess());
-    noStripShots(window, ownRecab, expect);
     out << (ok ? "all as expected\n" : "some things were not as expected\n");
     return ok ? 0 : 1;
 }

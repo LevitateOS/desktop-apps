@@ -3,7 +3,6 @@
 #include "browse.h"
 #include "disk.h"
 #include "frame.h"
-#include "nextsystem.h"
 #include "pages.h"
 #include "refresh.h"
 #include "rules.h"
@@ -33,7 +32,6 @@ Window::Window(QWidget *parent)
     , home_(qEnvironmentVariable("DISK_GUI_HOME", QDir::homePath()))
     , recab_(qEnvironmentVariable("DISK_GUI_RECAB", "recab"))
     , rootHelper_(qEnvironmentVariable("DISK_GUI_ROOT_HELPER", "pkexec"))
-    , osRelease_(qEnvironmentVariable("DISK_GUI_OS_RELEASE", "/etc/os-release"))
     , kept_(qEnvironmentVariable("DISK_GUI_KEPT",
                                  QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/comparison.json"))
     , lsblk_(qEnvironmentVariable("DISK_GUI_LSBLK", "lsblk"))
@@ -55,25 +53,27 @@ Window::Window(QWidget *parent)
     disk_ = new DiskPage;
     browse_ = new BrowsePage;
     mess_ = new MessPage;
-    systems_ = new SystemsPage;
-    systems_->setPasswordAsked(!rootHelper_.isEmpty());
+    // The page of the two roots exists only on a computer that has two roots.
+    systems_ = hasTwoRoots(recab_, qEnvironmentVariable("DISK_GUI_CMDLINE", "/proc/cmdline")) ? new SystemsPage : nullptr;
+    if (systems_)
+        systems_->setPasswordAsked(!rootHelper_.isEmpty());
     before_ = new BeforePage;
     for (QWidget *page : std::initializer_list<QWidget *>{disk_, browse_, mess_, systems_, before_})
-        stack_->addWidget(page);
+        if (page)
+            stack_->addWidget(page);
 
-    // The frame is the window: the rail, the pages, the strip, the status line.
-    // Only the four things to look at have entries.
+    // The frame is the window: the rail, the pages, the status line.
+    // Only the things to look at have entries.
     frame_ = new Frame(Frame::Recdirstat);
     frame_->setContent(stack_);
     frame_->addEntry(QStringLiteral("disk"), tr("The disk"));
     frame_->addEntry(QStringLiteral("browse"), tr("Browse"));
     frame_->addEntry(QStringLiteral("mess"), tr("Mess"));
-    frame_->addEntry(QStringLiteral("systems"), tr("The two systems"));
+    if (systems_)
+        frame_->addEntry(QStringLiteral("systems"), tr("The two roots"));
     frame_->select(QStringLiteral("disk"));
     frame_->setStatus(tr("Looking at the disk…"));
     setCentralWidget(frame_);
-    next_ = new NextSystem(recab_, this);
-    connect(next_, &NextSystem::known, this, [this] { frame_->setNextSystem(next_->titles()); });
 
     tick_ = new QTimer(this);
     tick_->setInterval(200);
@@ -95,13 +95,15 @@ Window::Window(QWidget *parent)
         else
             showSystems();
     });
-    connect(frame_, &Frame::finishRequested, this, &Window::openSystem);
     connect(mess_, &MessPage::openFolder, this, &Window::openFolder);
     connect(browse_, &BrowsePage::openFolder, this, &Window::openFolder);
     connect(browse_, &BrowsePage::said, this, [this](const QString &words) { frame_->flash(words); });
-    connect(systems_, &SystemsPage::stop, this, &Window::stopComparing);
-    connect(systems_, &SystemsPage::readAgain, this, &Window::readState);
-    connect(systems_, &SystemsPage::openSystem, this, &Window::openSystem);
+    if (systems_) {
+        connect(systems_, &SystemsPage::stop, this, &Window::stopComparing);
+        connect(systems_, &SystemsPage::readAgain, this, &Window::readState);
+        connect(systems_, &SystemsPage::openSystem, this, &Window::openSystem);
+        connect(systems_, &SystemsPage::compare, this, &Window::askCompare);
+    }
 
     // The list of mess is one list, changed here and shown on three pages.
     connect(browse_, &BrowsePage::addRequested, this, &Window::addToList);
@@ -124,7 +126,7 @@ Window::Window(QWidget *parent)
     connect(disk_, &DiskPage::openRecipe, this, [this] { frame_->startApp(Frame::Recipe); });
 
     // F5 reads again what the tab shows. Coming back to the window reads the
-    // state of the two systems again, which is quick; the disk is only looked
+    // state of the two roots again, which is quick; the disk is only looked
     // at again when asked, since that takes a while and drops what was ticked.
     refresher_ = new Refresher(this, 20);
     connect(refresher_, &Refresher::asked, this, [this](bool byHand) {
@@ -132,16 +134,14 @@ Window::Window(QWidget *parent)
             refresh();
         else if (!busy())
             readState();
-        next_->read();
     });
     auto *again = new QToolButton;
     again->setText(tr("Read again"));
-    again->setToolTip(tr("On the disk, Browse and Mess: look at the disk again. On the two systems: ask recab again. (F5)"));
+    again->setToolTip(tr("On the disk, Browse and Mess: look at the disk again. On the two roots: ask recab again. (F5)"));
     again->setAutoRaise(true);
     connect(again, &QToolButton::clicked, this, &Window::refresh);
     frame_->addStatusWidget(again);
     connect(mess_, &MessPage::rescan, this, &Window::lookAgain);
-    connect(systems_, &SystemsPage::compare, this, &Window::askCompare);
     // Cancel on a Before page leaves everything as it was and shows the page the person came from.
     connect(before_, &BeforePage::cancelled, this, [this] {
         beforeGo_ = nullptr;
@@ -155,15 +155,16 @@ Window::Window(QWidget *parent)
             doIt();
     });
 
-    recall();
-    systems_->showLoading(tr("Reading the two systems"), tr("Asking recab which system is running and what the other one is."));
+    if (systems_) {
+        recall();
+        systems_->showLoading(tr("Reading the two roots"), tr("Asking recab which root is booted and which is the other."));
+    }
     browse_->showLoading(tr("Looking at the disk"), tr("Reading the folders. Nothing is changed."));
     go(disk_);
     scan();
     readState();
     readLayout();
     readEarlier();
-    next_->read();
 }
 
 Window::~Window()
@@ -187,7 +188,7 @@ void Window::refresh()
     // shown; reading again under it would make them say what is no longer so.
     if (busy() || stack_->currentWidget() == before_)
         return;
-    if (stack_->currentWidget() == systems_)
+    if (systems_ && stack_->currentWidget() == systems_)
         readState();
     else
         lookAgain();
@@ -217,25 +218,34 @@ void Window::openFolder(const QString &path)
         frame_->flash(tr("%1 could not be opened").arg(folder));
 }
 
-// The strip's button and "Open Recab…" are one thing: start the Recab app,
-// as the rail does.
+// "Open Recab…": start the Recab app.
 void Window::openSystem()
 {
     frame_->startApp(Frame::Recab);
 }
 
-void Window::readStripFrom(const QString &recab)
+// Whether this computer has two roots: recab can be run, and the kernel command
+// line has the `recab.immutable` option that its A/B boot entries carry. A single
+// root (a mutable install) has neither, and has no page for two roots.
+bool Window::hasTwoRoots(const QString &recab, const QString &cmdline)
 {
-    delete next_;
-    next_ = new NextSystem(recab, this);
-    connect(next_, &NextSystem::known, this, [this] { frame_->setNextSystem(next_->titles()); });
-    next_->read();
+    const bool runnable = recab.contains(QLatin1Char('/')) ? QFileInfo(recab).isExecutable()
+                                                          : !QStandardPaths::findExecutable(recab).isEmpty();
+    if (!runnable)
+        return false;
+    QFile file(cmdline);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    for (const QByteArray &word : file.readAll().simplified().split(' '))
+        if (word == "recab.immutable" || word.startsWith("recab.immutable="))
+            return true;
+    return false;
 }
 
 bool Window::showingDisk() const { return stack_->currentWidget() == disk_; }
 bool Window::showingBrowse() const { return stack_->currentWidget() == browse_; }
 bool Window::showingMess() const { return stack_->currentWidget() == mess_; }
-bool Window::showingSystems() const { return stack_->currentWidget() == systems_; }
+bool Window::showingSystems() const { return systems_ && stack_->currentWidget() == systems_; }
 bool Window::showingBefore() const { return stack_->currentWidget() == before_; }
 
 QString Window::entryOf(QWidget *page) const
@@ -405,9 +415,18 @@ DiskInfo Window::diskInfo() const
     info.earlierGenerations = earlierGenerations_;
     info.layoutRead = layoutRead_;
     info.layout = layout_;
-    info.runningDevice = state_.runningDevice;
-    info.otherDevice = state_.otherDevice;
-    info.otherRole = state_.otherRole;
+    if (systems_ && state_.known) {
+        info.bootedRoot = state_.booted;
+        info.otherRoot = state_.other;
+        // The partitions: what the last comparison read, else where the roots are mounted.
+        info.runningDevice = QString::fromLocal8Bit(QStorageInfo(QStringLiteral("/")).device());
+        if (!state_.otherMount.isEmpty())
+            info.otherDevice = QString::fromLocal8Bit(QStorageInfo(state_.otherMount).device());
+    }
+    if (compared_ && state_.known && comparedKey_ == state_.key) {
+        info.runningDevice = comparison_.running.device;
+        info.otherDevice = comparison_.other.device;
+    }
     if (compared_) {
         info.compared = true;
         info.otherFilesBytes = comparison_.other.bytes;
@@ -469,16 +488,17 @@ void Window::readEarlier()
     recipeRun_->start();
 }
 
-// ---------------------------------------------------------------- The two systems
+// ---------------------------------------------------------------- The two roots
 
 void Window::showSystems()
 {
-    go(systems_);
+    if (systems_)
+        go(systems_);
 }
 
 void Window::readState()
 {
-    if (reading_ || job_ == Job::Comparing)
+    if (!systems_ || reading_ || job_ == Job::Comparing)
         return;
     reading_ = new Run(recab_, {"status", "--json"}, this);
     connect(reading_, &Run::finished, this, [this](bool ok) {
@@ -486,14 +506,14 @@ void Window::readState()
         reading_ = nullptr;
         run->deleteLater();
         if (ok) {
-            state_ = SystemsState::fromJson(QJsonDocument::fromJson(run->answer()).object(), osRelease_);
+            state_ = SystemsState::fromJson(QJsonDocument::fromJson(run->answer()).object());
         } else {
             state_ = SystemsState();
             state_.problem = tr("`%1 status --json` failed: %2").arg(recab_, run->problem());
         }
         stateRead_ = true;
         refresher_->fresh();
-        drawDisk(); // which partitions are the two systems comes from here
+        drawDisk(); // which partitions are the two roots comes from here
         // A page that is being worked on is left alone.
         if (job_ == Job::None)
             drawSystems();
@@ -536,14 +556,14 @@ void Window::askCompare()
     const QStringList arguments{"compare", "--json", "--machine-events"};
     const QStringList command = rootHelper_.isEmpty() ? QStringList{recab_} + arguments : QStringList{rootHelper_, recab_} + arguments;
     BeforePage::Content content;
-    content.title = state_.known ? tr("Compare %1 with %2?").arg(state_.runningName(), state_.otherName()) : tr("Compare the two systems?");
+    content.title = state_.known ? tr("Compare root %1 with root %2?").arg(state_.booted, state_.other) : tr("Compare the two roots?");
     content.happensTitle = tr("What happens");
-    content.happens << tr("Both systems are read from start to end: every file of the running system and of the other one.");
-    content.happens << tr("Neither system is changed. Only what was found is kept, so this window can show it again next time.");
+    content.happens << tr("Both roots are read from start to end: every file of the booted root and of the other one.");
+    content.happens << tr("Neither root is changed. Only what was found is kept, so this window can show it again next time.");
     content.happens << tr("It takes a few minutes. You can stop it while it reads.");
     content.happens << (rootHelper_.isEmpty()
                             ? tr("It runs as you, so no password is asked.")
-                            : tr("The other system can only be read by the administrator, so you are asked for the administrator password."));
+                            : tr("The other root can only be read by the administrator, so you are asked for the administrator password."));
     content.tableTitle = tr("The command that runs");
     content.table = {{tr("Command"), command.join(QLatin1Char(' '))}};
     content.go = tr("Compare");

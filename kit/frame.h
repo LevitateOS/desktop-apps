@@ -1,6 +1,6 @@
 // The window every app of the three shares: a rail on the left (the app's
 // name, then the app's own entries, then Help), the app's pages in the
-// middle, a strip under them about the next system, and a status line. An
+// middle, and a status line. An
 // app's window uses it as its central widget and keeps its own pages in one
 // widget it hands over with `setContent`. See README.md for an example.
 #pragma once
@@ -18,7 +18,6 @@ class QPushButton;
 class QStackedWidget;
 class QTimer;
 class RailButton;
-class Strip;
 
 class Frame : public QWidget {
     Q_OBJECT
@@ -67,15 +66,6 @@ public:
     FirstRunPage *firstRun() const { return firstRun_; }
     HelpPage *help() const { return help_; }
 
-    // ---- The strip: "The next system holds N changes." with a button that
-    // finishes it. The titles are the changes' own ("htop, installed"); an
-    // empty list hides the strip.
-    void setNextSystem(const QStringList &titles);
-    // The app may keep the strip away from the page that already says it.
-    void setStripAllowed(bool allowed);
-    bool stripShown() const;
-    QString stripText() const;
-
     // ---- The status line: the app's own words.
     void setStatus(const QString &words);
     // Something shown beside the words ("Read again"), in the order added.
@@ -94,8 +84,6 @@ public:
 signals:
     // The person chose an app entry.
     void chosen(const QString &key);
-    // The strip's button: finish the next system. The app decides where that goes.
-    void finishRequested();
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -117,10 +105,8 @@ private:
     QMap<QString, RailButton *> entries_;
     QList<RailButton *> order_;
     QWidget *appEntries_;
-    Strip *strip_;
     ElidedLabel *status_;
     QHBoxLayout *statusExtras_;
     QTimer *flashTimer_;
     QString statusWords_, flashWords_;
-    bool stripAllowed_ = true;
 };

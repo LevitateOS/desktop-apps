@@ -35,9 +35,9 @@ struct ChangeKind {
 const QList<ChangeKind> &changeKinds()
 {
     static const QList<ChangeKind> kinds{
-        {QObject::tr("Only in this system"), QObject::tr("only here"), QObject::tr("only in the running system"),
+        {QObject::tr("Only in the booted root"), QObject::tr("only here"), QObject::tr("only in the booted root"),
          QColor(0x4f, 0x93, 0xd6)},
-        {QObject::tr("Only in the other"), QObject::tr("only in the other"), QObject::tr("only in the other system"),
+        {QObject::tr("Only in the other root"), QObject::tr("only in the other"), QObject::tr("only in the other root"),
          QColor(0xa7, 0x7b, 0xd1)},
         {QObject::tr("Different content"), QObject::tr("different content"), QObject::tr("different content"),
          QColor(0xe0, 0xa0, 0x3a)},
@@ -221,7 +221,7 @@ struct Blocks {
 
 namespace {
 
-// One system as a map. Both maps are given the same tree, so a block is in
+// One root as a map. Both maps are given the same tree, so a block is in
 // the same place in both; each draws its own side of it.
 class SideMap : public DiskMap {
 public:
@@ -296,7 +296,7 @@ private:
     std::shared_ptr<Blocks> blocks_;
 };
 
-// The name of one system over its map.
+// The name of one root over its map.
 QLayout *sideTitle(const QString &title, const QString &what, const Side &side)
 {
     auto *column = new QVBoxLayout;
@@ -322,7 +322,6 @@ Comparison Comparison::fromJson(const QJsonObject &object, QString *error)
     }
     c.running = sideFrom(object["running"].toObject());
     c.other = sideFrom(object["other"].toObject());
-    c.role = object["other"].toObject()["role"].toString();
     c.sameFiles = object["same"].toObject()["files"].toInteger();
     c.sameBytes = object["same"].toObject()["bytes"].toInteger();
     c.more = object["more"].toInteger();
@@ -333,7 +332,7 @@ Comparison Comparison::fromJson(const QJsonObject &object, QString *error)
         c.folders << FolderSize{one["path"].toString(), one["running_bytes"].toInteger(), one["other_bytes"].toInteger()};
     }
     if (c.folders.isEmpty()) {
-        *error = QObject::tr("recab did not say what the two systems hold, folder by folder, so they cannot be drawn.");
+        *error = QObject::tr("recab did not say what the two roots hold, folder by folder, so they cannot be drawn.");
         return c;
     }
     static const QMap<QString, Difference::Change> changes{{"only-running", Difference::OnlyRunning},
@@ -368,31 +367,25 @@ double Comparison::alike() const
     return all > 0 ? double(sameBytes) / double(all) : 1.0;
 }
 
-QString Comparison::roleWords() const
+QString Comparison::rootsWords() const
 {
-    if (role == QLatin1String("previous"))
-        return QObject::tr("The other system is the one from before your last change. What differs is that change.");
-    if (role == QLatin1String("next"))
-        return QObject::tr("The other system holds a change that is not started yet. What differs is that change.");
-    if (role == QLatin1String("copy"))
-        return QObject::tr("The other system was made as a copy of this one. No change has been made since.");
-    return QObject::tr("recab did not say what the other system is.");
+    return QObject::tr("Root %1 is booted and locked; root %2 is the other root and unlocked.").arg(running.slot, other.slot);
 }
 
 QString Comparison::issue() const
 {
-    return QObject::tr("The running system (%1) and the other system (%2) differ in %3, %4 in all.")
+    return QObject::tr("The booted root (%1) and the other root (%2) differ in %3, %4 in all.")
         .arg(running.slot, other.slot, counted(count(), QObject::tr("%1 file"), QObject::tr("%1 files")),
              bytesText(differingBytes()));
 }
 
 QStringList Comparison::facts() const
 {
-    QStringList facts{roleWords(),
+    QStringList facts{rootsWords(),
                       QObject::tr("%1 in %2 are the same in both.")
                           .arg(bytesText(sameBytes), counted(sameFiles, QObject::tr("%1 file"), QObject::tr("%1 files")))};
     if (!own.isEmpty())
-        facts << QObject::tr("%1 differ by design, because each system names its own partition: %2.")
+        facts << QObject::tr("%1 differ by design, because each root names its own partition: %2.")
                      .arg(counted(own.size(), QObject::tr("%1 file"), QObject::tr("%1 files")), own.join(QObject::tr(", ")));
     // By folder first, so a long list still says where the differences are.
     QMap<QString, QList<int>> groups;
@@ -434,7 +427,7 @@ QString Comparison::copyText() const
 
 // ---------------------------------------------------------------- The page
 
-// One system as a frame that fills while it is read, or stands empty.
+// One root as a frame that fills while it is read, or stands empty.
 class SideFrame : public QWidget {
 public:
     SideFrame() { setMinimumSize(200, 150); }
@@ -464,88 +457,25 @@ private:
     QString words_;
 };
 
-// One field of an os-release file, without its quotes.
-static QString osField(const QString &path, const QString &field)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return {};
-    for (const QByteArray &raw : file.readAll().split('\n')) {
-        const QString line = QString::fromUtf8(raw).trimmed();
-        if (line.startsWith(field + QLatin1Char('=')))
-            return line.mid(field.size() + 1).remove(QLatin1Char('"'));
-    }
-    return {};
-}
-
-SystemsState SystemsState::fromJson(const QJsonObject &object, const QString &osRelease)
+SystemsState SystemsState::fromJson(const QJsonObject &object)
 {
     SystemsState s;
     const int schema = object["schema_version"].toInt();
-    if (schema == 3) {
-        // The stand-in: it names both releases and counts its changes.
-        s.known = true;
-        s.distro = object["distro"].toString();
-        s.key = QString::number(object["revision"].toInt(-1));
-        s.runningRelease = object["running"].toObject()["release"].toString();
-        s.otherRelease = object["other"].toObject()["release"].toString();
-        s.otherRole = object["other"].toObject()["role"].toString();
-        s.runningDevice = object["running"].toObject()["device"].toString();
-        s.otherDevice = object["other"].toObject()["device"].toString();
+    if (schema != 11) {
+        s.problem = QObject::tr("recab answered in a form this window does not know (schema %1; it reads schema 11).").arg(schema);
         return s;
     }
-    if (schema != 7 && schema != 8 && schema != 9 && schema != 10) {
-        s.problem = QObject::tr("recab answered in a form this window does not know (schema %1; it reads schemas 7 through 10, "
-                                "recab's own, and schema 3, its stand-in's).")
-                        .arg(schema);
+    s.booted = object["booted"].toString();
+    s.other = object["other"].toString();
+    if (s.booted.isEmpty() || s.other.isEmpty()) {
+        s.problem = QObject::tr("recab did not say which root is booted and which is the other.");
         return s;
     }
-    // The real recab: two slots, each with the generation it holds, and what
-    // the other one is to the running one. It names no release.
     s.known = true;
-    s.distro = osField(osRelease, QStringLiteral("NAME"));
-    s.runningRelease = osField(osRelease, QStringLiteral("VERSION_ID"));
-    const QString running = object["active_slot"].toString(), other = object["inactive_slot"].toString();
-    QString runningGeneration, otherGeneration;
-    for (const QJsonValue &value : object["slots"].toArray()) {
-        const QJsonObject slot = value.toObject();
-        const bool isRunning = slot["slot"].toString() == running;
-        (isRunning ? runningGeneration : otherGeneration) = slot["generation"].toObject()["id"].toString();
-        (isRunning ? s.runningDevice : s.otherDevice) = slot["device"].toString();
-    }
-    const QJsonObject preparation = object["preparation"].toObject();
-    const QString role = object["lifecycle"].toObject()["other"].toString();
-    if (role != QLatin1String("unknown"))
-        s.otherRole = role;
-    s.runningRelease=object["running_release"].toString(s.runningRelease);
-    // The next system continues the running one, and a copy is it.
-    if (role == QLatin1String("next") || role == QLatin1String("copy"))
-        s.otherRelease = object["prepared_release"].toString(s.runningRelease);
-    s.key = QStringLiteral("%1/%2/%3/%4")
-                .arg(running, runningGeneration, otherGeneration)
-                .arg(preparation["revision"].toInteger(0));
+    s.otherMount = object["other_mount"].toString();
+    // A comparison made while another root was booted is out of date.
+    s.key = s.booted + QLatin1Char('/') + s.other;
     return s;
-}
-
-QString SystemsState::runningName() const
-{
-    return QStringLiteral("%1 %2").arg(distro, runningRelease).trimmed();
-}
-
-QString SystemsState::otherName() const
-{
-    return QStringLiteral("%1 %2").arg(distro, otherRelease).trimmed();
-}
-
-QString SystemsState::otherIs() const
-{
-    if (otherRole == QLatin1String("previous"))
-        return QObject::tr("The system from before.");
-    if (otherRole == QLatin1String("next"))
-        return QObject::tr("The next system, not started yet.");
-    if (otherRole == QLatin1String("copy"))
-        return QObject::tr("The second copy.");
-    return QObject::tr("recab cannot say what it is."); // recab's "unknown"
 }
 
 void SystemsPage::forget()
@@ -568,9 +498,8 @@ static QLayout *twoFrames(const SystemsState &state, SideFrame *frames[2])
         column->setSpacing(4);
         auto *title = new QVBoxLayout;
         title->setSpacing(0);
-        title->addWidget(strong(side == 0 ? QObject::tr("This system") : QObject::tr("The other system")));
-        title->addWidget(dim(text(side == 0 ? QObject::tr("Running now. %1").arg(state.runningName())
-                                            : QObject::tr("%1 %2").arg(state.otherIs(), state.otherName()))));
+        title->addWidget(strong(QObject::tr("Root %1").arg(side == 0 ? state.booted : state.other)));
+        title->addWidget(dim(text(side == 0 ? QObject::tr("Booted — locked") : QObject::tr("Other — unlocked"))));
         column->addLayout(title);
         frames[side] = new SideFrame;
         column->addWidget(frames[side], 1);
@@ -584,7 +513,7 @@ void SystemsPage::showState(const SystemsState &state, const QString &why)
     QVBoxLayout *column = fresh();
     forget();
     if (!state.known) {
-        column->addWidget(heading(tr("The two systems could not be read")));
+        column->addWidget(heading(tr("The two roots could not be read")));
         column->addWidget(text(state.problem, true));
         column->addWidget(copyForAgentButton([problem = state.problem] { return problem; }), 0, Qt::AlignLeft);
         auto *again = new QPushButton(tr("Try again"));
@@ -597,13 +526,13 @@ void SystemsPage::showState(const SystemsState &state, const QString &why)
     auto *header = new QHBoxLayout;
     auto *top = new QVBoxLayout;
     top->setSpacing(1);
-    top->addWidget(heading(tr("The two systems have not been compared")));
-    top->addWidget(dim(text(tr("This computer holds its system twice: the one that is running, and another on its own "
-                               "partition. Comparing them shows whether they are the same, block by block."),
+    top->addWidget(heading(tr("The two roots have not been compared")));
+    top->addWidget(dim(text(tr("This computer has two roots, A and B. The booted root is locked; the other root is unlocked. "
+                               "Comparing them shows whether they are the same, block by block."),
                             true)));
     header->addLayout(top, 1);
     auto *system = new QPushButton(tr("Open Recab…"));
-    system->setToolTip(tr("Changing, updating and going back are done there"));
+    system->setToolTip(tr("Copying a root and starting the other root are done there"));
     connect(system, &QPushButton::clicked, this, &SystemsPage::openSystem);
     header->addWidget(system, 0, Qt::AlignBottom);
     column->addLayout(header);
@@ -621,9 +550,9 @@ void SystemsPage::showState(const SystemsState &state, const QString &why)
     frames[1]->set(0, tr("Not read yet"));
 
     auto *foot = new QHBoxLayout;
-    foot->addWidget(dim(text(passwordAsked_ ? tr("Both systems are read from start to end, which takes a few minutes and needs the "
+    foot->addWidget(dim(text(passwordAsked_ ? tr("Both roots are read from start to end, which takes a few minutes and needs the "
                                                  "administrator's password. Nothing is changed on either.")
-                                            : tr("Both systems are read from start to end, which takes a few minutes. It runs as you, so no "
+                                            : tr("Both roots are read from start to end, which takes a few minutes. It runs as you, so no "
                                                  "password is asked. Nothing is changed on either."),
                              true)),
                     1);
@@ -641,7 +570,7 @@ void SystemsPage::showComparing(const SystemsState &state)
     auto *header = new QHBoxLayout;
     auto *top = new QVBoxLayout;
     top->setSpacing(1);
-    top->addWidget(heading(tr("Comparing the two systems")));
+    top->addWidget(heading(tr("Comparing the two roots")));
     top->addWidget(dim(text(tr("Both are read from start to end. Nothing is changed on either."), true)));
     header->addLayout(top, 1);
     auto *halt = new QPushButton(tr("Stop"));
@@ -672,14 +601,14 @@ void SystemsPage::progress(const QJsonObject &event)
         if (step == QLatin1String("compare") && !done)
             step_->setText(tr("Both are read. Setting them side by side."));
         else if (side >= 0 && !done)
-            step_->setText(side == 0 ? tr("Reading the running system") : tr("Reading the other system"));
+            step_->setText(side == 0 ? tr("Reading the booted root") : tr("Reading the other root"));
     } else if (kind == QLatin1String("progress") && side >= 0) {
         const qint64 done = event["done"].toInteger(), total = event["total"].toInteger();
         if (total > 0) {
             reading_[side]->set(double(done) / double(total),
                                 tr("Read %1 of %2").arg(bytesText(done), bytesText(total)));
-            step_->setText((side == 0 ? tr("Reading the running system: %1 of %2")
-                                      : tr("Reading the other system: %1 of %2"))
+            step_->setText((side == 0 ? tr("Reading the booted root: %1 of %2")
+                                      : tr("Reading the other root: %1 of %2"))
                                .arg(bytesText(done), bytesText(total)));
         }
     }
@@ -695,17 +624,17 @@ void SystemsPage::show(const Comparison &c, const QDateTime &when, bool stale)
     top->setSpacing(1);
     QString title;
     if (c.identical())
-        title = tr("The two systems are identical");
+        title = tr("The two roots are identical");
     else {
         // Never "100%" when something differs.
         const double percent = std::min(99.9, std::floor(c.alike() * 1000) / 10);
-        title = tr("The two systems are %1% the same").arg(QLocale().toString(percent, 'f', 1));
+        title = tr("The two roots are %1% the same").arg(QLocale().toString(percent, 'f', 1));
     }
     top->addWidget(heading(title));
-    QString under = c.roleWords();
-    if (c.identical() && c.role != QLatin1String("copy"))
-        under = tr("Every file is the same in both.");
-    else if (!c.identical())
+    QString under = c.rootsWords();
+    if (c.identical())
+        under = tr("Every file is the same in both. %1").arg(under);
+    else
         under = tr("%1, %2 in all. ").arg(counted(c.count(), tr("%1 file differs"), tr("%1 files differ")),
                                           bytesText(c.differingBytes()))
                 + under;
@@ -719,7 +648,7 @@ void SystemsPage::show(const Comparison &c, const QDateTime &when, bool stale)
     top->addWidget(dim(text(under, true)));
     header->addLayout(top, 1);
     auto *system = new QPushButton(tr("Open Recab…"));
-    system->setToolTip(tr("Changing, updating and going back are done there"));
+    system->setToolTip(tr("Copying a root and starting the other root are done there"));
     connect(system, &QPushButton::clicked, this, &SystemsPage::openSystem);
     header->addWidget(system, 0, Qt::AlignBottom);
     auto *again = new QPushButton(tr("Compare again"));
@@ -743,28 +672,24 @@ void SystemsPage::show(const Comparison &c, const QDateTime &when, bool stale)
 
     if (stale) {
         auto *old = new Card(Card::Open);
-        old->column()->addWidget(strong(tr("The systems have changed since this was compared")));
+        old->column()->addWidget(strong(tr("Another root is booted now than when this was compared")));
         old->column()->addWidget(text(tr("What is shown is how they were then. Compare again to see how they are now."), true));
         body->addWidget(old);
     }
 
-    // The two systems as blocks, side by side, with one layout for both.
+    // The two roots as blocks, side by side, with one layout for both.
     blocks_ = Blocks::from(c);
     here_ = new SideMap(true, blocks_);
     there_ = new SideMap(false, blocks_);
-    const QString otherIs = c.role == QLatin1String("previous") ? tr("The system from before.")
-                            : c.role == QLatin1String("next") ? tr("The next system, not started yet.")
-                            : c.role == QLatin1String("copy") ? tr("The second copy.")
-                                                                : tr("recab cannot say what it is.");
     auto *sides = new QHBoxLayout;
     sides->setSpacing(14);
     auto *left = new QVBoxLayout;
     left->setSpacing(4);
-    left->addLayout(sideTitle(tr("This system (%1)").arg(c.running.slot), tr("Running now."), c.running));
+    left->addLayout(sideTitle(tr("Root %1").arg(c.running.slot), tr("Booted — locked."), c.running));
     left->addWidget(here_, 1);
     auto *right = new QVBoxLayout;
     right->setSpacing(4);
-    right->addLayout(sideTitle(tr("The other system (%1)").arg(c.other.slot), otherIs, c.other));
+    right->addLayout(sideTitle(tr("Root %1").arg(c.other.slot), tr("Other — unlocked."), c.other));
     right->addWidget(there_, 1);
     sides->addLayout(left, 1);
     sides->addLayout(right, 1);
@@ -859,7 +784,7 @@ void SystemsPage::show(const Comparison &c, const QDateTime &when, bool stale)
     auto *foot = new QHBoxLayout;
     QStringList notes;
     if (!c.own.isEmpty())
-        notes << tr("%1 differ by design, because each system names its own partition; they are not counted.")
+        notes << tr("%1 differ by design, because each root names its own partition; they are not counted.")
                      .arg(counted(c.own.size(), tr("%1 file"), tr("%1 files")));
     if (c.more > 0)
         notes << tr("%1 more are not listed.").arg(counted(c.more, tr("%1 difference"), tr("%1 differences")));

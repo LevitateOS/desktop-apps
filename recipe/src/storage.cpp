@@ -32,7 +32,7 @@ QString whenWords(qint64 seconds)
 
 QString placeWords(Place place)
 {
-    return place == Place::Me ? QObject::tr("for me") : QObject::tr("for this computer");
+    return place == Place::Me ? QObject::tr("for me") : QObject::tr("for everyone");
 }
 
 // The newest earlier versions as names and versions: "tree 2.3.0, GIMP 3.0.2 and 1 more".
@@ -189,16 +189,17 @@ void StoragePage::show(const Catalog &catalog, const Places &places)
                                                        : tr("in %1").arg(places.systemRoot);
             line(catalog.twoPlaces ? placeTitle(place) : tr("This store"), tr("%1, %2").arg(bytesText(store.activeBytes), where));
         } else if (place == Place::Computer && catalog.twoPlaces) {
-            // A locked computer: recab answers with names and versions, no store stands behind them.
-            line(placeTitle(place), tr("In the running system. Recipe reports no size for it."));
+            // An A/B system: Recipe answers with names and versions, no store stands behind them.
+            line(placeTitle(place), catalog.ab ? tr("In %1. Recipe reports no size for it.").arg(catalog.bootedWords())
+                                                : tr("Recipe reports no size for it."));
         }
     }
-    int next = 0;
+    int other = 0;
     for (const InstalledItem &item : catalog.installed)
-        next += item.place == Place::Next;
-    if (next)
-        line(tr("Waiting for a restart"),
-             tr("%1 only in the next system. Recipe reports no size for it.").arg(counted(next, tr("%1 program"), tr("%1 programs"))));
+        other += item.place == Place::Other;
+    if (other)
+        line(placeTitle(Place::Other, catalog.otherRoot),
+             tr("%1 only there, active when it is started. Recipe reports no size for it.").arg(counted(other, tr("%1 program"), tr("%1 programs"))));
     rooms->column()->addLayout(grid);
     rooms->column()->addWidget(dim(text(tr("Only what `recipe storage` reports: what is installed and its earlier versions. Recipe "
                                            "reports no sizes for downloads or builds, so none are shown."),

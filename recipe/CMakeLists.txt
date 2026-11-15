@@ -17,17 +17,16 @@ qt_add_executable(recipe-gui
     ../kit/words.cpp
     ../kit/page.cpp
     ../kit/refresh.cpp
-    ../kit/work.cpp
     ../kit/frame.cpp
     ../kit/windowsize.cpp
     ../kit/help.cpp
     ../kit/firstrun.cpp
     ../kit/helpstory.cpp
-    ../kit/nextsystem.cpp
     ../kit/before.cpp
     src/beforewords.cpp
     src/pages.cpp
     src/sources.cpp
+    src/sourceview.cpp
     src/storage.cpp
     src/window.cpp
     src/shots.cpp

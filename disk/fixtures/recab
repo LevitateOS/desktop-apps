@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
-"""A stand-in for recab, for running disk-gui from a checkout.
+"""A stand-in for recab, for running disk-gui from a checkout. It speaks the part
+of the CLI that window uses and nothing else:
 
   recab status --json
   recab compare --json --machine-events
 
-It plays reading both systems and answers as the Recdirstat window expects (see
-the README: "What it asks of recab"). It reads no disk.
+as tools/recab does (status schema 11, docs/status.schema.json; comparison schema 1,
+docs/comparison.schema.json; the events are `plan`, `step` and `done`, with no
+`progress`, as the real compare sends). It reads no disk.
 
-DISK_STANDIN_SYSTEMS picks the story:
-  before     the other system is the one from before the last change (default)
-  next       the other system holds a change that is not started yet
-  identical  the two were made as copies and nothing was changed since
-  none       there is no second system
+DISK_STANDIN_SCENARIO picks what it says:
+  normal     root A is booted, root B is the other (default)
+  booted-b   root B is booted, root A is the other
+  identical  as normal, and the two roots hold the same
+  failing    `status` and `compare` fail, as when recab cannot read the roots
 DISK_STANDIN_SPEED scales the waiting (0: none).
-DISK_STANDIN_REVISION is the number recab gives the state of the two systems
-(default 7); another number than at the last comparison makes that one stale.
+DISK_STANDIN_LOG: a file each run appends its arguments to, so a check can see
+that recab was never run.
 """
 import json
 import os
 import sys
 import time
 
-STORY = os.environ.get("DISK_STANDIN_SYSTEMS", "before")
+STORY = os.environ.get("DISK_STANDIN_SCENARIO", "normal")
 SPEED = float(os.environ.get("DISK_STANDIN_SPEED", "1"))
 KIB, MIB, GIB = 1 << 10, 1 << 20, 1 << 30
 
@@ -120,46 +122,42 @@ def folders(found):
 
 
 def status():
-    """What the Recab window's stand-in answers too, as far as this window reads it."""
-    if STORY == "none":
-        sys.exit("Error: this computer has one system only: recab was set up without a second one")
-    role = {"before": "previous", "next": "next"}.get(STORY, "copy")
+    if STORY == "failing":
+        sys.stderr.write(json.dumps({"schema_version": 1, "class": "state_or_detection", "code": 21,
+                                     "message": "the roots could not be read: no boot entry for either root"}) + "\n")
+        sys.exit(21)
+    booted, other = ("B", "A") if STORY == "booted-b" else ("A", "B")
     print(json.dumps({
-        "schema_version": 3, "distro": os.environ.get("DISK_STANDIN_DISTRO", "LevitateOS"), "state": "stable",
-        "revision": int(os.environ.get("DISK_STANDIN_REVISION", "7")),
-        "running": {"release": "2026.10" if role == "next" else "2026.11", "device": "/dev/vda2"},
-        "other": {"role": role, "release": {"previous": "2026.10", "next": "2026.11"}.get(role, "2026.11"),
-                  "device": "/dev/vda3"},
-    }))
+        "schema_version": 11, "booted": booted, "other": other, "other_mount": "/run/recab/other",
+        "other_bootable": True, "boot_default": booted, "next_boot_once": None,
+    }, indent=2))
 
 
 def main():
+    log = os.environ.get("DISK_STANDIN_LOG")
+    if log:
+        with open(log, "a") as out:
+            out.write(" ".join(sys.argv[1:]) + "\n")
     if sys.argv[1:2] == ["status"]:
         return status()
     if sys.argv[1:2] != ["compare"]:
         sys.exit("the stand-in recab only knows `status` and `compare`")
-    if STORY == "none":
-        emit(event="failed", reason="This computer has one system only: recab was set up without a second one.")
-        sys.exit(1)
-
-    running = {"slot": "A", "device": "/dev/vda2", "files": 61204, "bytes": int(8.14 * GIB)}
-    other = {"slot": "B", "device": "/dev/vda3", "files": 61204, "bytes": int(8.14 * GIB)}
-    emit(event="plan", steps=[["running", "Read the running system"], ["other", "Read the other system"],
+    if STORY == "failing":
+        emit(event="failed", message="the roots could not be read")
+        sys.stderr.write(json.dumps({"schema_version": 1, "class": "state_or_detection", "code": 21,
+                                     "message": "the roots could not be read: no boot entry for either root"}) + "\n")
+        sys.exit(21)
+    booted, other_slot = ("B", "A") if STORY == "booted-b" else ("A", "B")
+    running = {"slot": booted, "device": "/dev/vda2", "files": 61204, "bytes": int(8.14 * GIB)}
+    other = {"slot": other_slot, "device": "/dev/vda3", "files": 61204, "bytes": int(8.14 * GIB)}
+    emit(event="plan", steps=[["running", "Read the booted root"], ["other", "Read the other root"],
                                ["compare", "Compare them"]])
     read("running", running["bytes"])
     read("other", other["bytes"])
     emit(event="step", step="compare", status="running")
     time.sleep(0.4 * SPEED)
-
-    found = []
-    if STORY == "before":
-        found = differences("running")
-        other["role"] = "previous"
-    elif STORY == "next":
-        found = differences("other")
-        other["role"] = "next"
-    else:
-        other["role"] = "copy"
+    # What a change made in the other root leaves between the two: the other root has it.
+    found = [] if STORY == "identical" else differences("other")
     tree = folders(found)
     whole = next(f for f in tree if f["path"] == "/")
     # Each side's files: what is the same, what differs in place, what only it has.
@@ -174,7 +172,7 @@ def main():
         "running": running,
         "other": other,
         "same": {"files": same_files, "bytes": same_bytes},
-        "own": ["/etc/fstab", "/etc/recab/slot", "/etc/kernel/cmdline"],
+        "own": ["/etc/fstab", "/usr/lib/recab/immutable", "/etc/kernel/cmdline"],
         "folders": tree,
         "differences": found,
         "more": 0,
