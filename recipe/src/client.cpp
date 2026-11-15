@@ -310,13 +310,15 @@ void RecipeClient::load(Loaded done)
         if (ok) {
             // `recipe updates` cannot look at the computer's system software (the route that
             // lists it says only names and versions); the collection's own version says what is
-            // newer. This is where Update for kind-system packages comes from.
+            // newer. Never for a recipe of the system's release (source "system"): those change
+            // only with a system release, and never for one Recipe says cannot be installed here.
             for (const InstalledItem &item : fresh->installed) {
                 const Recipe *recipe = fresh->recipe(item.name);
                 // Not when the other root already holds the recipe's version.
                 const InstalledItem *other = fresh->installedItem(item.name, Place::Other);
                 const bool taken = other && recipe && other->version == recipe->version;
-                if (item.place == Place::Computer && !item.inStore && recipe && recipe->version != item.version && !taken) {
+                const bool own = recipe && recipe->runsHere && recipe->origin != QLatin1String("system");
+                if (item.place == Place::Computer && !item.inStore && own && recipe->version != item.version && !taken) {
                     UpdateItem newer{item.name, item.version, recipe->version, Place::Computer, true, {}};
                     newer.changesKnown = false;
                     fresh->updates << newer;

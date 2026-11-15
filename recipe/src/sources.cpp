@@ -120,8 +120,9 @@ void SourcesPage::show(const Catalog &catalog)
             connect(again, &QPushButton::clicked, this, [this, name] { emit refresh(name); });
             row->addWidget(again, 0, Qt::AlignTop);
         }
-        // The two folders Recipe always reads are not sources that can be removed.
-        if (name != QLatin1String("local") && name != QLatin1String("image")) {
+        // The two folders Recipe always reads, and the system release's own recipes, are not
+        // sources that can be removed.
+        if (name != QLatin1String("local") && name != QLatin1String("image") && origin.kind != QLatin1String("release")) {
             auto *drop = new QPushButton(tr("Remove…"));
             connect(drop, &QPushButton::clicked, this, [this, name] { emit remove(name); });
             row->addWidget(drop, 0, Qt::AlignTop);
