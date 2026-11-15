@@ -735,6 +735,9 @@
     "libc": [
      "glibc"
     ],
+    "systems": [
+     "levitateos"
+    ],
     "adds": {
      "programs": [
       "steam"
@@ -770,6 +773,147 @@
    "build_deps": [],
    "hooks": [
     "acquire",
+    "install",
+    "remove"
+   ]
+  },
+  {
+   "name": "plasma",
+   "version": "6.5.2",
+   "description": "The Plasma desktop and its apps",
+   "about": {
+    "kind": "system",
+    "category": "utilities",
+    "title": "Plasma desktop",
+    "details": "The Plasma desktop, its login session and the everyday apps that come with it.",
+    "license": "GPL-2.0-or-later",
+    "systems": ["levitateos"],
+    "adds": {
+     "programs": [],
+     "menu": []
+    },
+    "steps": {
+     "install": "Publishes the group's system tree for Recipe to write into the system root, with a receipt."
+    },
+    "keeps": []
+   },
+   "needs": {
+    "network": [
+     "dl.fedoraproject.org:443"
+    ],
+    "memory_mib": 4096,
+    "storage_max_bytes": null,
+    "timeout_secs": 7200,
+    "network_max_bytes": 7340032
+   },
+   "deps": ["desktop-libs"],
+   "build_deps": [],
+   "hooks": [
+    "install",
+    "remove"
+   ]
+  },
+  {
+   "name": "lxqt",
+   "version": "2.3.0",
+   "description": "The LXQt desktop",
+   "about": {
+    "kind": "system",
+    "category": "utilities",
+    "title": "LXQt desktop",
+    "details": "A light desktop and its login session.",
+    "license": "GPL-2.0-or-later",
+    "adds": {
+     "programs": [],
+     "menu": []
+    },
+    "steps": {
+     "install": "Publishes the group's system tree for Recipe to write into the system root, with a receipt."
+    },
+    "keeps": []
+   },
+   "needs": {
+    "network": [
+     "dl.fedoraproject.org:443"
+    ],
+    "memory_mib": 4096,
+    "storage_max_bytes": null,
+    "timeout_secs": 7200,
+    "network_max_bytes": 7340032
+   },
+   "deps": ["desktop-libs"],
+   "build_deps": [],
+   "hooks": [
+    "install",
+    "remove"
+   ]
+  },
+  {
+   "name": "printing",
+   "version": "2.4.16",
+   "description": "Printing",
+   "about": {
+    "kind": "system",
+    "category": "utilities",
+    "title": "Printing",
+    "details": "CUPS and the printer drivers, so documents can be printed.",
+    "license": "GPL-2.0-or-later",
+    "adds": {
+     "programs": [],
+     "menu": []
+    },
+    "steps": {
+     "install": "Publishes the group's system tree for Recipe to write into the system root, with a receipt."
+    },
+    "keeps": []
+   },
+   "needs": {
+    "network": [
+     "dl.fedoraproject.org:443"
+    ],
+    "memory_mib": 4096,
+    "storage_max_bytes": null,
+    "timeout_secs": 7200,
+    "network_max_bytes": 7340032
+   },
+   "deps": ["desktop-libs"],
+   "build_deps": [],
+   "hooks": [
+    "install",
+    "remove"
+   ]
+  },
+  {
+   "name": "desktop-libs",
+   "version": "1.0.0",
+   "description": "Libraries the desktops and their apps share",
+   "about": {
+    "kind": "library",
+    "category": "utilities",
+    "title": "Desktop libraries",
+    "details": "The shared libraries the desktop groups use.",
+    "license": "GPL-2.0-or-later",
+    "adds": {
+     "programs": [],
+     "menu": []
+    },
+    "steps": {
+     "install": "Publishes the group's system tree for Recipe to write into the system root, with a receipt."
+    },
+    "keeps": []
+   },
+   "needs": {
+    "network": [
+     "dl.fedoraproject.org:443"
+    ],
+    "memory_mib": 4096,
+    "storage_max_bytes": null,
+    "timeout_secs": 7200,
+    "network_max_bytes": 7340032
+   },
+   "deps": [],
+   "build_deps": [],
+   "hooks": [
     "install",
     "remove"
    ]

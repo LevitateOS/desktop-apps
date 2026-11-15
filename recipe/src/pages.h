@@ -85,19 +85,27 @@ class RunPage : public Page {
     Q_OBJECT
 public:
     using Page::Page;
-    // `toOther`: the change is written into the other root of an A/B system after the recipe has
-    // run, so the recipe's own `done` is not the end of it; the command's exit is.
-    void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer, bool toOther = false);
+    // `system`: a system change (`recipe --system`, for everyone). The software is written into the
+    // other root of an A/B computer, or into the running root of one with a single root, after the
+    // recipe has run, and the root's caches are rebuilt after that: the recipe's own `done` is not the
+    // end of it, the command's exit is.
+    void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer, bool system = false);
     // What the command printed on its standard output when it ended (`recipe --system install`
     // says which root it wrote into); empty before.
     QJsonObject answer() const { return answer_; }
     // The run as the page shows it now, for a check.
     bool showsRunning() const;
     QString stateWords() const;
+    // Everything the page shows now, whether or not the window has moved on to another page since:
+    // its labels and buttons. For a check.
+    QString pageText() const;
 signals:
     void back();
     void retry(const QString &name);
     void succeeded(const QString &name);
+    // The software is in the system, but rebuilding the system's caches failed: not a failed install.
+    // The page stays, with what to do.
+    void succeededWithoutCaches(const QString &name);
     void failed(const QString &name);
     void status(const QString &words);
 private:
@@ -105,6 +113,8 @@ private:
     // The end of the run, once: from its last event, or from the command's exit.
     void conclude(bool ok);
     void onFinished(bool ok);
+    // The command failed only in its last step: the change is written and `effects.status` is "failed".
+    void cachesFailed(const QJsonObject &answer);
     StepMark *mark(const QString &recipe, const QString &hook);
     void addPlanRow(const QString &recipe, const QStringList &hooks);
 
@@ -122,7 +132,7 @@ private:
     QPushButton *stop_ = nullptr;
     QLabel *stopNote_ = nullptr;
     int stepsTotal_ = 0, stepsStarted_ = 0;
-    bool concluded_ = false, toOther_ = false;
+    bool concluded_ = false, system_ = false;
     QJsonObject answer_;
     // The run's output, and where `recipe` said it keeps its log.
     QStringList lines_;
@@ -179,6 +189,8 @@ signals:
     void selected(const QString &name, Place place);
     // The page of software whose recipe is gone: what its receipt says.
     void openPage(const QString &name);
+    // The row of the base system: the frame's page that says whether a newer release exists.
+    void openRelease();
 };
 
 class UpdatesPage : public Page {
@@ -197,6 +209,8 @@ signals:
 
 class RemoveDialog : public QDialog {
 public:
-    // `takenOut`: what removing does where no store stands behind the software (an A/B system).
-    RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, QWidget *parent = nullptr);
+    // `takenOut`: what removing does where no store stands behind the software (system software).
+    // `lastDesktop`: said before the button when this removes the last desktop of its root; else empty.
+    RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, const QString &lastDesktop,
+                 QWidget *parent = nullptr);
 };

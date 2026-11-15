@@ -112,13 +112,15 @@ private:
     void change(const ChangePage::Words &words, std::function<Run *()> make);
     void leaveChange();
     void changeEnded(bool ok);
-    void runEnded(const QString &name, bool ok);
+    // `stay`: the software is in, but the system's caches could not be rebuilt; the run page stays.
+    void runEnded(const QString &name, bool ok, bool stay = false);
     // Closing while something runs: the question, what it says, and ending the run first.
     void askClose();
     void stopAndClose();
     Run *runningRun() const;
     QString closeWords() const;
     ChangePage::Words removeWords(const QString &name, Place place) const;
+    QString lastDesktopWords(const QString &name, const InstalledItem &item) const;
     QString shownName(const QString &name) const;
 
     RecipeClient client_;

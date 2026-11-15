@@ -141,6 +141,8 @@ Window::Window(QWidget *parent)
     connect(runPage_, &RunPage::back, this, [this] { showBrowse(); });
     connect(runPage_, &RunPage::retry, this, [this](const QString &name) { startInstall(name, runPlace_); });
     connect(runPage_, &RunPage::succeeded, this, [this](const QString &name) { runEnded(name, true); });
+    // Installed, but the system's caches could not be rebuilt: the page stays to say so.
+    connect(runPage_, &RunPage::succeededWithoutCaches, this, [this](const QString &name) { runEnded(name, true, true); });
     connect(runPage_, &RunPage::failed, this, [this](const QString &name) { runEnded(name, false); });
     connect(runPage_, &RunPage::status, this, [this](const QString &words) {
         buildingWords_ = words;
@@ -152,6 +154,8 @@ Window::Window(QWidget *parent)
     connect(installed_, &InstalledPage::goBack, this, &Window::goBack);
     connect(installed_, &InstalledPage::hold, this, &Window::hold);
     connect(installed_, &InstalledPage::openStorage, this, [this] { showStorage(); });
+    // The base system's row: the frame's own "Check for updates" page.
+    connect(installed_, &InstalledPage::openRelease, this, [this] { frame_->showRelease(); });
     connect(storage_, &StoragePage::clearEarlier, this, [this](Place place) { clearEarlier(place); });
     connect(storage_, &StoragePage::openInstalled, this, [this] { showInstalled(installedChoice_, installedPlace_); });
     connect(updates_, &UpdatesPage::hold, this, &Window::hold);
@@ -345,7 +349,7 @@ void Window::askInstall(const QString &name)
 {
     // A recipe this system's C library cannot run is not installable: nothing starts, and one line says why.
     if (const QString why = catalog_.unavailable(name); !why.isEmpty()) {
-        frame_->flash(tr("%1 is not available on this system. %2").arg(shownName(name), why));
+        frame_->flash(tr("%1 is not available on this system. %2").arg(shownName(name), catalog_.unavailableLine(name)));
         return;
     }
     QList<Place> choices = catalog_.installPlaces(name);
@@ -402,10 +406,11 @@ void Window::startInstall(const QString &name, Place place)
     runName_ = name;
     runUpdate_ = installed;
     run_ = installed ? client_.update(named, place) : client_.install(named, place);
-    // On an A/B system "for everyone" is written into the other root after the recipe has run: the
-    // recipe's own `done` is not the end of that run, its exit is.
-    const bool toOther = !client_.places().one && client_.places().ab && place != Place::Me;
-    runPage_->begin(catalog_, name, run_, place, toOther);
+    // "For everyone" is a system change on both kinds of computer: written into the other root (A/B) or
+    // the running root after the recipe has run, then the root's caches are rebuilt. The recipe's own
+    // `done` is not the end of that run, the command's exit is.
+    const bool system = !client_.places().one && place != Place::Me;
+    runPage_->begin(catalog_, name, run_, place, system);
     stack_->setCurrentWidget(runPage_);
     run_->start();
 }
@@ -416,7 +421,7 @@ void Window::stopRun()
         run_->stop();
 }
 
-void Window::runEnded(const QString &name, bool ok)
+void Window::runEnded(const QString &name, bool ok, bool stay)
 {
     run_ = nullptr;
     if (closeAfterStop_) {
@@ -430,19 +435,25 @@ void Window::runEnded(const QString &name, bool ok)
         const QString shown = shownName(name);
         const QJsonObject answer = runPage_->answer();
         const QString other = answer["other_root"].toString();
-        if (!answer.isEmpty() && answer.contains("other_root"))
+        const bool system = !client_.places().one && runPlace_ != Place::Me;
+        if (stay)
+            frame_->flash(tr("%1 is installed, but the system's caches could not be rebuilt. The page says more.").arg(shown));
+        else if (!answer.isEmpty() && answer.contains("other_root"))
             frame_->flash(tr("%1 was written into the other root (%2). It becomes active when root %2 is started.").arg(shown, other));
+        else if (system)
+            frame_->flash(tr("%1 was written into the system. It is active at once; programs that are already running may need a restart.")
+                              .arg(shown));
         else
             frame_->flash(runUpdate_ ? tr("Updated %1").arg(shown) : tr("Installed %1").arg(shown));
     }
-    reload([this, name, ok] {
+    reload([this, name, ok, stay] {
         if (!ok) {
             queue_.clear(); // the run page stays, with what went wrong
             return;
         }
         if (!queue_.isEmpty())
             startQueued();
-        else
+        else if (!stay)
             showRecipe(name);
     });
 }
@@ -574,17 +585,42 @@ void Window::askRemove(const QString &name, Place place)
         frame_->flash(tr("One thing at a time: wait for the running one, or stop it."));
         return;
     }
+    // The base is the system itself, and software that other installed software needs stays until
+    // that is removed: the pages do not offer Remove then, and this says why if it is asked anyway.
+    if (item->base) {
+        frame_->flash(tr("The base system is not removed. A newer release replaces it: see Check for updates."));
+        return;
+    }
+    if (!item->inStore) {
+        const QStringList needed = catalog_.neededBy(name, catalog_.systemTarget());
+        if (!needed.isEmpty()) {
+            frame_->flash(tr("%1 is needed by %2, so it cannot be removed while they are installed.")
+                              .arg(shownName(name), catalog_.shownNames(needed).join(tr(", "))));
+            return;
+        }
+    }
     // `recipe remove` works from the receipt alone, so a program whose recipe is
     // gone (its source removed, the recipe deleted) can still be removed.
     Recipe gone;
     gone.name = name;
     const Recipe *recipe = catalog_.recipe(name);
     // Asked without waiting: the window stays alive under it, and a check can answer it.
-    auto *dialog = new RemoveDialog(recipe ? *recipe : gone, *item, catalog_.takenOutWords(*item), this);
+    auto *dialog = new RemoveDialog(recipe ? *recipe : gone, *item, catalog_.takenOutWords(*item), lastDesktopWords(name, *item), this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     removeBox_ = dialog;
     connect(dialog, &QDialog::accepted, this, [this, name, place] { removeNow(name, place); });
     dialog->open();
+}
+
+// Said in the question before the button, when removing takes out the last desktop of the root it goes into.
+QString Window::lastDesktopWords(const QString &name, const InstalledItem &item) const
+{
+    if (item.inStore || !catalog_.lastDesktop(name))
+        return QString();
+    const QString root = catalog_.ab ? catalog_.otherWords() : tr("this computer");
+    return tr("This is the last desktop in %1. After it is removed the computer starts to a text login. A desktop can be installed "
+              "again with Recipe from there: recipe --system install NAME, with the name of the desktop.")
+        .arg(root);
 }
 
 ChangePage::Words Window::removeWords(const QString &name, Place place) const
@@ -597,15 +633,19 @@ ChangePage::Words Window::removeWords(const QString &name, Place place) const
     words.subtitle = !store ? catalog_.takenOutWords(*item)
                             : tr("Recipe keeps its files among the earlier versions until those are cleared, in Storage.");
     words.doing = tr("Asking Recipe to remove %1…").arg(shown);
-    words.stopNote = store ? tr("Stopping it before it ends leaves %1 installed. You can remove it again from Installed.").arg(shown)
-                           : tr("Stopping it before it ends leaves %1 as it was. You can remove it again from Installed.").arg(catalog_.otherWords());
+    words.stopNote = store || !catalog_.ab
+                         ? tr("Stopping it before it ends leaves %1 installed. You can remove it again from Installed.").arg(shown)
+                         : tr("Stopping it before it ends leaves %1 as it was. You can remove it again from Installed.").arg(catalog_.otherWords());
     words.failed = tr("Removing %1 did not finish").arg(shown);
     words.left = store && item ? tr("%1 %2 is still installed.").arg(shown, item->version)
-                               : tr("%1 was not changed. Installed shows what each root holds.")
-                                     .arg(catalog_.otherWords().left(1).toUpper() + catalog_.otherWords().mid(1));
+                 : !catalog_.ab ? tr("Installed shows what the system holds now.")
+                                : tr("%1 was not changed. Installed shows what each root holds.")
+                                      .arg(catalog_.otherWords().left(1).toUpper() + catalog_.otherWords().mid(1));
     words.done = store ? tr("Removed %1").arg(shown)
-                       : tr("Removed %1 from %2. It stays in %3 until the other root is started.")
-                             .arg(shown, catalog_.otherWords(), catalog_.bootedWords());
+                 : !catalog_.ab ? tr("Removed %1 from the system. It is gone at once; programs that are already running may need a restart.")
+                                      .arg(shown)
+                                : tr("Removed %1 from %2. It stays in %3 until the other root is started.")
+                                      .arg(shown, catalog_.otherWords(), catalog_.bootedWords());
     return words;
 }
 
@@ -818,7 +858,7 @@ void Window::open(const QString &name, Place place)
         return;
     }
     if (!item->inStore) {
-        frame_->flash(tr("%1 cannot be opened from here: the list of the running root names the software and its version, "
+        frame_->flash(tr("%1 cannot be opened from here: the list of the system's software names it and its version, "
                          "not its programs.")
                           .arg(shown));
         return;

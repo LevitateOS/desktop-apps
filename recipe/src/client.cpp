@@ -20,10 +20,9 @@ RecipeClient::RecipeClient(QObject *parent)
 {
 }
 
-// `recipe` itself writes root's changes into the other root when this is on the
-// kernel command line (tools/recipe system_route); the window asks the same
-// question to say where things go. The file is read again each time so that
-// a check can swap it.
+// The kernel command line says whether this is an A/B computer (`recab.immutable`): `recipe`
+// asks the same question to choose between the other root and the running one. The window asks it
+// only to say where things go. The file is read again each time so that a check can swap it.
 bool RecipeClient::ab() const
 {
     QFile file(qEnvironmentVariable("RECIPE_GUI_CMDLINE", "/proc/cmdline"));
@@ -57,21 +56,20 @@ QStringList RecipeClient::store() const
     return root.isEmpty() ? QStringList() : QStringList{"--package-root", root};
 }
 
-// Software "for me" is in the person's own store: no --package-root, which is
-// how `recipe` tells it from the computer's. On an A/B system the computer's
-// software is not one store: `--system` writes the change into the other root.
+// Software "for me" is in the person's own store: no --package-root, which is how `recipe` tells
+// it from the computer's. Everything for everyone is a system change on both kinds of computer:
+// `--system` writes it into the other root of an A/B computer, and into the running root of one
+// with a single root. Only the one explicit store a check names (RECIPE_GUI_PACKAGE_ROOT) is
+// changed without it.
 QStringList RecipeClient::lead(Place place) const
 {
-    return !explicit_ && place != Place::Me && ab() ? QStringList{"--system"} : QStringList();
+    return !explicit_ && place != Place::Me ? QStringList{"--system"} : QStringList();
 }
 
 QStringList RecipeClient::at(Place place) const
 {
-    if (explicit_)
-        return store();
-    if (place == Place::Me || ab())
-        return {};
-    return store();
+    Q_UNUSED(place);
+    return explicit_ ? store() : QStringList();
 }
 
 // One question to `recipe`, answered later: the JSON it printed, or why not.
@@ -167,44 +165,80 @@ static void readInstalled(const QJsonObject &installed, Catalog &fresh, Place pl
     }
 }
 
-// What `recipe --system installed --json` answers. On an A/B system:
-// `{booted: {root, packages}, other: {root, mount, packages}, not_done: [{package,
-// error}]}`, each package `{name, version, recipe, recipe_digest, dependencies}`:
-// a name and a version, no sizes, no earlier versions, no programs. On a system
-// without A/B it is the plain `{packages, profile}` and is read as a store.
+// The system's name for the row of its base: os-release NAME (RECIPE_GUI_OS_RELEASE names another file).
+static QString osName()
+{
+    QFile file(qEnvironmentVariable("RECIPE_GUI_OS_RELEASE", "/etc/os-release"));
+    if (!file.open(QIODevice::ReadOnly))
+        return QString();
+    for (const QByteArray &raw : file.readAll().split('\n')) {
+        const QString line = QString::fromUtf8(raw).trimmed();
+        if (line.startsWith(QLatin1String("NAME=")))
+            return line.mid(5).remove(QLatin1Char('"')).remove(QLatin1Char('\'')).trimmed();
+    }
+    return QString();
+}
+
+// A package of `recipe --system installed --json`: `{name, version, recipe, recipe_digest,
+// dependencies, sessions}`, and for the base `{name: "base", version, serial, release: true, ...}`
+// (tools/recipe system_route.rs `summary`). Recipe's own reserved entries are not software.
+static bool readRootPackage(const QJsonObject &o, InstalledItem &item)
+{
+    const QString name = o["name"].toString();
+    if (name == QLatin1String("system-effects") || name == QLatin1String("previous-kernel"))
+        return false;
+    item.name = name;
+    item.version = o["version"].toString();
+    item.inStore = false;
+    item.base = o["release"].toBool();
+    item.serial = o["serial"].toInteger();
+    item.sessions = o["sessions"].toInt();
+    item.receiptRecipe = o["recipe"].toString();
+    for (const QJsonValue &dependency : o["dependencies"].toArray())
+        item.dependencies << dependency.toString();
+    return true;
+}
+
+// What `recipe --system installed --json` answers. On an A/B computer:
+// `{booted: {root, packages}, other: {root, mount, packages}, not_done: [{package, error}]}`.
+// On one with a single root: `{root, packages}` (the running root). Either way each package is a name
+// and a version, what it needs and how many desktop sessions it provides: no sizes, no earlier
+// versions, no programs.
 static void readSystem(const QJsonObject &answer, Catalog &fresh)
 {
+    fresh.systemName = osName();
+    QMap<QString, InstalledItem> booted, other;
+    auto readAll = [](const QJsonArray &packages, QMap<QString, InstalledItem> &into) {
+        for (const QJsonValue &value : packages) {
+            InstalledItem item;
+            if (readRootPackage(value.toObject(), item))
+                into.insert(item.name, item);
+        }
+    };
     if (!answer["booted"].isObject()) {
-        readInstalled(answer, fresh, Place::Computer);
+        readAll(answer["packages"].toArray(), booted);
+        for (InstalledItem item : booted) {
+            item.place = Place::Computer;
+            fresh.installed << item;
+        }
         return;
     }
     fresh.ab = true;
     fresh.bootedRoot = answer["booted"]["root"].toString();
     fresh.otherRoot = answer["other"]["root"].toString();
     fresh.otherMount = answer["other"]["mount"].toString();
-    QMap<QString, QString> booted, other;
-    for (const QJsonValue &value : answer["booted"]["packages"].toArray())
-        booted.insert(value.toObject()["name"].toString(), value.toObject()["version"].toString());
-    for (const QJsonValue &value : answer["other"]["packages"].toArray())
-        other.insert(value.toObject()["name"].toString(), value.toObject()["version"].toString());
-    for (auto it = booted.begin(); it != booted.end(); ++it) {
-        InstalledItem item;
+    readAll(answer["booted"]["packages"].toArray(), booted);
+    readAll(answer["other"]["packages"].toArray(), other);
+    for (InstalledItem item : booted) {
         item.place = Place::Computer;
-        item.inStore = false;
-        item.name = it.key();
-        item.version = it.value();
-        item.leavesOther = !other.contains(it.key());
+        item.leavesOther = !other.contains(item.name);
         fresh.installed << item;
     }
     // What only the other root holds: new, or at another version.
-    for (auto it = other.begin(); it != other.end(); ++it) {
-        if (booted.contains(it.key()) && booted[it.key()] == it.value())
+    for (InstalledItem item : other) {
+        if (booted.contains(item.name) && booted[item.name].version == item.version)
             continue;
-        InstalledItem item;
         item.place = Place::Other;
-        item.inStore = false;
-        item.name = it.key();
-        item.version = it.value();
         fresh.installed << item;
     }
     for (const QJsonValue &value : answer["not_done"].toArray())
@@ -274,8 +308,9 @@ void RecipeClient::load(Loaded done)
     auto finish = [this, done, fresh](bool ok, const QString &problem) {
         --loading_;
         if (ok) {
-            // On an A/B system `recipe updates` cannot look at the booted root's
-            // software; the collection's own version says what is newer.
+            // `recipe updates` cannot look at the computer's system software (the route that
+            // lists it says only names and versions); the collection's own version says what is
+            // newer. This is where Update for kind-system packages comes from.
             for (const InstalledItem &item : fresh->installed) {
                 const Recipe *recipe = fresh->recipe(item.name);
                 // Not when the other root already holds the recipe's version.
@@ -299,7 +334,7 @@ void RecipeClient::load(Loaded done)
     // What is read, in order. The collection first; then each place's
     // software, updates and storage.
     auto steps = std::make_shared<QList<Step>>();
-    const bool one = explicit_, locked = !explicit_ && ab();
+    const bool one = explicit_;
     fresh->twoPlaces = !one;
     steps->append({QStringList{"list", "--json"} + collection() + store(), [fresh](const QJsonObject &list) { readList(list, *fresh); }, nullptr});
     auto store_ = [&](Place place) {
@@ -315,12 +350,10 @@ void RecipeClient::load(Loaded done)
     if (one) {
         store_(Place::Computer);
     } else {
+        // The computer's own software is read the same way on both kinds of computer.
         store_(Place::Me);
-        if (locked)
-            steps->append({QStringList{"--system", "installed", "--json"}, [fresh](const QJsonObject &a) { readSystem(a, *fresh); },
-                           [fresh](const QString &why) { fresh->computerProblem = why; }});
-        else
-            store_(Place::Computer);
+        steps->append({QStringList{"--system", "installed", "--json"}, [fresh](const QJsonObject &a) { readSystem(a, *fresh); },
+                       [fresh](const QString &why) { fresh->computerProblem = why; }});
     }
 
     auto next = std::make_shared<std::function<void(int)>>();

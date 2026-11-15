@@ -26,7 +26,8 @@ first time, then at the size it had.
   where it is installed, what can be done to it, what it may use and what comes
   with it, the licence, and the recipe itself.
 - **Installed**: what is installed, grouped by place (below), with Open, Update,
-  Remove and the rest on each row.
+  Remove and the rest on each row. The system's base is one row of its own, and the
+  libraries of system groups are shared parts (see "Where software goes").
 - **Updates**: what `recipe updates` says would change, with what the newer
   recipe may use that the installed one may not. "Check for updates" fetches the
   sources' lists again. "Update all" updates every update that is not kept at a
@@ -46,28 +47,64 @@ on every row of Installed and Updates and on a recipe's page.
 | Place | What it means | What the window runs |
 |---|---|---|
 | For me | The person's own store (`~/.local/share/recipe`). Active at once, for them only. It is the default choice. | `recipe install NAME`, as the person, no root helper |
-| For everyone, one root | A computer without `recab.immutable` on its kernel command line has one root. The change goes into root's store (`/var/lib/recipe`) and is active at once. | the root helper, then `recipe install NAME --package-root /var/lib/recipe` |
+| For everyone, one root | A computer without `recab.immutable` on its kernel command line has one root. The change is written into the running root and is active at once; programs that are already running may need a restart. | the root helper, then `recipe --system install NAME` |
 | For everyone, A/B | On an A/B computer the booted root is locked. The change is written into the unlocked other root and is active when that root is booted. The booted root is never written. | the root helper, then `recipe --system install NAME` |
 
-Whether the computer is A/B is read from the kernel command line
-(`recab.immutable`, `RECIPE_GUI_CMDLINE`). The window never runs `recab`:
+"For everyone" is `recipe --system install|update|remove NAME` on both kinds of
+computer; the window runs no `--package-root` for it. Only the one explicit store
+a check names (`RECIPE_GUI_PACKAGE_ROOT`) is changed without `--system`. Whether
+the computer is A/B is read from the kernel command line (`recab.immutable`,
+`RECIPE_GUI_CMDLINE`), to choose the words. The window never runs `recab`:
 `recipe` finds the other root itself.
 
-On an A/B computer Installed shows three groups: "For me", "For everyone · in
-the running root (A), active now" and "In the other root (B) · active when root
-B is started" (the letters are the real ones). They come from `recipe --system
-installed --json`, which answers `booted`, `other` and `not_done`. A `not_done`
-entry is a system change that `recab copy` wiped from the other root and that
-Recipe could not write again. The window shows Recipe's error and "Copy for
-agent"; Recipe tries again by itself on the next system action. After an install
-into the other root the window says "NAME was written into the other root (B).
-It becomes active when root B is started." A plain `{packages, profile}` answer
-is read as one store, with no A/B words.
+**System groups go only into the system.** A recipe of kind `system` (the
+desktop, Firefox, audio, printing, ...), and a recipe of kind `library` that a
+system group needs (`deps`, directly or through other libraries), is never
+installed "for me": the Before page offers no choice of place, and says in one
+sentence why ("It becomes part of the system, so it is written into the other
+root (B) and is active when root B is started." on A/B; "... written into this
+computer's root and is active at once; programs that are already running may
+need a restart." on one root). A recipe page shows no "For me" row for it.
+Libraries are not listed in Browse; they appear in Installed as shared parts.
 
-For software in the running root of an A/B computer the window shows only what
-Recipe answers: no size, no date, no earlier versions, no programs and so no
-Open, no Go back, no keeping at a version. It offers Update when the collection
-has another version, and Remove.
+What Installed lists for the system comes from `recipe --system installed --json`
+on both kinds of computer. On an A/B computer it answers `booted`, `other` and
+`not_done`, and Installed shows three groups: "For me", "For everyone · in the
+running root (A), active now" and "In the other root (B) · active when root B is
+started" (the letters are the real ones). On a computer with one root it answers
+`{root, packages}`: Installed shows "For me" and "For everyone · part of the
+system, active now", with no A/B word. A `not_done` entry is a system change
+that `recab copy` wiped from the other root and that Recipe could not write
+again. The window shows Recipe's error and "Copy for agent"; Recipe tries again
+by itself on the next system action. After an install into the other root the
+window says "NAME was written into the other root (B). It becomes active when
+root B is started."; on one root, "NAME was written into the system. It is
+active at once; programs that are already running may need a restart."
+
+Each system package has `name`, `version`, `recipe`, `dependencies` and `sessions`.
+For software in the system the window shows only that: no size, no date, no earlier
+versions, no programs and so no Open, no Go back, no keeping at a version. It offers
+Update when the collection has another version (the window compares the version
+of the recipe with the one `--system installed` lists), and Remove.
+
+- **The base.** The entry `{"name": "base", "release": true, "serial": N, ...}` is one
+  row for the system itself ("LevitateOS 1.1, the base system"; the name is the
+  os-release `NAME`, `RECIPE_GUI_OS_RELEASE`). It has no Update, Remove, Go back
+  or Keep; its one button, "Check for updates", opens the frame's release page
+  (`recupdate`, see below). `system-effects` and `previous-kernel` are never shown.
+- **Needed by.** The `dependencies` of the system's packages say which installed
+  package needs which. A package's row and page say "Needed by: A, B". Remove is
+  not offered while something installed in the root the change goes into (the other
+  root on A/B) needs it, and the sentence names what; asking anyway (Remove from a
+  check) starts nothing. A library of a system group is listed as a shared part
+  ("Desktop libraries · comes with Plasma desktop, LXQt desktop"), not as software of
+  its own; it has no Remove while a group needs it.
+- **The last desktop.** `sessions` is how many desktop sessions a package provides.
+  Removing a package with `sessions > 0` when no other package of that root has any
+  says, in the question before the button: "This is the last desktop in the other root
+  (B). After it is removed the computer starts to a text login. A desktop can be
+  installed again with Recipe from there: recipe --system install NAME, with the name
+  of the desktop." Removing stays allowed.
 
 ## Before anything happens
 
@@ -90,19 +127,41 @@ Before page (`../kit/before.*`, the words in `src/beforewords.*`):
 has run. The page does not give a download size or disk use: `recipe` reports
 neither before it has run.
 
-A recipe whose `ABOUT.libc` this system's C library cannot run is not offered:
-one line says why. `recipe list --json` carries `host_libc` once and `runs_here`
-and `not_runnable_reason` for each recipe; the window reads them and decides
-nothing.
+A recipe that this system cannot run is not offered: one line says why. The cause is
+`ABOUT.libc` (this system's C library cannot run it) or `ABOUT.systems` (it is made
+for other systems, Steam on AcornOS for example); `recipe list --json` carries `host_libc`
+once and `runs_here` and `not_runnable_reason` for each recipe, and the window reads them
+and decides nothing. Browse, the recipe's page and the flash after "Install" say the
+reason as Recipe words it, without its last sentence (the command that installs it
+anyway, which this window does not offer). Such a recipe can still be read ("Read it");
+it cannot be installed.
 
 ## The run
 
 A run is the command's `--machine-events` stream, shown as steps, a progress bar,
 the output and a Stop. It ends on its last event: `done` or `failed` shows the
 result at once (no Stop, no bar), whenever the command exits and before the lists
-are read again. On an A/B computer the `done` event comes before the other root
-is written, so there the page says "Writing it into the other root (B)…" until
-the command exits.
+are read again. A system change ("for everyone", on both kinds of computer) is
+different: the recipe's `done` comes before the software is written into the root
+and before the root's caches are rebuilt (the effects recipe, which sends its own
+plan, steps and `done` or `failed` under the name `effects`), so the page says
+"Writing it into the other root (B)…" (on one root "... into the system…") and waits
+for the command's exit.
+
+**What a system change reports.** The command's final JSON on standard output
+carries `packages` (written), `present` (already there, not written again),
+`kept_config` (settings files an administrator changed, left as they are),
+`new_config_beside` (the new versions, written beside them as `.recipe-new`),
+`accounts_created`, `var_seeded` (state folders made) and `effects` (`status`: `done`,
+`none`, `skipped`, `unchanged` or `failed`, with `error`). The result page says each
+in a plain sentence and only the ones that are not empty. A failed `effects` is not a
+failed install: the command exits with an error, but its answer says the change is
+written. The page then says "NAME is installed, but one step after it did not
+finish", that the system's caches (menus, icons and fonts) could not be rebuilt and
+that the next system change tries again, with Recipe's error and "Copy for agent",
+and stays on screen (it does not move on to the recipe's page); there is no "Try
+again". A change whose command fails without that answer is a failed install as
+before. A removal whose only failure is the caches says the same on its own page.
 
 A stopped install shows the issue in one sentence and the facts: what Recipe
 recorded (the refused address and the recipe's allowed list, Recipe's own
@@ -191,13 +250,13 @@ Reads (JSON on stdout, `"schema_version": 1`):
 | `recipe updates --json` | `updates` (`name`, `source`, `from`, `to`, `reason`, `changes`, `held`) and `problems` |
 | `recipe storage --json` | `active_bytes`, `earlier_generations`, `earlier_bytes` |
 | `recipe history --json` | `history`, each with `at`, `what`, `package`, `from`, `to`, `source` |
-| `recipe --system installed --json` | on an A/B computer: `booted`, `other`, `not_done` |
+| `recipe --system installed --json` | on both kinds of computer. A/B: `booted`, `other`, `not_done`; one root: `root`, `packages`. Per package `name`, `version`, `dependencies`, `sessions`; for the base `release` and `serial` |
 | `recipe info NAME` | the line `Recipe: PATH`, to find the recipe's file |
 
 Changes, through the root helper unless they are for the person's own store,
 with `--machine-events`: `install`, `update`, `remove`, `go-back`, `hold`,
-`unhold`, with `--system` first on an A/B computer for the three that change
-system software; `storage --clear-earlier --json`; `refresh`; `source add`,
+`unhold`, with `--system` first for the three that change software for everyone
+(not on the one explicit store a check names); `storage --clear-earlier --json`; `refresh`; `source add`,
 `source remove`. `--recipes-path` is added when `RECIPE_GUI_RECIPES_PATH` is set.
 
 The events the run page reads, one JSON object per line on stderr; any other line
@@ -234,7 +293,8 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
 | `RECIPE_GUI_ROOT_HELPER` | what changes are run through; empty runs them directly | `pkexec` |
 | `RECIPE_GUI_RECIPES_PATH` | the collection to list and install from | Recipe's own choice |
 | `RECIPE_GUI_PACKAGE_ROOT` | when set, even to nothing: one explicit store and nothing else, so no choice of place | unset: the two places |
-| `RECIPE_GUI_SYSTEM_ROOT` | the computer's store when it is not A/B | `/var/lib/recipe` |
+| `RECIPE_GUI_SYSTEM_ROOT` | the store whose sources `list`, `refresh` and `source add` use (software for everyone is not read from it) | `/var/lib/recipe` |
+| `RECIPE_GUI_OS_RELEASE` | the file whose `NAME` the base row shows | `/etc/os-release` |
 | `RECIPE_GUI_CMDLINE` | the file read for `recab.immutable` | `/proc/cmdline` |
 | `LEVITATE_APP_RECIPE`, `LEVITATE_APP_SYSTEM`, `LEVITATE_APP_DISK` | the programs Help and its buttons start | the installed ones |
 
@@ -245,7 +305,11 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
 `fixtures/recipe` is a stand-in for `recipe` that answers in the real shapes
 from `fixtures/catalog.json` and a state folder (`RECIPE_STANDIN_STATE`). It
 downloads and installs nothing. Its settings are listed at the top of the file:
-`RECIPE_STANDIN_AB=0|1` (an A/B computer or not), `RECIPE_STANDIN_NOT_DONE`,
+`RECIPE_STANDIN_AB=0|1` (an A/B computer, or one with one root whose `--system`
+answers are `{root, packages}` and `root_route`'s result), `RECIPE_STANDIN_EFFECTS=failed`
+(the effects recipe fails after a system change: the change is written, the answer says
+`effects.status: "failed"`, the exit is an error), `RECIPE_STANDIN_HOST_OS`
+(os-release ID, for `ABOUT.systems`), `RECIPE_STANDIN_NOT_DONE`,
 `RECIPE_STANDIN_HOST_LIBC`, `RECIPE_STANDIN_SPEED`, `RECIPE_STANDIN_STOP_AT`,
 `RECIPE_STANDIN_FAIL`, `RECIPE_STANDIN_LOG` and others. `fixtures/as-root` stands
 in for `pkexec` with `sudo`; `fixtures/helper-log` notes what the helper is given.
@@ -270,8 +334,10 @@ QT_QPA_PLATFORM=offscreen HOME=$S/home XDG_CONFIG_HOME=$S/home/config XDG_STATE_
 
 The state folders must be new. The story needs `pgrep`. Its last part opens
 windows of its own on a scratch command line, one for an A/B computer and one
-for a computer that is not, and checks the exact arguments of every change and
-that "for me" never reaches the root helper.
+for a computer with one root (`RECIPE_STANDIN_AB=0`), and checks the exact arguments of every
+change (`--system` on both) and that "for me" never reaches the root helper. It also walks the
+system groups (no choice of place, the base row, "Needed by", the last desktop, the result
+sentences, the failed-caches page) and a system the recipes are not made for.
 
 `--shots FOLDER --try NAME` runs against the real `recipe` instead: it shows the
 recipe, installs it into a test store, pictures each point and removes it again
@@ -317,6 +383,23 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
 
 ## Not done
 
+- **None of the system-software work was run**: the system groups (kind `system`, the
+  no-choice Before page, one-root "for everyone" through `recipe --system`), the base
+  row and its button to the release page, "Needed by" and the held-back Remove, the last
+  desktop question, the result sentences of a system change, the page for a change
+  whose only failure is the caches, the one-line reason for `ABOUT.systems`, the
+  stand-in's new answers and the story's new parts. It was compiled, nothing more: no
+  app was started, no story was run, no picture was taken. The story still carries the
+  expectations it had, changed by hand for the new arguments and sentences.
+- `recipe --system installed --json` and the final answer were read from the engine's
+  source (`system_route.rs`), not from a run. In the A/B answer of a change, Recipe
+  writes only `packages` and `effects`: the sentences about `present`, settings files,
+  accounts and state folders appear on one root only until the A/B route reports them.
+  The names in the answer are `kept_config`, `new_config_beside`, `accounts_created`
+  and `var_seeded`; the plain names (`kept`, `beside`, `created`, `seeded`) are read too.
+- Whether a system group is offered an "Update" from the catalog between system releases
+  is not decided here: Update for such a package works as for any system software (the
+  collection's version against the listed one: `client.cpp`, `RecipeClient::load`).
 - Everything here ran offscreen against the stand-in. The real `recipe` was only
   read from (list, installed, updates, storage, history) on a hand-made store.
   Installing, going back, keeping at a version, clearing, system installs into a
@@ -324,7 +407,7 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
   window. Neither has the window run on a real desktop, with `pkexec` or a real
   polkit prompt.
 - Not shown, because `recipe` carries nothing for it: "Copy to your own recipes",
-  "Needed by", sort and licence boxes, search of Installed, sizes of downloads and
+  sort and licence boxes, search of Installed, sizes of downloads and
   builds, a source's "added by you on", and which build is running as the reason
   something cannot be cleared.
 - "Update all" updates everything that is not kept, each after its own Before

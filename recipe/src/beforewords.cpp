@@ -40,7 +40,7 @@ QString listWords(const QStringList &names)
 }
 
 // The two lines under a place's name.
-BeforePage::Choice placeCard(const Catalog &catalog, const Places &places, Place place)
+BeforePage::Choice placeCard(const Catalog &catalog, const Places &places, Place place, bool systemOnly)
 {
     BeforePage::Choice card;
     card.key = placeKey(place);
@@ -50,6 +50,15 @@ BeforePage::Choice placeCard(const Catalog &catalog, const Places &places, Place
         card.name = places.systemRoot.isEmpty() ? QObject::tr("The store recipe uses") : QObject::tr("In %1").arg(places.systemRoot);
         card.first = QObject::tr("The one store this window was started with.");
         card.second = QObject::tr("It is the only place this window changes.");
+    } else if (systemOnly) {
+        // Software of the system itself has no other place: one sentence says why.
+        card.name = QObject::tr("The system");
+        card.first = catalog.ab
+                         ? QObject::tr("It becomes part of the system, so it is written into %1 and is active when %2 is started.")
+                               .arg(catalog.otherWords(), catalog.otherRoot.isEmpty() ? QObject::tr("that root") : QObject::tr("root %1").arg(catalog.otherRoot))
+                         : QObject::tr("It becomes part of the system, so it is written into this computer's root and is active at once; "
+                                       "programs that are already running may need a restart.");
+        card.second = password;
     } else if (place == Place::Me) {
         card.name = placeTitle(Place::Me);
         card.first = QObject::tr("Into your own folder. It works at once, for you only.");
@@ -62,7 +71,8 @@ BeforePage::Choice placeCard(const Catalog &catalog, const Places &places, Place
         card.second = password;
     } else {
         card.name = placeTitle(Place::Computer);
-        card.first = QObject::tr("Into this computer's software folder, %1. It works at once, for everyone.").arg(places.systemRoot);
+        card.first = QObject::tr("Written into this computer's system, for everyone. It is active at once; programs that are "
+                                 "already running may need a restart.");
         card.second = password;
     }
     return card;
@@ -192,8 +202,9 @@ BeforePage::Content beforeContent(const Catalog &catalog, const Places &places, 
 
     // Where it goes: a choice for an install, a statement for an update.
     content.whereTitle = ask.update ? QObject::tr("Where it is") : QObject::tr("Where it goes");
+    const bool systemOnly = catalog.intoSystemOnly(ask.name);
     for (Place each : ask.update ? QList<Place>{ask.place} : ask.choices)
-        content.choices << placeCard(catalog, places, each);
+        content.choices << placeCard(catalog, places, each, systemOnly && each != Place::Me);
     content.chosen = placeKey(place);
 
     // What happens: only what the catalog says.

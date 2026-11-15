@@ -17,9 +17,10 @@ struct Places {
     // One explicit store (RECIPE_GUI_PACKAGE_ROOT): the only place, no choice.
     bool one = false;
     // The kernel command line says `recab.immutable`: an A/B system. "For everyone"
-    // changes are written into the other root and become active when it is booted.
+    // changes are written into the other root and become active when it is booted. Without it
+    // they are written into the running root and are active at once. Both are `recipe --system`.
     bool ab = false;
-    // The computer's store when it is not locked, or the explicit store.
+    // The explicit store (RECIPE_GUI_PACKAGE_ROOT), else the store whose sources are read.
     QString systemRoot;
     // The computer's changes go through a root helper that asks for the password.
     bool password = false;
@@ -71,8 +72,8 @@ private:
     void query(const QStringList &arguments, Answered then);
     // `place`: the person's own store runs without the root helper.
     Run *change(const QStringList &arguments, Place place);
-    // What goes before the command (`--system` on an A/B system) and
-    // after it (the store), for a place.
+    // What goes before the command (`--system` for everyone) and
+    // after it (the explicit store, if one was named), for a place.
     QStringList lead(Place place) const;
     QStringList at(Place place) const;
     QStringList collection() const;

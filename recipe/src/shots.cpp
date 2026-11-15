@@ -322,11 +322,11 @@ void helpShots(Window &window, const Save &save, const Expect &expect)
     settle(100);
 }
 
-// The two places software can go, in two windows of their own: an A/B system
-// (`recab.immutable` on a scratch command line), where "for everyone" is written
-// into the other root, and a system with one root, where it is the system's store (a
-// scratch folder). Each has its own stand-in state, and the stand-in logs every
-// command's arguments, which are checked here.
+// The two places software can go, in windows of their own: an A/B system
+// (`recab.immutable` on a scratch command line), where "for everyone" is `recipe --system` into the
+// other root, and a system with one root, where it is `recipe --system` into the running root (the
+// stand-in's RECIPE_STANDIN_AB=0 answers as that route does). Each has its own stand-in state, and the
+// stand-in logs every command's arguments, which are checked here.
 void placesShots(const QString &folder, const Save &save, const Expect &expect)
 {
     const QString recipe = qEnvironmentVariable("RECIPE_GUI_RECIPE");
@@ -564,6 +564,57 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                !installed.contains("next system") && !installed.contains("restart"));
         expect(QStringLiteral("no page made the window wider than it was (%1)").arg(window.width()), window.width() == 1100);
         save(window, "p4-installed-both-roots");
+        // The base is one row for the system itself: only a way to the release page, no Update, Remove, Go back or Keep.
+        {
+            window.showInstalled("base", int(Place::Computer));
+            settle(100);
+            const InstalledItem *base = window.catalog().installedItem("base", Place::Computer);
+            const QStringList on = buttonTexts(window);
+            expect(QStringLiteral("the base is one row for the system, with Check for updates and nothing that changes it (%1)").arg(on.join("|")),
+                   base && base->base && base->serial == 4 && wordsOn(window).contains(", the base system")
+                       && on.contains("Check for updates") && !on.contains("Remove…") && !on.filter("Update to").size()
+                       && !on.filter("Go back").size() && !on.contains("Keep at this version") && !on.contains("Let it update again")
+                       && !window.catalog().update("base", Place::Computer));
+            save(window, "p4b-installed-base");
+            // A shared part comes with the software that needs it, and stays while that is installed.
+            window.showInstalled("desktop-libs", int(Place::Computer));
+            settle(100);
+            const QString shared = wordsOn(window);
+            expect(QStringLiteral("a library of a system group is a shared part: it comes with what needs it and cannot be removed (%1)").arg(buttonTexts(window).join("|")),
+                   shared.contains("comes with Plasma desktop") && shared.contains("cannot be removed while Plasma desktop is installed")
+                       && !buttonTexts(window).contains("Remove…"));
+            window.showInstalled("plasma", int(Place::Computer));
+            settle(100);
+            expect(QStringLiteral("what needs it is said on the row of the software that is needed (%1)").arg(wordsOn(window).left(80)),
+                   window.catalog().neededBy("desktop-libs", Place::Other) == QStringList({"plasma"})
+                       && buttonTexts(window).contains("Remove…"));
+            // The last desktop of the root the change goes into: said before the button, and removing stays allowed.
+            window.askRemove("plasma", Place::Computer);
+            settle(200);
+            QPointer<RemoveDialog> last = window.removeQuestion();
+            expect(QStringLiteral("removing the last desktop says so before the button"),
+                   last && last->isVisible() && window.catalog().lastDesktop("plasma")
+                       && wordsOn(*last).contains("This is the last desktop in the other root (B). After it is removed the computer starts to a text login.")
+                       && wordsOn(*last).contains("recipe --system install NAME") && buttonTexts(*last).contains("Remove"));
+            if (last)
+                save(*last, "p4c-remove-last-desktop");
+            clickButton(last, "Cancel");
+            settle(100);
+            // Software of the system itself is only ever installed into the system: no choice of place.
+            window.askInstall("lxqt");
+            BeforePage *system = window.beforePage();
+            expect(QStringLiteral("a system group offers no choice of place and says why in one sentence (%1)").arg(system->choiceNames().join("|")),
+                   system->isVisible() && system->choiceNames() == QStringList({"The system"})
+                       && system->pageText().contains("It becomes part of the system, so it is written into the other root (B) and is active when root B is started.")
+                       && !system->pageText().contains("For me") && system->pageText().contains("Install LXQt desktop?")
+                       && !window.catalog().installPlaces("lxqt").contains(Place::Me));
+            expect(QStringLiteral("a library a system group needs is system software too"),
+                   window.catalog().intoSystemOnly("desktop-libs") && window.catalog().intoSystemOnly("plasma")
+                       && !window.catalog().intoSystemOnly("htop"));
+            save(window, "p1b-before-install-system-group");
+            clickButton(system, "Cancel");
+            settle(100);
+        }
         window.showUpdates();
         save(window, "p5-updates-both-roots");
         expect(QStringLiteral("what the other root holds already is not offered as an update again (%1)").arg(window.catalog().updates.size()),
@@ -620,9 +671,52 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                window.catalog().installedItem("element", Place::Computer) && window.catalog().installedItem("element", Place::Computer)->leavesOther);
         expect(QStringLiteral("the status line said where it was taken out (%1)").arg(window.frame()->statusText()),
                window.frame()->statusText().contains("Removed Element from the other root (B). It stays in the running root (A) until the other root is started."));
+
+        // Installed, but the system's caches could not be rebuilt: not a failed install.
+        {
+            Environment effects;
+            effects.set("RECIPE_STANDIN_EFFECTS", "failed");
+            before = changesAsked().size();
+            window.askInstall("lxqt");
+            goOn(window, "Install");
+            waitUntilIdle(window, 30);
+            settle(200);
+            const QString said = window.runPage()->pageText();
+            const QString on = said;
+            expect(QStringLiteral("it is written into the other root; the command's answer says the effects failed (%1)").arg(window.runPage()->answer()["effects"].toObject()["status"].toString()),
+                   window.catalog().installedItem("lxqt", Place::Other) && window.runPage()->answer()["effects"].toObject()["status"] == "failed");
+            expect(QStringLiteral("the page says it is installed and that only the caches failed, with the error and Copy for agent, and no Try again (%1)").arg(on.left(100)),
+                   window.runPage()->isVisible() && said.contains("Installed LXQt desktop")
+                       && said.contains("LXQt desktop is installed, but one step after it did not finish")
+                       && said.contains("The system's caches (menus, icons and fonts) could not be rebuilt")
+                       && said.contains("The next system change tries again.") && said.contains("glib-compile-schemas: cannot write")
+                       && on.contains("Copy for agent") && !on.contains("Try again") && !said.contains("Stopped at this step"));
+            expect(QStringLiteral("the status line says so too (%1)").arg(window.frame()->statusText()),
+                   window.frame()->statusText().contains("LXQt desktop is installed, but the system's caches could not be rebuilt"));
+            save(window, "p13-installed-caches-failed");
+            QApplication::clipboard()->clear();
+            clickButton(window.runPage(), "Copy for agent");
+            expect(QStringLiteral("Copy for agent puts the issue, the facts and Recipe's error on the clipboard"),
+                   QApplication::clipboard()->text().contains("The issue:\n") && QApplication::clipboard()->text().contains("this is not a failed install")
+                       && QApplication::clipboard()->text().contains("glib-compile-schemas: cannot write"));
+        }
+        // And the same install when the caches are rebuilt: the page says what was done, and nothing else.
+        {
+            before = changesAsked().size();
+            window.askInstall("printing");
+            goOn(window, "Install");
+            waitUntilIdle(window, 30);
+            settle(200);
+            const QString said = window.runPage()->pageText();
+            expect(QStringLiteral("the run page lists what was written, and the caches rebuilt (%1)").arg(said.left(120)),
+                   window.catalog().installedItem("printing", Place::Other)
+                       && said.contains("Written into the system: Printing") && said.contains("The system's caches (menus, icons and fonts) were rebuilt.")
+                       && !said.contains("Settings files") && !said.contains("Accounts created") && !said.contains("One step after it did not finish"));
+        }
     }
 
-    // ---- A system that says it is A/B on its command line but answers in the plain shape: no A/B wording.
+    // ---- A system whose command line says A/B but whose `recipe --system installed` answers as a computer with one
+    // root does (`{root, packages}`): what `recipe` answers decides, and no A/B wording is shown.
     {
         Environment env;
         env.unset("RECIPE_GUI_PACKAGE_ROOT");
@@ -638,9 +732,10 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         window.resize(1100, 700);
         window.show();
         waitUntilIdle(window, 30);
-        expect(QStringLiteral("`--system installed` answered in the plain shape: it is read as a store, with no A/B"),
+        expect(QStringLiteral("`--system installed` answered as one root does (`{root, packages}`): read with no A/B"),
                !window.catalog().ab && window.catalog().bootedRoot.isEmpty() && window.catalog().notDone.isEmpty()
-                   && window.catalog().installedItem("tree", Place::Me) && !window.catalog().installedItem("anything", Place::Other));
+                   && window.catalog().installedItem("tree", Place::Me) && !window.catalog().installedItem("anything", Place::Other)
+                   && window.catalog().installedItem("gimp", Place::Computer) && !window.catalog().installedItem("gimp", Place::Computer)->inStore);
         qsizetype before = changesAsked().size();
         window.askInstall("htop");
         BeforePage *page = window.beforePage();
@@ -653,8 +748,9 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         expect(QStringLiteral("the change still goes through `--system` and the helper"),
                now.size() == 1 && now[0].route == "system" && kinds(now[0].arguments, {"--system", "install", "levitate:htop", "--machine-events"}));
         expect(QStringLiteral("it is installed for everyone, in effect at once, and said so plainly (%1)").arg(window.frame()->statusText()),
-               window.catalog().installedItem("htop", Place::Computer) && window.catalog().installedItem("htop", Place::Computer)->inStore
-                   && !window.catalog().installedItem("htop", Place::Other) && window.frame()->statusText().contains("Installed htop")
+               window.catalog().installedItem("htop", Place::Computer) && !window.catalog().installedItem("htop", Place::Computer)->inStore
+                   && !window.catalog().installedItem("htop", Place::Other)
+                   && window.frame()->statusText().contains("htop was written into the system. It is active at once")
                    && abWords(window.frame()->statusText()).isEmpty());
         for (const char *shown : {"installed", "updates", "storage", "recipe"}) {
             if (QLatin1String(shown) == "installed")
@@ -672,14 +768,16 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         save(window, "p12-no-ab-recipe-page");
     }
 
-    // ---- A system with one root and no recab on its command line.
+    // ---- A system with one root and no recab on its command line: "for everyone" is `recipe --system` into the
+    // running root, as on A/B; it is active at once, so there is no other root and no A/B word.
     {
         Environment env;
         env.unset("RECIPE_GUI_PACKAGE_ROOT");
         env.set("RECIPE_GUI_CMDLINE", scratch + "/open-cmdline");
         env.set("RECIPE_STANDIN_STATE", scratch + "/open-state");
         env.unset("RECIPE_STANDIN_LOG");
-        env.unset("RECIPE_STANDIN_AB");
+        env.set("RECIPE_STANDIN_AB", "0");
+        env.unset("RECIPE_STANDIN_EFFECTS");
         env.set("RECIPE_GUI_SYSTEM_ROOT", scratch + "/system-store");
         env.set("RECIPE_GUI_ROOT_HELPER", QFileInfo(recipe).absolutePath() + "/helper-log");
         env.set("HELPER_LOG", scratch + "/open-helper.log");
@@ -688,53 +786,191 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         window.resize(1100, 700);
         window.show();
         waitUntilIdle(window, 30);
-        expect(QStringLiteral("a system with one root holds the person's store and the system's store, and no A/B"),
+        expect(QStringLiteral("a system with one root holds the person's store and the system's software (names and versions), and no A/B"),
                !window.places().ab && !window.catalog().ab && window.catalog().twoPlaces && window.catalog().installedItem("gimp", Place::Computer)
-                   && window.catalog().installedItem("gimp", Place::Computer)->inStore
-                   && window.catalog().stores[int(Place::Computer)].has && window.catalog().installedItem("tree", Place::Me));
+                   && !window.catalog().installedItem("gimp", Place::Computer)->inStore
+                   && !window.catalog().stores[int(Place::Computer)].has && window.catalog().installedItem("tree", Place::Me)
+                   && window.catalog().installedItem("base", Place::Computer) && window.catalog().installedItem("base", Place::Computer)->base);
         qsizetype before = changesAsked().size();
         window.askInstall("htop");
         BeforePage *page = window.beforePage();
         expect(QStringLiteral("for me is the default here too"), page->chosen() == placeKey(Place::Me));
         page->choose(placeKey(Place::Computer));
-        expect(QStringLiteral("for everyone, one root: into the system's folder, at once, and no word of roots (%1)").arg(abWords(page->pageText())),
-               page->pageText().contains("Into this computer's software folder, " + scratch + "/system-store. It works at once, for everyone.")
+        expect(QStringLiteral("for everyone, one root: into this computer's system, at once, and no word of roots (%1)").arg(abWords(page->pageText())),
+               page->pageText().contains("Written into this computer's system, for everyone. It is active at once; programs that are already running may need a restart.")
                    && abWords(page->pageText()).isEmpty() && !page->pageText().contains("next system"));
         goOn(window, "Install");
         waitUntilIdle(window, 30);
         QList<Asked> now = changesAsked().mid(before);
-        expect(QStringLiteral("one root: `recipe install NAME --package-root` the system's store, through the helper"),
-               now.size() == 1 && now[0].route == "store"
-                   && kinds(now[0].arguments, {"install", "levitate:htop", "--machine-events", "--package-root", scratch + "/system-store"})
+        expect(QStringLiteral("one root: `recipe --system install NAME` through the helper, and no --package-root"),
+               now.size() == 1 && now[0].route == "system"
+                   && kinds(now[0].arguments, {"--system", "install", "levitate:htop", "--machine-events"})
                    && QFile(scratch + "/open-helper.log").exists());
-        expect(QStringLiteral("it is in effect at once for everyone: it shows as for everyone"),
-               window.catalog().installedItem("htop", Place::Computer) && !window.catalog().installedItem("htop", Place::Other));
+        expect(QStringLiteral("it is in effect at once for everyone: it shows as for everyone, and the status line says so (%1)").arg(window.frame()->statusText()),
+               window.catalog().installedItem("htop", Place::Computer) && !window.catalog().installedItem("htop", Place::Other)
+                   && window.frame()->statusText().contains("htop was written into the system. It is active at once; programs that are already running may need a restart."));
         before = changesAsked().size();
-        window.goBack("gimp", Place::Computer);
-        waitUntilIdle(window, 30);
-        now = changesAsked().mid(before);
-        expect(QStringLiteral("going back, where a store stands behind it: through the helper with that store"),
-               now.size() == 1 && kinds(now[0].arguments, {"go-back", "gimp", "--machine-events", "--package-root", scratch + "/system-store"}));
-        // Software whose recipe is gone is taken back to the earlier version its store keeps: no recipe is needed.
-        before = changesAsked().size();
+
+        // Software that no store stands behind is not taken back to an earlier version, nor kept at one: the list names
+        // the software and its version only. A program with no recipe still has its receipt page, and can be removed.
         window.showInstalled("fd", int(Place::Computer));
         settle(100);
-        expect(QStringLiteral("a program with no recipe, in a store that keeps an earlier version, offers going back (%1)").arg(buttonTexts(window).join("|")),
-               !window.catalog().recipe("fd") && buttonTexts(window).contains("Go back to 10.1.0") && buttonTexts(window).contains("Its receipt"));
+        expect(QStringLiteral("a program with no recipe, in the system's list, offers its receipt and Remove, not Go back or Keep (%1)").arg(buttonTexts(window).join("|")),
+               !window.catalog().recipe("fd") && buttonTexts(window).contains("Its receipt") && buttonTexts(window).contains("Remove…")
+                   && !buttonTexts(window).filter("Go back").size() && !buttonTexts(window).contains("Keep at this version"));
         clickButton(window.installedPage(), "Its receipt");
         settle(150);
-        expect(QStringLiteral("its page offers it too"), window.recipePage()->isVisible() && buttonTexts(window).contains("Go back to 10.1.0"));
+        expect(QStringLiteral("its page offers Remove and no Go back"),
+               window.recipePage()->isVisible() && buttonTexts(window).contains("Remove…") && !buttonTexts(window).filter("Go back").size());
         save(window, "18d-program-no-recipe-kept");
-        clickButton(window.recipePage(), "Go back to 10.1.0");
+
+        // A system group: no choice of place, one sentence why; then what the change reports.
+        window.askInstall("lxqt");
+        expect(QStringLiteral("a system group offers no choice and says it becomes part of the system, written at once (%1)").arg(page->choiceNames().join("|")),
+               page->choiceNames() == QStringList({"The system"})
+                   && page->pageText().contains("It becomes part of the system, so it is written into this computer's root and is active at once; programs that are already running may need a restart.")
+                   && !page->pageText().contains("For me") && abWords(page->pageText()).isEmpty());
+        save(window, "p1c-before-install-system-group-one-root");
+        before = changesAsked().size();
+        goOn(window, "Install");
+        waitUntilIdle(window, 30);
+        settle(200);
+        now = changesAsked().mid(before);
+        expect(QStringLiteral("it is `recipe --system install lxqt` and nothing else"),
+               now.size() == 1 && now[0].route == "system" && kinds(now[0].arguments, {"--system", "install", "levitate:lxqt", "--machine-events"}));
+        {
+            // What the change reports, as sentences, only what is not empty (desktop-libs is written with it
+            // when the root lacks it; the stand-in's root has it already, so it is "already there").
+            const QString said = window.runPage()->pageText();
+            expect(QStringLiteral("the run page lists what was written and what was already there, without anything empty (%1)").arg(said.left(160)),
+                   window.catalog().installedItem("lxqt", Place::Computer) && window.catalog().installedItem("desktop-libs", Place::Computer)
+                       && said.contains("Written into the system: LXQt desktop.")
+                       && said.contains("Already there, so not written again: Desktop libraries.")
+                       && said.contains("Settings files that were changed on this computer were left as they are: /etc/lxqt/lxqt.conf.")
+                       && said.contains("The new versions of settings files were written beside them, ending in .recipe-new: /etc/lxqt/lxqt.conf.recipe-new.")
+                       && said.contains("Accounts created: user lxqt.") && said.contains("State folders made: /var/lib/lxqt.")
+                       && said.contains("The system's caches (menus, icons and fonts) were rebuilt.")
+                       && said.contains("Written into the system. It is active at once; programs that are already running may need a restart."));
+            save(window, "p14-installed-result");
+        }
+        window.showRecipe("lxqt");
+        settle(100);
+        expect(QStringLiteral("the installed group's page says what needs what, and there is no choice of place to offer"),
+               wordsOn(window).contains("Where it is") && !wordsOn(window).contains("Not installed")
+                   && !buttonTexts(window).contains("Install"));
+        save(window, "p1d-system-group-installed");
+
+        // What needs software keeps it: Remove is not offered, and the page says what needs it.
+        window.showInstalled("desktop-libs", int(Place::Computer));
+        settle(100);
+        {
+            const QString there = wordsOn(window);
+            expect(QStringLiteral("a shared part is listed as coming with the groups that need it, and Remove is not offered (%1)").arg(buttonTexts(window).join("|")),
+                   there.contains("comes with LXQt desktop, Plasma desktop") && there.contains("cannot be removed while LXQt desktop, Plasma desktop are installed")
+                       && !buttonTexts(window).contains("Remove…"));
+            save(window, "p6b-installed-shared-part");
+            window.askRemove("desktop-libs", Place::Computer);
+            settle(100);
+            expect(QStringLiteral("asking anyway removes nothing and says why (%1)").arg(window.frame()->statusText()),
+                   !window.removeQuestion() && window.frame()->statusText().contains("is needed by LXQt desktop, Plasma desktop"));
+        }
+        // The base: one row for the system itself.
+        window.showInstalled("base", int(Place::Computer));
+        settle(100);
+        expect(QStringLiteral("the base is one row, with a way to the release page and no Remove, Update, Go back or Keep (%1)").arg(buttonTexts(window).join("|")),
+               wordsOn(window).contains(", the base system") && buttonTexts(window).contains("Check for updates")
+                   && !buttonTexts(window).contains("Remove…") && !buttonTexts(window).filter("Update to").size()
+                   && !buttonTexts(window).filter("Go back").size() && !buttonTexts(window).contains("Keep at this version"));
+        // Not the last desktop while another stays; the last one says so, and removing it is still allowed.
+        window.askRemove("lxqt", Place::Computer);
+        settle(200);
+        expect(QStringLiteral("while another desktop stays the question says nothing of a last desktop"),
+               window.removeQuestion() && !wordsOn(*window.removeQuestion()).contains("last desktop")
+                   && wordsOn(*window.removeQuestion()).contains("It is taken out of this computer's system, for everyone, at once."));
+        clickButton(window.removeQuestion(), "Cancel");
+        before = changesAsked().size();
+        window.removeNow("lxqt", Place::Computer);
         waitUntilIdle(window, 30);
         now = changesAsked().mid(before);
-        expect(QStringLiteral("going back with no recipe: `recipe go-back fd` with that store, through the helper, and 10.1.0 is active"),
-               now.size() == 1 && kinds(now[0].arguments, {"go-back", "fd", "--machine-events", "--package-root", scratch + "/system-store"})
-                   && window.catalog().installedItem("fd", Place::Computer)->version == "10.1.0"
-                   && window.catalog().installedItem("fd", Place::Computer)->kept == "10.2.0");
+        expect(QStringLiteral("removing it is `recipe --system remove lxqt`, and the status line says it is gone at once (%1)").arg(window.frame()->statusText()),
+               now.size() == 1 && now[0].route == "system" && kinds(now[0].arguments, {"--system", "remove", "lxqt", "--machine-events"})
+                   && !window.catalog().installedItem("lxqt", Place::Computer)
+                   && window.frame()->statusText().contains("Removed LXQt desktop from the system. It is gone at once"));
+        window.askRemove("plasma", Place::Computer);
+        settle(200);
+        expect(QStringLiteral("the last desktop of the root says so before the button, and Remove stays offered (%1)").arg(window.removeQuestion() ? wordsOn(*window.removeQuestion()).left(120) : QString()),
+               window.removeQuestion() && window.catalog().lastDesktop("plasma")
+                   && wordsOn(*window.removeQuestion()).contains("This is the last desktop in this computer. After it is removed the computer starts to a text login.")
+                   && wordsOn(*window.removeQuestion()).contains("recipe --system install NAME")
+                   && buttonTexts(*window.removeQuestion()).contains("Remove"));
+        if (window.removeQuestion())
+            save(*window.removeQuestion(), "p4d-remove-last-desktop-one-root");
+        clickButton(window.removeQuestion(), "Cancel");
+
         window.showInstalled("htop", int(Place::Computer));
         expect(QStringLiteral("Installed on one root has no A/B word (%1)").arg(abWords(wordsOn(window))), abWords(wordsOn(window)).isEmpty());
         save(window, "p6-installed-one-root");
+
+        // Installed, but the caches could not be rebuilt: the software is in, and the page says so.
+        {
+            Environment effects;
+            effects.set("RECIPE_STANDIN_EFFECTS", "failed");
+            window.askInstall("printing");
+            goOn(window, "Install");
+            waitUntilIdle(window, 30);
+            settle(200);
+            const QString said = window.runPage()->pageText();
+            const QString on = said;
+            expect(QStringLiteral("only the caches failed: it is installed, the page says so with Recipe's error and Copy for agent, and offers no Try again (%1)").arg(on.left(100)),
+                   window.catalog().installedItem("printing", Place::Computer) && window.runPage()->isVisible()
+                       && said.contains("Printing is installed, but one step after it did not finish")
+                       && said.contains("The next system change tries again.") && said.contains("glib-compile-schemas: cannot write")
+                       && on.contains("Copy for agent") && !on.contains("Try again") && !said.contains("Stopped at this step")
+                       && !said.contains("Written into this computer's root"));
+            save(window, "p13b-installed-caches-failed-one-root");
+        }
+    }
+
+    // ---- A system that is not one a recipe is made for (ABOUT.systems): the same one line, and the recipe can still be read.
+    {
+        Environment env;
+        env.unset("RECIPE_GUI_PACKAGE_ROOT");
+        env.set("RECIPE_GUI_CMDLINE", scratch + "/open-cmdline");
+        env.set("RECIPE_STANDIN_STATE", scratch + "/other-os-state");
+        env.unset("RECIPE_STANDIN_LOG");
+        env.set("RECIPE_STANDIN_AB", "0");
+        env.unset("RECIPE_STANDIN_EFFECTS");
+        env.set("RECIPE_STANDIN_HOST_OS", "acornos");
+        env.set("RECIPE_GUI_ROOT_HELPER", QFileInfo(recipe).absolutePath() + "/helper-log");
+        env.set("HELPER_LOG", scratch + "/other-os-helper.log");
+
+        Window window;
+        window.resize(1100, 700);
+        window.show();
+        waitUntilIdle(window, 30);
+        const QString line = window.catalog().unavailableLine("steam");
+        expect(QStringLiteral("on another system steam is not available for ABOUT.systems, and one line says why, without the way to force it (%1)").arg(line),
+               !window.catalog().unavailable("steam").isEmpty() && window.catalog().unavailable("steam").contains("To install it anyway")
+                   && line == "steam: it is made for the systems levitateos (os-release ID); this system is acornos (ID=acornos), which it does not list."
+                   && !window.catalog().unavailable("plasma").isEmpty() && window.catalog().unavailable("lxqt").isEmpty());
+        window.showBrowse();
+        window.browsePage()->searchBox()->setText("steam");
+        settle(150);
+        expect(QStringLiteral("Browse says it in a line and offers no Install (%1)").arg(buttonTexts(window).join("|")),
+               wordsOn(window).contains(line) && wordsOn(window).contains("Not available") && !buttonTexts(window).contains("Install"));
+        window.browsePage()->searchBox()->clear();
+        window.showRecipe("steam");
+        settle(100);
+        expect(QStringLiteral("its page says it, offers Read it and no Install (%1)").arg(buttonTexts(window).join("|")),
+               wordsOn(window).contains("Not available on this system. " + line) && buttonTexts(window).contains("Read it")
+                   && !buttonTexts(window).contains("Install"));
+        save(window, "a5-unavailable-systems");
+        const qsizetype before = changesAsked().size();
+        window.askInstall("plasma");
+        settle(100);
+        expect(QStringLiteral("asking anyway starts nothing and says why"),
+               !window.beforePage()->isVisible() && changesAsked().size() == before
+                   && window.frame()->statusText().contains("is not available on this system"));
     }
 }
 
@@ -1419,22 +1655,26 @@ void availabilityShots(Window &window, const Save &save, const Expect &expect)
         other.browsePage()->searchBox()->setText("steam");
         settle(150);
         QString words = wordsOn(other);
+        // Browse and the page say the reason as one line: without the command that installs it anyway.
+        const QString line = catalog.unavailableLine("steam");
         expect(QStringLiteral("Browse says why in a line and offers no Install for it (%1)").arg(buttonTexts(other).join("|")),
-               words.contains(why) && words.contains("Not available") && !buttonTexts(other).contains("Install"));
+               line == "steam: its build is linked against glibc; this system's C library is musl, so as packaged its program would find no loader."
+                   && words.contains(line) && !words.contains("To install it anyway") && words.contains("Not available")
+                   && !buttonTexts(other).contains("Install"));
         save(other, "a3-unavailable-browse");
         other.browsePage()->searchBox()->clear();
         other.showRecipe("steam");
         settle(100);
         words = wordsOn(other);
         expect(QStringLiteral("its page says it is not available on this system, why, and has no Install (%1)").arg(buttonTexts(other).join("|")),
-               words.contains("Not available on this system. " + why) && !buttonTexts(other).contains("Install")
-                   && words.contains("Proprietary software."));
+               words.contains("Not available on this system. " + line) && !buttonTexts(other).contains("Install")
+                   && words.contains("Proprietary software.") && buttonTexts(other).contains("Read it"));
         save(other, "a4-unavailable-recipe-page");
         const qsizetype before = changesAsked().size();
         other.askInstall("steam");
         settle(100);
         expect(QStringLiteral("asking for it anyway starts nothing and says why (%1)").arg(other.frame()->statusText()),
-               !other.beforePage()->isVisible() && changesAsked().size() == before && other.frame()->statusText().contains(why));
+               !other.beforePage()->isVisible() && changesAsked().size() == before && other.frame()->statusText().contains(line));
         other.askInstall("htop");
         settle(100);
         expect(QStringLiteral("what it can run is still offered"), other.beforePage()->isVisible());
@@ -1675,7 +1915,7 @@ int takeShots(Window &window, const QString &folder)
     const Recipe *recipe = window.catalog().recipe("gimp");
     const InstalledItem *item = window.catalog().installedItem("gimp");
     if (recipe && item) {
-        RemoveDialog dialog(*recipe, *item, window.catalog().takenOutWords(*item), &window);
+        RemoveDialog dialog(*recipe, *item, window.catalog().takenOutWords(*item), QString(), &window);
         dialog.show();
         ok &= save(dialog, "6-remove");
         dialog.close();

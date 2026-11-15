@@ -12,10 +12,17 @@ It tells the places software can be in apart the way the real `recipe` does
                                                locked and the change is written into the OTHER root;
                                                it prints {action, package, packages, other_root,
                                                other_mount, running_root, active_now: false,
-                                               in_other_root}. Without A/B it is an ordinary store.
+                                               in_other_root, effects}. On a computer with one root
+                                               it is written into the running root (active at once)
+                                               and prints {action, package, packages, root, receipt,
+                                               kept_config, new_config_beside, accounts_created,
+                                               var_seeded, present, effects}.
   recipe --system installed --json             on A/B: {booted: {root, packages}, other: {root,
                                                mount, packages}, not_done: [{package, error}]};
-                                               without A/B: the plain {packages, profile}
+                                               with one root: {root, packages}. Each package is
+                                               {name, version, recipe, recipe_digest, dependencies,
+                                               sessions}, and the base is {name: "base", version,
+                                               serial, release: true, ...}
   recipe ... --package-root DIR                one explicit store (installed.json)
   recipe ...                                   the person's own store (installed-me.json)
 
@@ -23,7 +30,11 @@ Environment:
   RECIPE_STANDIN_STATE    folder for the state file (default: a folder in /tmp)
   RECIPE_STANDIN_LOG      file each invocation's arguments are appended to, one JSON
                           line each (default: invocations.log in the state folder)
-  RECIPE_STANDIN_AB       0: `--system` is a system with one root (plain answers, no other root)
+  RECIPE_STANDIN_AB       0: `--system` is a computer with one root (`{root, packages}`, written into that root)
+  RECIPE_STANDIN_EFFECTS  failed: after a system change the rebuilding of the root's caches (the effects recipe) fails:
+                          the change is written, the final answer says `effects.status: "failed"`, and the command
+                          exits with an error, as the real `recipe --system` does
+  RECIPE_STANDIN_HOST_OS  the os-release ID of this system, for ABOUT.systems (default levitateos)
   RECIPE_STANDIN_NOT_DONE "NAME:error text": `--system installed` lists that system change as
                           not done (wiped by `recab copy`, writing it again failed)
   RECIPE_STANDIN_HOST_LIBC  this system's C library, as `recipe list --json` says it in host_libc (default glibc)
@@ -67,6 +78,15 @@ STATE = os.path.join(STATE_DIR, "installed.json")  # main() picks the store the 
 SYSTEM = os.path.join(STATE_DIR, "system.json")
 ME = os.path.join(STATE_DIR, "installed-me.json")
 AB = os.environ.get("RECIPE_STANDIN_AB", "1") != "0"
+HOST_OS = os.environ.get("RECIPE_STANDIN_HOST_OS", "levitateos")
+EFFECTS = os.environ.get("RECIPE_STANDIN_EFFECTS", "")
+ONE_ROOT = os.path.join(STATE_DIR, "installed-one-root.json")  # the running root of a computer with one root
+BASE_VERSION = "1.1"
+# Desktop sessions a system package provides (the real list counts the .desktop files of usr/share/wayland-sessions
+# and usr/share/xsessions among its files).
+SESSIONS = {"plasma": 2, "lxqt": 1}
+EFFECTS_ERROR = ("glib-compile-schemas: cannot write /usr/share/glib-2.0/schemas/gschemas.compiled: "
+                 "Read-only file system (os error 30)")
 HOST_LIBC = os.environ.get("RECIPE_STANDIN_HOST_LIBC", "glibc")
 LINGER = float(os.environ.get("RECIPE_STANDIN_LINGER", "0"))
 SLOW_READS = float(os.environ.get("RECIPE_STANDIN_SLOW_READS", "0"))
@@ -83,7 +103,7 @@ def installed():
         os.makedirs(STATE_DIR, exist_ok=True)
         # The person's own store starts with one program of their own,
         # an older version of it; the others' store is the catalog's.
-        save(ME_START if STATE == ME else CATALOG["installed"])
+        save(ME_START if STATE == ME else ONE_ROOT_START if STATE == ONE_ROOT else CATALOG["installed"])
     items = json.load(open(STATE))
     sync_profile(items)
     return items
@@ -134,6 +154,13 @@ ME_START = [{
     "recipe": os.path.expanduser("~/.local/share/recipe/recipes/tree.rhai"),
     "files": ["bin/tree"],
 }]
+
+
+# What a computer with one root holds to begin with: the others' software, and a desktop with its libraries.
+ONE_ROOT_START = CATALOG["installed"] + [
+    {"name": name, "version": version, "installed_on": 1793188800, "size_bytes": 1 << 20, "kept": [],
+     "recipe": "/usr/share/recipe/recipes/%s.rhai" % name, "files": []}
+    for name, version in (("desktop-libs", "1.0.0"), ("plasma", "6.5.2"))]
 
 
 def save(items):
@@ -216,6 +243,13 @@ def mismatch(item, parent=None, seen=None):
         return None
     seen.append(item["name"])
     about = item.get("about") or {}
+    systems = about.get("systems")
+    if systems and HOST_OS not in systems:
+        text = ("%s: it is made for the systems %s (os-release ID); this system is %s (ID=%s), which it does not list."
+                % (item["name"], ", ".join(systems), HOST_OS, HOST_OS))
+        if parent:
+            text += " %s is a dependency of %s." % (item["name"], parent)
+        return text + " To install it anyway: recipe install --any-system %s" % (parent or item["name"])
     libc = about.get("libc")
     if libc and HOST_LIBC != "unknown" and HOST_LIBC not in libc:
         build = " or ".join(libc)
@@ -573,16 +607,24 @@ OTHER_MOUNT = "/run/recab/other"
 def system_state():
     if not os.path.exists(SYSTEM):
         # Two programs the running system came with; the other root starts as a copy of it.
-        both = {"gimp": "3.0.4", "element": "1.12.3"}
+        both = {"gimp": "3.0.4", "element": "1.12.3", "desktop-libs": "1.0.0", "plasma": "6.5.2"}
         write(SYSTEM, {"booted": {"root": "A", "packages": dict(both)}, "other": {"root": "B", "packages": dict(both)}})
     return read(SYSTEM, None)
 
 
 def summary(packages):
-    """The packages as `recipe --system installed --json` lists them (system_route.rs `summary`)."""
-    return [{"name": name, "version": version, "recipe": "/usr/share/recipe/recipes/%s.rhai" % name,
-             "recipe_digest": "sha256:" + "0" * 64, "dependencies": []}
-            for name, version in sorted(packages.items())]
+    """The packages as `recipe --system installed --json` lists them (system_route.rs `summary`): the base
+    first, as `{name: "base", version, serial, release: true, ...}` with no sessions; the others with the
+    names they need and the desktop sessions they provide. The effects package and the previous kernel's
+    modules are never listed."""
+    found = [{"name": "base", "version": BASE_VERSION, "serial": 4, "release": True,
+              "recipe": "/usr/lib/levitate/release.json", "recipe_digest": "sha256:" + "1" * 64, "dependencies": []}]
+    for name, version in sorted(packages.items()):
+        item = next((each for each in CATALOG["recipes"] if each["name"] == name), None)
+        found.append({"name": name, "version": version, "recipe": "/usr/share/recipe/recipes/%s.rhai" % name,
+                      "recipe_digest": "sha256:" + "0" * 64, "dependencies": list(item["deps"]) if item else [],
+                      "sessions": SESSIONS.get(name, 0)})
+    return found
 
 
 def not_done():
@@ -601,6 +643,38 @@ def system_view():
             "not_done": not_done()}
 
 
+def play_effects(changed=True):
+    """What the real recipe does after a system change: runs the root's effects recipe, which rebuilds its
+    whole-root caches (menus, icons, fonts). Its events are those of any recipe, under the name `effects`; a
+    failure leaves the change written (RECIPE_STANDIN_EFFECTS=failed). Returns the `effects` of the answer."""
+    if not changed:
+        return {"status": "unchanged"}
+    sys.stderr.write("Rebuilding the root's caches with //usr/lib/recipe/effects.rhai...\n")
+    emit(event="plan", recipes=[{"name": "effects", "steps": ["install"]}])
+    hook_event("effects", "install", "running", "executing recipe hook")
+    pause(0.6)
+    if EFFECTS == "failed":
+        hook_event("effects", "install", "failed", EFFECTS_ERROR)
+        emit(event="failed", recipe="effects", hook="install", reason=EFFECTS_ERROR)
+        return {"status": "failed", "recipe": "usr/lib/recipe/effects.rhai", "error": EFFECTS_ERROR}
+    hook_event("effects", "install", "success", "step finished")
+    emit(event="done", recipe="effects")
+    return {"status": "done", "recipe": "usr/lib/recipe/effects.rhai", "package": "system-effects", "files": 212}
+
+
+def end_system_change(effects):
+    """The answer is on standard output already. A failed effects run is the command's only failure: the exit
+    status is nonzero and the last event is the effects recipe's `failed`, with no `failed` of the change."""
+    if effects["status"] == "failed":
+        sys.stderr.write("Error: the system change is written, but rebuilding the root's caches with "
+                         "//usr/lib/recipe/effects.rhai failed: %s\nThe next system change runs it again.\n"
+                         % effects["error"])
+        sys.stdout.flush()
+        linger()
+        sys.exit(1)
+    linger()
+
+
 def system_change(action, name):
     state = system_state()
     other = state["other"]["packages"]
@@ -608,25 +682,92 @@ def system_change(action, name):
         fail("%s is not installed in the other root" % name)
     if action == "install" and name in other:
         fail("%s is already in the other root" % name)
+    written = [name]
     if action != "remove":
         item = recipe(name)
-        order = [recipe(dep) for dep in item["build_deps"]] + [item]
+        # What it needs at run time and the other root lacks is written with it.
+        needed = [recipe(dep) for dep in item["deps"] if dep not in other]
+        order = needed + [recipe(dep) for dep in item["build_deps"]] + [item]
         emit(event="plan", recipes=[{"name": each["name"], "steps": steps_of(each)} for each in order])
         for each in order:
             play(each)
         # As the real recipe: the producer's own last event comes before the other root is written.
         emit(event="done", recipe=name)
         pause(0.6)
+        for each in needed:
+            other[each["name"]] = each["version"]
         other[name] = item["version"]
+        written = [each["name"] for each in needed] + [name]
     else:
         pause(0.4)
         del other[name]
     write(SYSTEM, state)
-    print(json.dumps({"action": action, "package": name, "packages": [name],
+    effects = play_effects()
+    # The A/B answer carries what was written and how the caches ended, and nothing of the settings files,
+    # accounts or state folders (tools/recipe system_route.rs, `change`).
+    print(json.dumps({"action": action, "package": name, "packages": written,
                       "other_root": state["other"]["root"], "other_mount": OTHER_MOUNT,
                       "running_root": state["booted"]["root"], "active_now": False,
-                      "in_other_root": name in other}))
-    linger()
+                      "in_other_root": name in other, "effects": effects}))
+    end_system_change(effects)
+
+
+def one_root_view():
+    """`recipe --system installed --json` on a computer with one root (system_route.rs `root_route`)."""
+    return {"root": "/", "packages": summary({each["name"]: each["version"] for each in installed()})}
+
+
+def one_root_change(action, name):
+    """`recipe --system install|update|remove` on a computer with one root: written into the running root,
+    active at once. The answer is `root_route`'s: what was written, what was already there, the settings files
+    left as they were and the new ones beside them, the accounts created, the state folders made, the effects."""
+    items = installed()
+    current = next((each for each in items if each["name"] == name), None)
+    present, kept, beside, created, seeded = [], [], [], [], []
+    if action in ("update", "remove") and not current:
+        fail("%s is not installed in this system's root" % name)
+    if action == "install" and current:
+        fail("%s is already installed in this system's root" % name)
+    if action == "remove":
+        sys.stderr.write("recipe: removing %s %s\n" % (name, current["version"]))
+        pause(0.4)
+        items.remove(current)
+        written = [name]
+        record("remove", name, current["version"], None, None)
+    else:
+        item = recipe(name)
+        names = [each["name"] for each in items]
+        # What it needs at run time that the root has already is skipped; the rest is written with it.
+        present = [dep for dep in item["deps"] if dep in names]
+        needed = [recipe(dep) for dep in item["deps"] if dep not in names]
+        order = needed + [recipe(dep) for dep in item["build_deps"]] + [item]
+        emit(event="plan", recipes=[{"name": each["name"], "steps": steps_of(each)} for each in order])
+        for each in order:
+            play(each)
+        # As the real recipe: the producer's own last event comes before the root is written.
+        emit(event="done", recipe=name)
+        pause(0.6)
+        written = [each["name"] for each in needed] + [name]
+        for each in needed + [item]:
+            gone = next((old for old in items if old["name"] == each["name"]), None)
+            if gone:
+                items.remove(gone)
+            items.append({"name": each["name"], "version": each["version"], "recipe": "/usr/share/recipe/recipes/%s.rhai" % each["name"],
+                          "files": [], "installed_on": int(time.time()), "size_bytes": 1 << 20, "kept": []})
+        record("update" if action == "update" else "install", name, current["version"] if current else None, item["version"], None)
+        if item["about"]["kind"] == "system":
+            # What a group of the system's own software writes besides its files.
+            kept = ["etc/%s/%s.conf" % (name, name)]
+            beside = ["etc/%s/%s.conf" % (name, name)]
+            created = [{"package": name, "kind": "user", "name": name, "id": 990, "group": None}]
+            seeded = ["var/lib/%s" % name]
+    save(sorted(items, key=lambda each: each["name"]))
+    effects = play_effects()
+    print(json.dumps({"action": action, "package": name, "packages": written, "root": "/",
+                      "receipt": "/usr/lib/recipe/system.json", "kept_config": kept,
+                      "new_config_beside": [path + ".recipe-new" for path in beside], "accounts_created": created,
+                      "var_seeded": seeded, "present": present, "effects": effects}))
+    end_system_change(effects)
 
 
 def linger():
@@ -666,9 +807,9 @@ def main(args):
     system = "--system" in args
     root = args[args.index("--package-root") + 1] if "--package-root" in args else None
     if system and not AB:
-        # One root, the running one: system scope is the ordinary store, and the answers are plain.
+        # One root, the running one: its software is kept in a state file of its own.
         root = os.path.join(STATE_DIR, "one-root")
-        STATE = os.path.join(STATE_DIR, "installed-one-root.json")
+        STATE = ONE_ROOT
     MACHINE_EVENTS = "--machine-events" in args
     log(args, "system" if system else "me" if root is None else "store")
     if root is None and not system:
@@ -689,6 +830,16 @@ def main(args):
     command = words[0] if words else ""
     if command in ("install", "update", "remove", "go-back", "hold", "unhold") and len(words) == 2:
         words[1] = words[1].split(":", 1)[-1]  # SOURCE:NAME; the stand-in's names are unique
+    if system and not AB:
+        if command == "installed":
+            if SLOW_READS > 0:
+                time.sleep(SLOW_READS)
+            print(json.dumps(one_root_view()))
+        elif command in ("install", "update", "remove") and len(words) == 2:
+            one_root_change(command, words[1])
+        else:
+            fail("--system supports install, update, remove, installed and isinstalled")
+        return
     if system and AB:
         if command == "installed":
             if SLOW_READS > 0:

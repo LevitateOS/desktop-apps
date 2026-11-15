@@ -59,6 +59,9 @@ struct Recipe {
 
     QString shown() const { return title.isEmpty() ? name : title; }
     bool listed() const { return kind != QLatin1String("library"); }
+    // ABOUT.kind "system": a group of the system's own software (the desktop, the printing stack).
+    bool isSystem() const { return kind == QLatin1String("system"); }
+    bool isLibrary() const { return kind == QLatin1String("library"); }
     // The licence is `proprietary …` (the recipe format requires SPDX or `proprietary`).
     bool proprietary() const { return license.trimmed().startsWith(QLatin1String("proprietary"), Qt::CaseInsensitive); }
     static Recipe fromJson(const QJsonObject &object);
@@ -98,6 +101,14 @@ struct InstalledItem {
     bool inStore = true;
     // On an A/B system: the other root no longer holds it (it is in the booted root).
     bool leavesOther = false;
+    // Only what `recipe --system installed --json` says of a package: the names it needs, and how many
+    // desktop sessions it provides (`dependencies`, `sessions`).
+    QStringList dependencies;
+    int sessions = 0;
+    // The reserved entry `base` (`"release": true`): the system's base tree, the files of the system
+    // release it runs. It is one row for the system itself, and is not changed like a package.
+    bool base = false;
+    qint64 serial = 0;
 };
 
 // One field of what a recipe may use (NEEDS) that the newer recipe changes,
@@ -193,6 +204,8 @@ struct Catalog {
     QList<NotDone> notDone;
     // This system's C library as `recipe list --json` says it ("glibc", "musl", "unknown").
     QString hostLibc;
+    // The system's name for its base row (os-release NAME); empty when it says none.
+    QString systemName;
 
     const Recipe *recipe(const QString &name) const;
     const Origin *origin(const QString &name) const;
@@ -214,11 +227,33 @@ struct Catalog {
     QString otherWords() const;
     // "the running root (A)": the booted root, which is locked.
     QString bootedWords() const;
-    // What taking this item out does on an A/B system, as a sentence: only the other root
-    // is ever changed.
+    // What taking this item out does where no store stands behind it, as a sentence: on an A/B
+    // system only the other root is changed; on one root the change is in effect at once.
     QString takenOutWords(const InstalledItem &item) const;
     // Why this system cannot run the recipe, in Recipe's words (`not_runnable_reason`); empty when it can.
     QString unavailable(const QString &name) const;
+    // Why this window cannot open software the system route lists (it says names and versions, not programs).
+    QString cannotOpenWords() const;
+    // The same as one line for a list or a page: without the command that installs it anyway.
+    QString unavailableLine(const QString &name) const;
+    // A recipe that is installed only into the system: ABOUT.kind "system", or a library that a
+    // system group needs (directly or through other libraries). No choice of place is offered for it.
+    bool intoSystemOnly(const QString &name) const;
+    // What a root holds, as rows: the running root's (`Place::Computer`) or the other root's
+    // (`Place::Other`, A/B only: what only it holds, and what both hold).
+    QList<const InstalledItem *> rootItems(Place root) const;
+    // The root a system change is written into: the other root on an A/B computer, else the computer's.
+    Place systemTarget() const { return ab ? Place::Other : Place::Computer; }
+    // The names (as the person reads them) of the packages of that root that need this one.
+    QStringList neededBy(const QString &name, Place root) const;
+    // Removing it from the target root takes out the last package of that root that provides a desktop session.
+    bool lastDesktop(const QString &name) const;
+    // "Needed by: A, B": the shown names of neededBy.
+    QStringList shownNames(const QStringList &names) const;
+    // The system's name for the base row: "LevitateOS 1.1, the base system".
+    QString baseWords(const InstalledItem &item) const;
+    // Rows that are not software of their own: the base, and shared parts of the system.
+    int softwareCount() const;
     // The places it could still be installed in, the computer's first.
     QList<Place> installPlaces(const QString &name) const;
     // Every place that holds it.

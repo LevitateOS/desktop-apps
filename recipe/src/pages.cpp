@@ -188,6 +188,85 @@ void clear(QLayout *layout)
     }
 }
 
+// What a system change reports on its standard output (tools/recipe system_route.rs): `packages` (what
+// was written), `present` (already there), the settings files left as they were and the new versions
+// written beside them, the accounts created, the state folders made, and how rebuilding the system's
+// caches ended (`effects.status`). Only what is not empty is said.
+QStringList stringsOf(const QJsonValue &value)
+{
+    QStringList out;
+    for (const QJsonValue &item : value.toArray())
+        out << item.toString();
+    return out;
+}
+
+// Recipe names these `kept_config`, `new_config_beside`, `accounts_created` and `var_seeded`; the
+// plain names are read as well.
+QJsonValue answerField(const QJsonObject &answer, std::initializer_list<const char *> names)
+{
+    for (const char *name : names)
+        if (answer.contains(QLatin1String(name)))
+            return answer[QLatin1String(name)];
+    return QJsonValue();
+}
+
+QString rooted(const QString &path)
+{
+    return path.startsWith(QLatin1Char('/')) ? path : QLatin1Char('/') + path;
+}
+
+QStringList systemResultLines(const QJsonObject &answer, const Catalog &catalog)
+{
+    QStringList lines;
+    auto joined = [](const QStringList &names) { return names.join(QObject::tr(", ")); };
+    const QStringList written = stringsOf(answer["packages"]);
+    if (!written.isEmpty())
+        lines << QObject::tr("Written into the system: %1.").arg(joined(catalog.shownNames(written)));
+    const QStringList present = stringsOf(answer["present"]);
+    if (!present.isEmpty())
+        lines << QObject::tr("Already there, so not written again: %1.").arg(joined(catalog.shownNames(present)));
+    QStringList kept;
+    for (const QString &path : stringsOf(answerField(answer, {"kept_config", "kept"})))
+        kept << rooted(path);
+    if (!kept.isEmpty())
+        lines << QObject::tr("Settings files that were changed on this computer were left as they are: %1.").arg(joined(kept));
+    QStringList beside;
+    for (QString path : stringsOf(answerField(answer, {"new_config_beside", "beside"}))) {
+        if (!path.endsWith(QLatin1String(".recipe-new")))
+            path += QStringLiteral(".recipe-new");
+        beside << rooted(path);
+    }
+    if (!beside.isEmpty())
+        lines << QObject::tr("The new versions of settings files were written beside them, ending in .recipe-new: %1.")
+                     .arg(joined(beside));
+    QStringList accounts;
+    for (const QJsonValue &value : answerField(answer, {"accounts_created", "created"}).toArray()) {
+        if (value.isString()) {
+            accounts << value.toString();
+            continue;
+        }
+        const QJsonObject o = value.toObject();
+        accounts << (o["group"].toString().isEmpty() ? QObject::tr("%1 %2").arg(o["kind"].toString(), o["name"].toString())
+                                                     : QObject::tr("the user %1 added to the group %2").arg(o["name"].toString(), o["group"].toString()));
+    }
+    if (!accounts.isEmpty())
+        lines << QObject::tr("Accounts created: %1.").arg(joined(accounts));
+    QStringList seeded;
+    for (const QString &path : stringsOf(answerField(answer, {"var_seeded", "seeded"})))
+        seeded << rooted(path);
+    if (!seeded.isEmpty())
+        lines << QObject::tr("State folders made: %1.").arg(joined(seeded));
+    if (answer["effects"]["status"].toString() == QLatin1String("done"))
+        lines << QObject::tr("The system's caches (menus, icons and fonts) were rebuilt.");
+    return lines;
+}
+
+QString cachesFailedWords()
+{
+    return QObject::tr("The system's caches (menus, icons and fonts) could not be rebuilt, so the software may not show in menus or "
+                       "have its icons yet. The next system change tries again.");
+}
+
 } // namespace
 
 // ---------------------------------------------------------------- Browse
@@ -301,7 +380,7 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
         if (recipe.proprietary())
             words->addWidget(tinted(text(tr("Proprietary software")), Mood::Warn));
         if (!unavailable.isEmpty())
-            words->addWidget(dim(text(unavailable)));
+            words->addWidget(dim(text(catalog.unavailableLine(recipe.name)))); // the C library or ABOUT.systems: one line either way
         words->addStretch();
         grid->addLayout(words, row, 1);
         const Origin *its = catalog.origin(recipe.origin);
@@ -461,7 +540,7 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     if (recipe.proprietary())
         words->addWidget(tinted(text(proprietaryWords(recipe), true), Mood::Warn));
     if (!unavailable.isEmpty() && free.size() && held.isEmpty())
-        words->addWidget(text(tr("Not available on this system. %1").arg(unavailable), true));
+        words->addWidget(text(tr("Not available on this system. %1").arg(catalog.unavailableLine(name)), true));
     header->addLayout(words, 1);
 
     auto *actions = new QVBoxLayout;
@@ -622,7 +701,8 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     if (its)
         recipeHead->addWidget(dim(text(tr("from %1").arg(its->shown()))));
     recipeHead->addStretch();
-    if (!recipe.path.isEmpty()) {
+    // A recipe this system cannot run can still be read.
+    if (!recipe.path.isEmpty() || !recipe.runsHere) {
         auto *read = new QPushButton(tr("Read it"));
         connect(read, &QPushButton::clicked, this, [this, name] { emit readRecipe(name); });
         recipeHead->addWidget(read);
@@ -657,6 +737,9 @@ void RecipePage::whereItIs(QVBoxLayout *body, const Catalog &catalog, const QStr
             continue;
         if (!catalog.twoPlaces && place != Place::Computer)
             continue;
+        // Software of the system itself is never for one person: no "for me" row to say it is not there.
+        if (place == Place::Me && !item && catalog.intoSystemOnly(name))
+            continue;
         const QString label = catalog.ab && place == Place::Computer ? tr("For everyone, in %1").arg(catalog.bootedWords())
                               : catalog.twoPlaces ? placeTitle(place, catalog.otherRoot)
                                                   : tr("In this store");
@@ -678,8 +761,13 @@ void RecipePage::whereItIs(QVBoxLayout *body, const Catalog &catalog, const QStr
             if (place == Place::Other)
                 sentences << tr("It cannot be opened until then.");
             else if (!item->inStore)
-                sentences << tr("This window cannot open it: the list of the running root names the software and its version, "
-                                "not its programs.");
+                sentences << catalog.cannotOpenWords();
+            // What else installed in that root needs it.
+            if (!item->inStore && !item->base) {
+                const QStringList needed = catalog.neededBy(name, place == Place::Other ? Place::Other : Place::Computer);
+                if (!needed.isEmpty())
+                    sentences << tr("Needed by: %1.").arg(catalog.shownNames(needed).join(tr(", ")));
+            }
             if (item->held)
                 sentences << tr("Kept at this version.");
             const UpdateItem *update = catalog.update(name, place);
@@ -732,6 +820,17 @@ void RecipePage::actionRows(QVBoxLayout *body, const Catalog &catalog, const QSt
                 auto *older = new QPushButton(tr("Go back to %1").arg(item->kept));
                 connect(older, &QPushButton::clicked, this, [this, name, place] { emit goBack(name, place); });
                 rows.add(tr("Go back%1").arg(at), tr("Return to %1, which is still kept.").arg(item->kept), {older});
+            }
+            // The base is the system itself: it is replaced by a newer release, never removed.
+            if (item->base)
+                continue;
+            // What else in the root the change goes into needs it: it stays while they are installed.
+            const QStringList needed = item->inStore ? QStringList() : catalog.neededBy(name, catalog.systemTarget());
+            if (!needed.isEmpty()) {
+                rows.add(tr("Remove%1").arg(at),
+                         tr("Needed by %1, so it cannot be removed while they are installed. Remove those first.")
+                             .arg(catalog.shownNames(needed).join(tr(", "))));
+                continue;
             }
             auto *remove = new QPushButton(tr("Remove…"));
             connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
@@ -850,13 +949,13 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
 
 // ---------------------------------------------------------------- A run
 
-void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place, bool toOther)
+void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place, bool system)
 {
     catalog_ = catalog;
     name_ = name;
     run_ = run;
     concluded_ = false;
-    toOther_ = toOther;
+    system_ = system;
     answer_ = QJsonObject();
     marks_.clear();
     lines_.clear();
@@ -942,7 +1041,9 @@ void RunPage::addPlanRow(const QString &recipe, const QStringList &hooks)
 {
     const int row = plan_->rowCount();
     const Recipe *found = catalog_.recipe(recipe);
-    QLabel *name = recipe == name_ ? strong(found ? found->shown() : recipe) : dim(text(recipe));
+    // The effects recipe is the system's own: its steps rebuild the caches after the change.
+    const QString effects = recipe == QLatin1String("effects") && !found ? tr("System caches") : recipe;
+    QLabel *name = recipe == name_ ? strong(found ? found->shown() : recipe) : dim(text(effects));
     name->setMinimumWidth(110);
     plan_->addWidget(name, row, 0);
     int column = 1;
@@ -971,7 +1072,8 @@ void RunPage::onEvent(const QJsonObject &event)
     const QString kind = event["event"].toString();
     const QString recipe = event["recipe"].toString();
     const Recipe *found = catalog_.recipe(recipe);
-    const QString shown = found ? found->shown() : recipe;
+    const bool effects = !found && recipe == QLatin1String("effects");
+    const QString shown = found ? found->shown() : effects ? tr("the system's caches") : recipe;
 
     if (kind == QLatin1String("plan")) {
         for (const QJsonValue &value : event["recipes"].toArray()) {
@@ -1032,22 +1134,30 @@ void RunPage::onEvent(const QJsonObject &event)
     } else if (kind == QLatin1String("say")) {
         state_->setText(event["text"].toString());
     } else if (kind == QLatin1String("done")) {
-        // The recipe's last event. For software written into the other root, the writing is still to
-        // come: say so. Otherwise this is the end, whenever the command exits.
+        // The recipe's last event. For a system change the writing into the root (and then the
+        // rebuilding of its caches) is still to come: say so, and wait for the command to exit.
+        // Otherwise this is the end, whenever the command exits.
         for (StepMark *stepMark : marks_)
             if (stepMark->state() == StepMark::Running)
                 stepMark->setState(StepMark::Done);
-        if (toOther_) {
+        if (system_) {
             bar_->setRange(0, 0);
-            state_->setText(tr("%1 is ready. Writing it into %2…").arg(shown, catalog_.otherWords()));
-            emit status(tr("Writing %1 into %2").arg(shown, catalog_.otherWords()));
+            if (effects) {
+                state_->setText(tr("Rebuilding the system's caches…"));
+                emit status(tr("Rebuilding the system's caches"));
+            } else {
+                const QString into = catalog_.ab ? catalog_.otherWords() : tr("the system");
+                state_->setText(tr("%1 is ready. Writing it into %2…").arg(shown, into));
+                emit status(tr("Writing %1 into %2").arg(shown, into));
+            }
         } else {
             conclude(true);
         }
     } else if (kind == QLatin1String("failed")) {
-        // `Run` has the reason and the step by now. On an A/B system the command still says more
-        // (nothing was written), so its exit is waited for.
-        if (!toOther_)
+        // `Run` has the reason and the step by now. A system change still says more (nothing was
+        // written, or only the caches failed, which the effects recipe reports as its own `failed`),
+        // so its exit is waited for.
+        if (!system_)
             conclude(false);
     }
 }
@@ -1070,6 +1180,18 @@ QString RunPage::stateWords() const
     return state_ ? state_->text() : QString();
 }
 
+QString RunPage::pageText() const
+{
+    QStringList words;
+    for (const QLabel *label : findChildren<QLabel *>())
+        if (label->isVisibleTo(this))
+            words << label->text();
+    for (const QAbstractButton *button : findChildren<QAbstractButton *>())
+        if (button->isVisibleTo(this))
+            words << QString(button->text()).remove(QLatin1Char('&'));
+    return words.join(QLatin1Char('\n'));
+}
+
 void RunPage::onFinished(bool ok)
 {
     emit status(QString());
@@ -1085,13 +1207,38 @@ void RunPage::onFinished(bool ok)
         stop_->hide();
         stopNote_->hide();
         title_->setText(updatingFrom_.isEmpty() ? tr("Installed %1").arg(shown) : tr("Updated %1").arg(shown));
+        const bool nothingWritten = system_ && answer_["packages"].toArray().isEmpty();
         if (answer_.contains("other_root"))
-            state_->setText(tr("Written into the other root (%1). It becomes active when root %1 is started. Reading what is installed now…")
-                                .arg(answer_["other_root"].toString()));
+            state_->setText(nothingWritten
+                                ? tr("Nothing needed writing: %1 holds it already. Reading what is installed now…").arg(catalog_.otherWords())
+                                : tr("Written into the other root (%1). It becomes active when root %1 is started. Reading what is installed now…")
+                                      .arg(answer_["other_root"].toString()));
+        else if (system_)
+            state_->setText(nothingWritten
+                                ? tr("Nothing needed writing: it was already in the system. Reading what is installed now…")
+                                : tr("Written into the system. It is active at once; programs that are already running may need a "
+                                     "restart. Reading what is installed now…"));
         else
             state_->setText(tr("Done. Reading what is installed now…"));
+        // What the change did besides: only what is not empty.
+        const QStringList lines = system_ ? systemResultLines(answer_, catalog_) : QStringList();
+        if (!lines.isEmpty()) {
+            auto *result = new Panel;
+            result->column()->addWidget(strong(tr("What was done")));
+            for (const QString &line : lines)
+                result->column()->addWidget(text(line, true));
+            column_->insertWidget(2, result);
+        }
         emit succeeded(name_);
         return;
+    }
+    // Everything the command did is written and only the last step failed: the software is installed.
+    if (system_) {
+        const QJsonObject answer = QJsonDocument::fromJson(run_->answer()).object();
+        if (answer["effects"]["status"].toString() == QLatin1String("failed")) {
+            cachesFailed(answer);
+            return;
+        }
     }
     const QJsonObject failure = run_->failure();
     const bool stoppedByUser = !stop_->isEnabled() && failure.isEmpty();
@@ -1273,6 +1420,66 @@ void RunPage::onFinished(bool ok)
     emit failed(name_);
 }
 
+// The change is in the system; only rebuilding the caches (the effects recipe) failed. That is not a
+// failed install: the page says so, gives Recipe's error and "Copy for agent", and the lists are read
+// as after any install.
+void RunPage::cachesFailed(const QJsonObject &answer)
+{
+    concluded_ = true;
+    answer_ = answer;
+    const Recipe *found = catalog_.recipe(name_);
+    const QString shown = found ? found->shown() : name_;
+    for (StepMark *stepMark : marks_)
+        if (stepMark->state() == StepMark::Running)
+            stepMark->setState(StepMark::Done);
+    bar_->hide();
+    stop_->hide();
+    stopNote_->hide();
+    title_->setText(updatingFrom_.isEmpty() ? tr("Installed %1").arg(shown) : tr("Updated %1").arg(shown));
+    state_->setText(tr("%1 is in the system. Rebuilding the system's caches did not finish.").arg(shown));
+
+    const QString error = answer["effects"]["error"].toString();
+    const QStringList lines = systemResultLines(answer, catalog_);
+    auto *verdict = new Verdict;
+    verdict->setFrameShape(QFrame::NoFrame);
+    verdict->column()->addWidget(strong(tr("%1 is installed, but one step after it did not finish").arg(shown)));
+    verdict->column()->addWidget(text(cachesFailedWords(), true));
+    if (!error.isEmpty())
+        verdict->column()->addWidget(dim(text(tr("Recipe's own message: %1").arg(error), true)));
+    for (const QString &line : lines)
+        verdict->column()->addWidget(text(line, true));
+    column_->insertWidget(1, verdict);
+
+    const QString issue = tr("%1 was written into the system, but rebuilding the system's caches failed.").arg(shown);
+    QStringList facts{tr("The software is installed; this is not a failed install."),
+                      tr("The caches (menus, icons and fonts) are rebuilt after every system change; the next system change tries again.")};
+    if (!error.isEmpty())
+        facts << tr("Recipe's own message: %1").arg(error);
+    facts << lines;
+    auto copyText = [this, issue, facts] {
+        return tr("The issue:\n%1\n\nThe facts:\n- %2\n\nThe output:\n%3\n")
+            .arg(issue, facts.join(QStringLiteral("\n- ")), output_->toPlainText());
+    };
+    auto *showOutput = new QPushButton(tr("Show the output"));
+    showOutput->setCheckable(true);
+    connect(showOutput, &QPushButton::toggled, this, [this](bool on) {
+        outputTitle_->setVisible(on);
+        output_->setVisible(on);
+    });
+    auto *leave = new QPushButton(tr("Back"));
+    connect(leave, &QPushButton::clicked, this, &RunPage::back);
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(showOutput);
+    buttons->addWidget(leave);
+    buttons->addStretch();
+    buttons->addWidget(copyForAgentButton(copyText));
+    verdict->column()->addLayout(buttons);
+    outputTitle_->hide();
+    output_->hide();
+    column_->addStretch();
+    emit succeededWithoutCaches(name_);
+}
+
 // ---------------------------------------------------------------- A short change
 
 void ChangePage::begin(const Words &words, Run *run)
@@ -1340,6 +1547,41 @@ void ChangePage::onFinished(bool ok)
     stop_->hide();
     stopNote_->hide();
 
+    // A system change that was made, and only rebuilding the system's caches failed: the change
+    // stands, and the page says so (the command's final answer carries `effects.status`).
+    const QJsonObject answer = QJsonDocument::fromJson(run_->answer()).object();
+    if (!stoppedByUser && answer["effects"]["status"].toString() == QLatin1String("failed")) {
+        const QString error = answer["effects"]["error"].toString();
+        auto *done = new Verdict;
+        done->setFrameShape(QFrame::NoFrame);
+        done->column()->addWidget(strong(tr("The change was made, but one step after it did not finish")));
+        done->column()->addWidget(text(cachesFailedWords(), true));
+        if (!error.isEmpty())
+            done->column()->addWidget(dim(text(tr("Recipe's own message: %1").arg(error), true)));
+        const QString issue = tr("%1, but rebuilding the system's caches failed.").arg(words_.title);
+        const QStringList facts{tr("The change itself was made; this is not a failed change."),
+                                tr("The next system change rebuilds the caches again."),
+                                tr("Recipe's own message: %1").arg(error)};
+        auto copyText = [this, issue, facts] {
+            return tr("The issue:\n%1\n\nThe facts:\n- %2\n\nThe output:\n%3\n")
+                .arg(issue, facts.join(QStringLiteral("\n- ")), output_->toPlainText());
+        };
+        auto *row = new QHBoxLayout;
+        auto *leave = new QPushButton(tr("Back"));
+        connect(leave, &QPushButton::clicked, this, &ChangePage::back);
+        row->addWidget(leave);
+        row->addStretch();
+        row->addWidget(copyForAgentButton(copyText));
+        done->column()->addLayout(row);
+        column_->insertWidget(1, done);
+        const bool printed = !output_->toPlainText().isEmpty();
+        outputTitle_->setVisible(printed);
+        output_->setVisible(printed);
+        if (!printed)
+            column_->addStretch();
+        return;
+    }
+
     // Recipe's own words first; when it gave none, the output below ends with them.
     const QString reason = failure["reason"].toString();
     auto *verdict = new Verdict;
@@ -1383,12 +1625,13 @@ QString whereSentence(const InstalledItem &item, const Catalog &catalog)
     case Place::Me:
         return QObject::tr("It is in your own store: only you have it.");
     case Place::Computer:
+        if (!item.inStore && !catalog.ab) // `recipe --system installed` on a computer with one root
+            return QObject::tr("It is part of this computer's system, for everyone, and active now. ") + catalog.cannotOpenWords();
         if (!item.inStore) // `recipe --system installed` on an A/B system: the booted root
             return (item.leavesOther ? QObject::tr("It is in %1, for everyone, and active now. %2 no longer holds it.")
                                            .arg(catalog.bootedWords(), other.left(1).toUpper() + other.mid(1))
                                      : QObject::tr("It is in %1, for everyone, and active now.").arg(catalog.bootedWords()))
-                   + QObject::tr(" This window cannot open it: the list of the running root names the software and its "
-                                 "version, not its programs.");
+                   + QLatin1Char(' ') + catalog.cannotOpenWords();
         return QObject::tr("It is on this computer, for everyone.");
     case Place::Other:
         break;
@@ -1447,17 +1690,22 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
     top->setSpacing(1);
     top->addWidget(heading(tr("Installed")));
     QString summary;
-    if (catalog.installed.isEmpty()) {
+    if (catalog.softwareCount() == 0 && !catalog.installed.isEmpty()) {
+        summary = tr("Only the base system is installed. Software comes from recipes.");
+    } else if (catalog.installed.isEmpty()) {
         summary = tr("Nothing is installed from recipes yet.");
     } else if (!catalog.twoPlaces) {
-        summary = tr("%1, %2.").arg(counted(catalog.installed.size(), tr("%1 program"), tr("%1 programs")), bytesText(size));
+        summary = tr("%1, %2.").arg(counted(catalog.softwareCount(), tr("%1 program"), tr("%1 programs")), bytesText(size));
     } else {
-        // Sizes only where a store measured them: the booted root's list has none.
+        // Sizes only where a store measured them: the system's list has none. The base is the system, not a program.
         int me = 0, computer = 0, other = 0;
-        for (const InstalledItem &item : catalog.installed)
+        for (const InstalledItem &item : catalog.installed) {
+            if (item.base)
+                continue;
             (item.place == Place::Me ? me : item.place == Place::Computer ? computer : other)++;
+        }
         summary = tr("%1: %2 for me, %3 for everyone.")
-                      .arg(counted(catalog.installed.size() - other, tr("%1 program"), tr("%1 programs")),
+                      .arg(counted(me + computer, tr("%1 program"), tr("%1 programs")),
                            QString::number(me), QString::number(computer));
         if (other)
             summary += tr(" %1 more only in %2.").arg(other).arg(catalog.otherWords());
@@ -1507,9 +1755,13 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             const QString start = catalog.otherRoot.isEmpty() ? tr("that root") : tr("root %1").arg(catalog.otherRoot);
             QString title = place == Place::Me ? tr("For me · works at once, for you only")
                             : place == Place::Computer ? (inStore ? tr("For everyone · works at once")
-                                                                  : tr("For everyone · in %1, active now").arg(catalog.bootedWords()))
+                                                                  : catalog.ab ? tr("For everyone · in %1, active now").arg(catalog.bootedWords())
+                                                                               : tr("For everyone · part of the system, active now"))
                                                        : tr("%1 · active when %2 is started").arg(placeTitle(Place::Other, catalog.otherRoot), start);
-            title += tr(" · %1").arg(counted(here.size(), tr("%1 program"), tr("%1 programs")));
+            int programs = 0;
+            for (const InstalledItem *each : here)
+                programs += !each->base;
+            title += tr(" · %1").arg(counted(programs, tr("%1 program"), tr("%1 programs")));
             if (catalog.stores[int(place)].has && place != Place::Other)
                 title += tr(", %1").arg(bytesText(catalog.stores[int(place)].activeBytes));
             groups->addWidget(strong(title));
@@ -1518,7 +1770,17 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         for (const InstalledItem *item : here) {
             const Recipe *recipe = catalog.recipe(item->name);
             const UpdateItem *update = catalog.update(item->name, item->place);
-            auto *line = new QTreeWidgetItem(tree, {recipe ? recipe->shown() : item->name, item->version, newerCell(*item, update),
+            // The base is one row for the system itself; a library of a system group is a part that
+            // comes with the software that needs it, not software of its own.
+            QString shownName = recipe ? recipe->shown() : item->name;
+            if (item->base) {
+                shownName = catalog.baseWords(*item);
+            } else if (recipe && recipe->isLibrary() && !item->inStore) {
+                const QStringList with = catalog.neededBy(item->name, item->place == Place::Other ? Place::Other : Place::Computer);
+                if (!with.isEmpty())
+                    shownName = tr("%1 · comes with %2").arg(shownName, catalog.shownNames(with).join(tr(", ")));
+            }
+            auto *line = new QTreeWidgetItem(tree, {shownName, item->base ? QString() : item->version, newerCell(*item, update),
                                                     QLocale().toString(item->installedOn, "d MMM yyyy"),
                                                     item->sizeBytes ? bytesText(item->sizeBytes) : QString(),
                                                     item->kept.isEmpty() ? (item->inStore ? tr("none") : QString()) : item->kept});
@@ -1566,6 +1828,21 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             return;
         auto *words = new QVBoxLayout;
         words->setSpacing(1);
+        if (item->base) {
+            // The system itself: replaced as a whole by a newer release, so no Update, Remove, Go back
+            // or Keep. The frame's release page says whether a newer release exists.
+            words->addWidget(strong(shared->baseWords(*item)));
+            words->addWidget(dim(text(tr("The files of the system release this computer runs. A newer release replaces it as a "
+                                         "whole; it is not updated, removed or kept at a version like a program. \"Check for "
+                                         "updates\" says whether there is one."),
+                                      true)));
+            row->addLayout(words, 1);
+            auto *release = primary(tr("Check for updates"));
+            connect(release, &QPushButton::clicked, this, &InstalledPage::openRelease);
+            row->addWidget(release);
+            emit selected(name, place);
+            return;
+        }
         words->addWidget(strong(tr("%1 %2").arg(recipe ? recipe->shown() : name, item->version)));
         QString about = recipe ? recipe->description + tr(".") : QString();
         if (!recipe) {
@@ -1578,6 +1855,22 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         }
         if (shared->twoPlaces)
             about += (about.isEmpty() ? QString() : tr(" ")) + whereSentence(*item, *shared);
+        // System software: what else installed in its root needs it, and so keeps it.
+        QStringList needed;
+        if (!item->inStore) {
+            needed = shared->neededBy(name, place == Place::Other ? Place::Other : Place::Computer);
+            if (recipe && recipe->isLibrary() && !needed.isEmpty())
+                about += tr(" It is a shared part: it comes with %1, and is not software of its own.")
+                             .arg(shared->shownNames(needed).join(tr(", ")));
+            else if (!needed.isEmpty())
+                about += tr(" Needed by: %1.").arg(shared->shownNames(needed).join(tr(", ")));
+        }
+        // Removing is held back while something needs it, in the root the change would go into.
+        const QStringList blockers = item->inStore ? QStringList() : shared->neededBy(name, shared->systemTarget());
+        if (!blockers.isEmpty())
+            about += tr(" It cannot be removed while %1 %2 installed: remove %3 first.")
+                         .arg(shared->shownNames(blockers).join(tr(", ")), blockers.size() == 1 ? tr("is") : tr("are"),
+                              blockers.size() == 1 ? tr("it") : tr("them"));
         if (item->menu.isEmpty() && !item->programs.isEmpty())
             about += tr(" Run it in a terminal as %1.").arg(item->programs.join(tr(", ")));
         if (item->held)
@@ -1610,9 +1903,11 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             connect(keep, &QPushButton::clicked, this, [this, name, place, hold] { emit this->hold(name, place, hold); });
             row->addWidget(keep);
         }
-        auto *remove = new QPushButton(tr("Remove…"));
-        connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
-        row->addWidget(remove);
+        if (blockers.isEmpty()) {
+            auto *remove = new QPushButton(tr("Remove…"));
+            connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
+            row->addWidget(remove);
+        }
         // A held program is not offered an update until it is released.
         if (update && place != Place::Other && !update->held) {
             auto *newer = primary(tr("Update to %1").arg(update->to));
@@ -1864,7 +2159,8 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
 
 // ---------------------------------------------------------------- Remove
 
-RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, QWidget *parent)
+RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, const QString &lastDesktop,
+                           QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Remove %1").arg(recipe.shown()));
@@ -1893,6 +2189,10 @@ RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, cons
     QLabel *explained = text(words, true);
     explained->setMinimumWidth(420);
     column->addWidget(explained);
+    // Said before the button: removing is still allowed.
+    if (!lastDesktop.isEmpty()) {
+        column->addWidget(tinted(text(lastDesktop, true), Mood::Warn));
+    }
     column->addStretch();
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
     buttons->addButton(tr("Remove"), QDialogButtonBox::AcceptRole);

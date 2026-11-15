@@ -308,6 +308,9 @@ QString Catalog::bootedWords() const
 
 QString Catalog::takenOutWords(const InstalledItem &item) const
 {
+    if (!ab)
+        return QObject::tr("It is taken out of this computer's system, for everyone, at once. Programs that are already running may "
+                           "need a restart.");
     if (item.place == Place::Other)
         return QObject::tr("It is taken out of %1, which is the only root that holds it.").arg(otherWords());
     return QObject::tr("It is taken out of %1. %2 keeps it until %3 is started.")
@@ -321,12 +324,129 @@ QString Catalog::unavailable(const QString &name) const
     return found && !found->runsHere ? found->notRunnableReason : QString();
 }
 
+QString Catalog::cannotOpenWords() const
+{
+    return ab ? QObject::tr("This window cannot open it: the list of the running root names the software and its version, not its programs.")
+              : QObject::tr("This window cannot open it: the list of the system's software names it and its version, not its programs.");
+}
+
+QString Catalog::unavailableLine(const QString &name) const
+{
+    // Recipe ends the reason (whether the cause is the C library or ABOUT.systems) with the command
+    // that installs it anyway; a window that does not offer that leaves it out.
+    QString why = unavailable(name);
+    const qsizetype anyway = why.indexOf(QLatin1String(" To install it anyway:"));
+    if (anyway >= 0)
+        why.truncate(anyway);
+    return why.section(QLatin1Char('\n'), 0, 0).trimmed();
+}
+
+// A system group's libraries are part of the system too: reached through `deps`, from a recipe of
+// kind system.
+bool Catalog::intoSystemOnly(const QString &name) const
+{
+    const Recipe *found = recipe(name);
+    if (!found)
+        return false;
+    if (found->isSystem())
+        return true;
+    if (!found->isLibrary())
+        return false;
+    QStringList seen;
+    std::function<bool(const Recipe &)> needed = [&](const Recipe &group) {
+        if (seen.contains(group.name))
+            return false;
+        seen << group.name;
+        for (const QString &dep : group.deps) {
+            if (dep == name)
+                return true;
+            const Recipe *next = recipe(dep);
+            if (next && (next->isSystem() || next->isLibrary()) && needed(*next))
+                return true;
+        }
+        return false;
+    };
+    for (const Recipe &each : recipes)
+        if (each.isSystem() && needed(each))
+            return true;
+    return false;
+}
+
+QList<const InstalledItem *> Catalog::rootItems(Place root) const
+{
+    QList<const InstalledItem *> found;
+    if (root == Place::Computer) {
+        for (const InstalledItem &item : installed)
+            if (item.place == Place::Computer && !item.inStore)
+                found << &item;
+        return found;
+    }
+    if (root != Place::Other)
+        return found;
+    for (const InstalledItem &item : installed)
+        if (item.place == Place::Other)
+            found << &item;
+    // What both roots hold is listed once, in the running root's row.
+    for (const InstalledItem &item : installed)
+        if (item.place == Place::Computer && !item.inStore && !item.leavesOther && !installedItem(item.name, Place::Other))
+            found << &item;
+    return found;
+}
+
+QStringList Catalog::neededBy(const QString &name, Place root) const
+{
+    QStringList found;
+    for (const InstalledItem *item : rootItems(root))
+        if (item->name != name && !item->base && item->dependencies.contains(name))
+            found << item->name;
+    found.sort();
+    return found;
+}
+
+bool Catalog::lastDesktop(const QString &name) const
+{
+    const QList<const InstalledItem *> root = rootItems(systemTarget());
+    bool provides = false;
+    for (const InstalledItem *item : root)
+        if (item->name == name)
+            provides = item->sessions > 0;
+    if (!provides)
+        return false;
+    for (const InstalledItem *item : root)
+        if (item->name != name && item->sessions > 0)
+            return false;
+    return true;
+}
+
+QStringList Catalog::shownNames(const QStringList &names) const
+{
+    QStringList shown;
+    for (const QString &name : names)
+        shown << (recipe(name) ? recipe(name)->shown() : name);
+    return shown;
+}
+
+QString Catalog::baseWords(const InstalledItem &item) const
+{
+    const QString who = systemName.isEmpty() ? QObject::tr("This system") : systemName;
+    return QObject::tr("%1 %2, the base system").arg(who, item.version);
+}
+
+int Catalog::softwareCount() const
+{
+    int count = 0;
+    for (const InstalledItem &item : installed)
+        count += !item.base;
+    return count;
+}
+
 QList<Place> Catalog::installPlaces(const QString &name) const
 {
     QList<Place> free;
     // "For me" comes first: it is the default. The other root counts as held: installing
     // again would repeat what is already written there.
-    if (twoPlaces && !installedItem(name, Place::Me))
+    // Software of the system itself (a desktop, the printing stack, a library one needs) is never "for me".
+    if (twoPlaces && !installedItem(name, Place::Me) && !intoSystemOnly(name))
         free << Place::Me;
     if (!installedItem(name, Place::Computer) && !installedItem(name, Place::Other))
         free << Place::Computer;
