@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Recdirstat: a treemap of what fills the disk -->
+  <rect x="4" y="4" width="22" height="26" rx="3" fill="#2f7fd1"/>
+  <rect x="28" y="4" width="16" height="14" rx="3" fill="#3fa34d"/>
+  <rect x="28" y="20" width="16" height="10" rx="3" fill="#f0a93b"/>
+  <rect x="4" y="32" width="13" height="12" rx="3" fill="#8e5bd0"/>
+  <rect x="19" y="32" width="14" height="12" rx="3" fill="#d9534f"/>
+  <rect x="35" y="32" width="9" height="12" rx="3" fill="#17a2a2"/>
+</svg>

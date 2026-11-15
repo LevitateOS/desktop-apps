@@ -14,7 +14,7 @@ int main(int argc, char **argv)
     QApplication::setApplicationDisplayName(QObject::tr("Recipe"));
     QApplication::setApplicationVersion("0.1");
     QApplication::setDesktopFileName("org.levitateos.recipe");
-    QApplication::setWindowIcon(QIcon::fromTheme("system-software-install"));
+    QApplication::setWindowIcon(QIcon::fromTheme("org.levitateos.recipe", QIcon::fromTheme("system-software-install")));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QObject::tr("Find, install and update software from recipes."));

@@ -14,7 +14,7 @@ int main(int argc, char **argv)
     QApplication::setApplicationDisplayName(QObject::tr("Recdirstat"));
     QApplication::setApplicationVersion("0.1");
     QApplication::setDesktopFileName("org.levitateos.disk");
-    QApplication::setWindowIcon(QIcon::fromTheme("drive-harddisk"));
+    QApplication::setWindowIcon(QIcon::fromTheme("org.levitateos.disk", QIcon::fromTheme("drive-harddisk")));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QObject::tr("See where the mess on the disk is, and how alike the two roots are."));
