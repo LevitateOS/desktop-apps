@@ -6,7 +6,10 @@
 #include <QFrame>
 #include <QLabel>
 #include <QPalette>
+#include <QString>
 #include <QWidget>
+
+#include <functional>
 
 class QVBoxLayout;
 
@@ -89,20 +92,11 @@ private:
     QString letter_, iconPath_;
 };
 
-// What an agent is handed when something needs fixing or changing: the issue,
-// the facts, and the expected result. The person may rewrite the last part;
-// it is the only part that is theirs to say.
-class QPlainTextEdit;
-class PromptPanel : public Panel {
-public:
-    PromptPanel(const QString &issue, const QStringList &facts, const QString &expected, QWidget *parent = nullptr);
-    // The three parts as the text an agent reads.
-    QString prompt() const;
-private:
-    QString issue_;
-    QStringList facts_;
-    QPlainTextEdit *expected_;
-};
+// "Copy for agent": one click puts `text()` on the clipboard, nothing else.
+// For a failure or an output view; the person pastes it into the agent of their
+// own choice.
+class QPushButton;
+QPushButton *copyForAgentButton(const std::function<QString()> &text, QWidget *parent = nullptr);
 
 // The round mark in front of a step: its number, a tick, or a cross.
 class StepMark : public QWidget {

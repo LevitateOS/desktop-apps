@@ -4,7 +4,6 @@
 #include <QLocale>
 #include <QObject>
 
-#include "setaside.h"
 #include "words.h"
 
 #include <algorithm>
@@ -75,11 +74,6 @@ void look(Node *node, const QString &path, Search &s)
 {
     const QString name = node->name;
     Node *parent = node->parent;
-
-    // What the agent set aside is held for the person to bring back or let go;
-    // it is not found as mess again.
-    if (path == holdingRoot(s.home))
-        return;
 
     if (!node->dir) {
         if (node->aggregate || node->files != 1)

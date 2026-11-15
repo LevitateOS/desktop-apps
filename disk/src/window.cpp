@@ -1,6 +1,5 @@
 #include "window.h"
 
-#include "after.h"
 #include "browse.h"
 #include "disk.h"
 #include "frame.h"
@@ -10,63 +9,28 @@
 #include "rules.h"
 #include "run.h"
 #include "words.h"
-#include "work.h"
 
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
-#include <QSet>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStorageInfo>
-#include <QThread>
 #include <algorithm>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
-// Reads what is set aside off the window's thread: it measures whole folders.
-class HeldReader : public QThread {
-public:
-    HeldReader(const QString &home, bool apparent, QObject *parent)
-        : QThread(parent)
-        , home_(home)
-        , apparent_(apparent)
-    {
-    }
-    SetAside result;
-
-protected:
-    void run() override { result = readSetAside(home_, apparent_); }
-
-private:
-    QString home_;
-    bool apparent_;
-};
-
-// What was asked, in one short line, for Activity: the first line of the issue.
-static QString requestTitle(const QString &prompt)
-{
-    const QString heading = QStringLiteral("The issue:");
-    const qsizetype at = prompt.indexOf(heading);
-    const QString line = (at < 0 ? prompt : prompt.mid(at + heading.size())).trimmed().section(QLatin1Char('\n'), 0, 0).trimmed();
-    if (line.isEmpty())
-        return QObject::tr("A request from Recdirstat");
-    return line.size() > 90 ? line.left(89).trimmed() + QStringLiteral("…") : line;
-}
-
 Window::Window(QWidget *parent)
     : QMainWindow(parent)
     , home_(qEnvironmentVariable("DISK_GUI_HOME", QDir::homePath()))
-    , agent_(qEnvironmentVariable("DISK_GUI_AGENT", "levitate-agent"))
     , recab_(qEnvironmentVariable("DISK_GUI_RECAB", "recab"))
     , rootHelper_(qEnvironmentVariable("DISK_GUI_ROOT_HELPER", "pkexec"))
     , osRelease_(qEnvironmentVariable("DISK_GUI_OS_RELEASE", "/etc/os-release"))
@@ -93,16 +57,12 @@ Window::Window(QWidget *parent)
     mess_ = new MessPage;
     systems_ = new SystemsPage;
     systems_->setPasswordAsked(!rootHelper_.isEmpty());
-    hand_ = new HandPage;
-    work_ = new WorkPage;
-    after_ = new AfterPage;
     before_ = new BeforePage;
-    for (QWidget *page : std::initializer_list<QWidget *>{disk_, browse_, mess_, systems_, hand_, work_, after_, before_})
+    for (QWidget *page : std::initializer_list<QWidget *>{disk_, browse_, mess_, systems_, before_})
         stack_->addWidget(page);
 
     // The frame is the window: the rail, the pages, the strip, the status line.
-    // Only the four things to look at have entries; a hand-over, work in
-    // progress and what the agent set aside are steps of the mess.
+    // Only the four things to look at have entries.
     frame_ = new Frame(Frame::Recdirstat);
     frame_->setContent(stack_);
     frame_->addEntry(QStringLiteral("disk"), tr("The disk"));
@@ -110,7 +70,6 @@ Window::Window(QWidget *parent)
     frame_->addEntry(QStringLiteral("mess"), tr("Mess"));
     frame_->addEntry(QStringLiteral("systems"), tr("The two systems"));
     frame_->select(QStringLiteral("disk"));
-    frame_->setAgent(agent_);
     frame_->setStatus(tr("Looking at the disk…"));
     setCentralWidget(frame_);
     next_ = new NextSystem(recab_, this);
@@ -127,15 +86,7 @@ Window::Window(QWidget *parent)
     });
 
     connect(frame_, &Frame::chosen, this, [this](const QString &key) {
-        if (key == Frame::activityKey())
-            return;
-        // While the agent works on what this entry is about, the entry shows
-        // the work, not a page that is about to change.
-        const bool working = run_ && job_ != Job::Comparing && job_ != Job::None;
-        const bool itsWork = (key == QLatin1String("mess")) == (job_ == Job::Clearing);
-        if (working && itsWork)
-            go(work_);
-        else if (key == QLatin1String("disk"))
+        if (key == QLatin1String("disk"))
             go(disk_);
         else if (key == QLatin1String("browse"))
             go(browse_);
@@ -145,12 +96,6 @@ Window::Window(QWidget *parent)
             showSystems();
     });
     connect(frame_, &Frame::finishRequested, this, &Window::openSystem);
-    connect(frame_, &Frame::goToRun, this, [this] {
-        if (!run_)
-            return;
-        frame_->select(entryOf(work_));
-        go(work_);
-    });
     connect(mess_, &MessPage::openFolder, this, &Window::openFolder);
     connect(browse_, &BrowsePage::openFolder, this, &Window::openFolder);
     connect(browse_, &BrowsePage::said, this, [this](const QString &words) { frame_->flash(words); });
@@ -163,7 +108,6 @@ Window::Window(QWidget *parent)
     connect(browse_, &BrowsePage::takeOffRequested, this, &Window::takeOffList);
     connect(browse_, &BrowsePage::neverRequested, this, [this](Node *node) { neverSuggest(node->path()); });
     connect(browse_, &BrowsePage::showMess, this, [this] { frame_->choose(QStringLiteral("mess")); });
-    connect(browse_, &BrowsePage::handOver, this, &Window::showHandOver);
     connect(mess_, &MessPage::takeOffRequested, this, &Window::takeOffList);
     connect(mess_, &MessPage::neverRequested, this, [this](Node *node) { neverSuggest(node->path()); });
     connect(mess_, &MessPage::suggestAgain, this, &Window::suggestAgain);
@@ -177,16 +121,7 @@ Window::Window(QWidget *parent)
     connect(disk_, &DiskPage::showMess, this, [this] { frame_->choose(QStringLiteral("mess")); });
     connect(disk_, &DiskPage::showBrowse, this, [this] { frame_->choose(QStringLiteral("browse")); });
     connect(disk_, &DiskPage::showSystems, this, [this] { frame_->choose(QStringLiteral("systems")); });
-    connect(disk_, &DiskPage::showHeld, this, &Window::showAfter);
     connect(disk_, &DiskPage::openRecipe, this, [this] { frame_->startApp(Frame::Recipe); });
-
-    connect(after_, &AfterPage::back, this, [this] { frame_->choose(QStringLiteral("mess")); });
-    connect(after_, &AfterPage::bringBack, this, &Window::bringBack);
-    connect(after_, &AfterPage::bringAllBack, this, &Window::askBringAllBack);
-    connect(after_, &AfterPage::letGo, this, &Window::askLetGo);
-    connect(after_, &AfterPage::neverSuggest, this, &Window::neverSuggest);
-    connect(after_, &AfterPage::tryAgain, this, &Window::tryAgain);
-    connect(after_, &AfterPage::openActivity, this, [this] { frame_->choose(Frame::activityKey()); });
 
     // F5 reads again what the tab shows. Coming back to the window reads the
     // state of the two systems again, which is quick; the disk is only looked
@@ -199,7 +134,6 @@ Window::Window(QWidget *parent)
             readState();
         next_->read();
     });
-    connect(refresher_, &Refresher::asked, frame_, &Frame::readAgain);
     auto *again = new QToolButton;
     again->setText(tr("Read again"));
     again->setToolTip(tr("On the disk, Browse and Mess: look at the disk again. On the two systems: ask recab again. (F5)"));
@@ -207,11 +141,7 @@ Window::Window(QWidget *parent)
     connect(again, &QToolButton::clicked, this, &Window::refresh);
     frame_->addStatusWidget(again);
     connect(mess_, &MessPage::rescan, this, &Window::lookAgain);
-    connect(mess_, &MessPage::handOver, this, &Window::showHandOver);
     connect(systems_, &SystemsPage::compare, this, &Window::askCompare);
-    connect(systems_, &SystemsPage::handOver, this, &Window::showExplain);
-    connect(hand_, &HandPage::back, this, [this] { go(handingSystems_ ? static_cast<QWidget *>(systems_) : mess_); });
-    connect(hand_, &HandPage::send, this, &Window::send);
     // Cancel on a Before page leaves everything as it was and shows the page the person came from.
     connect(before_, &BeforePage::cancelled, this, [this] {
         beforeGo_ = nullptr;
@@ -224,20 +154,15 @@ Window::Window(QWidget *parent)
         if (doIt)
             doIt();
     });
-    connect(work_, &WorkPage::back, this, &Window::leaveWork);
-    connect(work_, &WorkPage::activity, this, [this](const QString &words) { frame_->setAgentNote(words); });
-    connect(work_, &WorkPage::done, this, &Window::finished);
 
     recall();
     systems_->showLoading(tr("Reading the two systems"), tr("Asking recab which system is running and what the other one is."));
-    after_->showReading();
     browse_->showLoading(tr("Looking at the disk"), tr("Reading the folders. Nothing is changed."));
     go(disk_);
     scan();
     readState();
     readLayout();
     readEarlier();
-    readHeld();
     next_->read();
 }
 
@@ -248,13 +173,11 @@ Window::~Window()
         scanner_->requestInterruption();
         scanner_->wait();
     }
-    if (heldReader_)
-        heldReader_->wait();
 }
 
 bool Window::busy() const
 {
-    return scanner_ != nullptr || run_ != nullptr || reading_ != nullptr || heldReader_ != nullptr || layoutRun_ != nullptr
+    return scanner_ != nullptr || run_ != nullptr || reading_ != nullptr || layoutRun_ != nullptr
            || recipeRun_ != nullptr;
 }
 
@@ -266,8 +189,6 @@ void Window::refresh()
         return;
     if (stack_->currentWidget() == systems_)
         readState();
-    else if (stack_->currentWidget() == after_)
-        showAfter();
     else
         lookAgain();
 }
@@ -279,7 +200,6 @@ void Window::lookAgain()
     scan();
     readLayout();
     readEarlier();
-    readHeld();
 }
 
 // "Open in Files": the desktop's file manager. DISK_GUI_FILES names a stand-in
@@ -312,10 +232,8 @@ void Window::readStripFrom(const QString &recab)
     next_->read();
 }
 
-bool Window::showingWork() const { return stack_->currentWidget() == work_; }
 bool Window::showingDisk() const { return stack_->currentWidget() == disk_; }
 bool Window::showingBrowse() const { return stack_->currentWidget() == browse_; }
-bool Window::showingAfter() const { return stack_->currentWidget() == after_; }
 bool Window::showingMess() const { return stack_->currentWidget() == mess_; }
 bool Window::showingSystems() const { return stack_->currentWidget() == systems_; }
 bool Window::showingBefore() const { return stack_->currentWidget() == before_; }
@@ -326,15 +244,13 @@ QString Window::entryOf(QWidget *page) const
         return QStringLiteral("disk");
     if (page == browse_)
         return QStringLiteral("browse");
-    if (page == mess_ || page == after_)
+    if (page == mess_)
         return QStringLiteral("mess");
     if (page == systems_)
         return QStringLiteral("systems");
     if (page == before_)
         return beforeEntry_;
-    // A hand-over and the work page: the flow they belong to.
-    const bool ofSystems = page == hand_ ? handingSystems_ : (job_ == Job::Comparing || job_ == Job::Explaining);
-    return ofSystems ? QStringLiteral("systems") : QStringLiteral("mess");
+    return QStringLiteral("disk");
 }
 
 // Shows a page and marks the entry it belongs to.
@@ -382,59 +298,9 @@ void Window::scanned()
     mess_->show(tree_, found_, roots_, spaceAt(home_), home_, never_, now);
     browse_->show(tree_, found_, home_, now);
     frame_->setBadge(QStringLiteral("mess"), int(found_.size()));
-    frame_->setStatus(tr("Looked at the disk at %1 · only “Let it all go” deletes anything from here")
+    frame_->setStatus(tr("Looked at the disk at %1")
                           .arg(QLocale().toString(QTime::currentTime(), QLocale::ShortFormat)));
     drawDisk();
-}
-
-void Window::useAgent(const QString &program)
-{
-    agent_ = program;
-    frame_->setAgent(agent_);
-}
-
-void Window::showHandOver()
-{
-    handingSystems_ = false;
-    holding_ = newHolding(home_);
-    requested_ = mess_->chosen();
-    // The list is read again later; only what was handed over is kept.
-    for (Finding &finding : requested_)
-        finding.node = nullptr;
-    showHandPage();
-}
-
-// The page words itself for the agent the person chose, which only the helper knows
-// (`levitate-agent --settings`, as the Settings page asks it): ask, without holding the
-// window up, and draw when the answer is in.
-void Window::showHandPage()
-{
-    if (choiceRun_)
-        return; // the answer is awaited, and the page is drawn from what is requested then
-    choiceRun_ = new Run(agent_, {"--settings"}, this);
-    connect(choiceRun_, &Run::finished, this, [this](bool ok) {
-        Run *run = choiceRun_;
-        choiceRun_ = nullptr;
-        run->deleteLater();
-        const QJsonObject answer = QJsonDocument::fromJson(run->answer()).object();
-        choice_ = AgentChoice();
-        if (ok && answer.contains("run_commands")) {
-            const QString chosen = answer["agent"].toString();
-            choice_.commandsAllowed = answer["run_commands"].toString() == QLatin1String("allowed");
-            if (chosen == QLatin1String("codex") || chosen == QLatin1String("claude")) {
-                choice_.kind = AgentChoice::Helper;
-                choice_.name = chosen == QLatin1String("codex") ? tr("Codex") : tr("Claude Code");
-            } else {
-                choice_.kind = AgentChoice::Other;
-                choice_.name = QFileInfo(chosen).fileName();
-            }
-        } else {
-            choice_.problem = run->problem();
-        }
-        hand_->show(requested_, scannedBytes(), roots_, holding_, spaceAt(home_).known ? spaceAt(home_).free : -1, home_, choice_);
-        go(hand_);
-    });
-    choiceRun_->start();
 }
 
 QString Window::pickBiggestUnnamed()
@@ -534,11 +400,9 @@ DiskInfo Window::diskInfo() const
     info.apparent = apparent_;
     info.found = found_;
     if (tree_ && !scanner_)
-        info.slices = composition(tree_.get(), found_, home_, heldRead_ ? held_.bytes : 0);
+        info.slices = composition(tree_.get(), found_, home_);
     info.earlierBytes = earlierBytes_;
     info.earlierGenerations = earlierGenerations_;
-    info.heldRead = heldRead_;
-    info.held = held_;
     info.layoutRead = layoutRead_;
     info.layout = layout_;
     info.runningDevice = state_.runningDevice;
@@ -605,263 +469,6 @@ void Window::readEarlier()
     recipeRun_->start();
 }
 
-// ---------------------------------------------------------------- What was set aside
-
-void Window::readHeld()
-{
-    if (heldReader_) {
-        heldAgain_ = true;
-        return;
-    }
-    heldReader_ = new HeldReader(home_, apparent_, this);
-    connect(heldReader_, &QThread::finished, this, [this] {
-        HeldReader *reader = heldReader_;
-        heldReader_ = nullptr;
-        held_ = reader->result;
-        reader->deleteLater();
-        if (heldAgain_) {
-            heldAgain_ = false;
-            readHeld();
-            return;
-        }
-        heldRead_ = true;
-        drawDisk();
-        if (pendingAfter_ || stack_->currentWidget() == after_)
-            drawAfter();
-        pendingAfter_ = false;
-    });
-    heldReader_->start();
-}
-
-void Window::showAfter()
-{
-    pendingAfter_ = true;
-    notes_.clear();
-    after_->showReading();
-    go(after_);
-    readHeld();
-}
-
-// The page as things stand: what was handed over, what the agent said of each
-// place, what is really in the holding folder, and the room measured now.
-void Window::drawAfter()
-{
-    AfterData data;
-    data.ranHere = ranHere_;
-    data.heldBytes = held_.bytes;
-    for (const HeldPlace &place : held_.places)
-        data.heldPlaces += place.present;
-    data.sameDisk = held_.sameDisk;
-    data.freeBefore = freeBefore_;
-    const Space space = spaceAt(home_);
-    data.freeNow = space.known ? space.free : -1;
-    data.unlisted = held_.unlisted;
-    data.notes = notes_;
-    data.problems = held_.problems;
-    data.letGone = letGone_;
-    data.home = home_;
-
-    auto heldFor = [&](const QString &path) -> const HeldPlace * {
-        for (const HeldPlace &place : held_.places)
-            if (place.from == path)
-                return &place;
-        return nullptr;
-    };
-    QSet<QString> listed;
-    if (ranHere_) {
-        for (const Finding &finding : requested_) {
-            listed << finding.path;
-            AfterRow row;
-            row.path = finding.path;
-            row.bytes = finding.bytes;
-            const QJsonObject said = placed_.value(finding.path);
-            const QString reason = said["reason"].toString();
-            const HeldPlace *held = heldFor(finding.path);
-            if (held && held->present) {
-                row.kind = AfterRow::SetAside;
-                row.bytes = held->bytes;
-                if (said["asked"].toBool())
-                    row.words = tr("it asked, you said “%1”").arg(said["answer"].toString());
-            } else if (held) {
-                row.kind = AfterRow::Missing;
-                row.words = held->trouble;
-            } else if (said["result"] == QLatin1String("kept")) {
-                row.kind = AfterRow::Kept;
-                row.words = reason.isEmpty() ? tr("the agent did not say why") : reason;
-                if (said["asked"].toBool())
-                    row.words += tr(". It asked, you said “%1”").arg(said["answer"].toString());
-            } else if (said["result"] == QLatin1String("left")) {
-                row.kind = AfterRow::Left;
-                row.words = reason.isEmpty() ? tr("the agent left it") : reason;
-            } else if (said["result"] == QLatin1String("could-not")) {
-                row.kind = AfterRow::CouldNot;
-                row.words = reason.isEmpty() ? tr("the agent did not say why") : reason;
-            } else if (said["result"] == QLatin1String("set-aside")) {
-                // It was set aside; what became of it is on the disk.
-                if (QFileInfo::exists(finding.path) || QFileInfo(finding.path).isSymLink()) {
-                    row.kind = AfterRow::BroughtBack;
-                } else if (letGone_) {
-                    row.kind = AfterRow::LetGo;
-                } else {
-                    row.kind = AfterRow::Missing;
-                    row.words = tr("the agent said it set this aside");
-                }
-            } else {
-                row.kind = AfterRow::NoWord;
-            }
-            data.rows << row;
-        }
-    }
-    for (const HeldPlace &place : held_.places) {
-        if (listed.contains(place.from))
-            continue;
-        AfterRow row;
-        row.path = place.from;
-        row.bytes = place.bytes;
-        if (!place.present) {
-            row.kind = AfterRow::Missing;
-            row.words = place.trouble;
-        } else if (ranHere_) {
-            row.kind = AfterRow::Unrequested;
-        } else {
-            row.kind = AfterRow::SetAside;
-            const QDateTime when = QDateTime::fromString(place.batch, QStringLiteral("yyyyMMdd-HHmmss"));
-            if (when.isValid())
-                row.words = tr("on %1").arg(QLocale().toString(when, QLocale::ShortFormat));
-        }
-        data.rows << row;
-    }
-    after_->show(data);
-}
-
-void Window::bringBack(const QString &path)
-{
-    notes_.clear();
-    const HeldPlace *found = nullptr;
-    for (const HeldPlace &place : held_.places)
-        if (place.from == path && place.present)
-            found = &place;
-    if (!found) {
-        notes_ << tr("%1 is not in the holding folder, so there is nothing to bring back.").arg(shortPath(path, home_));
-    } else {
-        const Outcome outcome = ::bringBack(home_, zones(), *found);
-        notes_ << (outcome.ok ? tr("%1 is back where it was.").arg(shortPath(path, home_))
-                              : tr("%1 was not brought back: %2.").arg(shortPath(path, home_), outcome.why));
-    }
-    pendingAfter_ = true;
-    readHeld();
-    scan(); // what is in the home folder changed
-}
-
-void Window::bringAllBack()
-{
-    notes_.clear();
-    int back = 0;
-    QStringList refused;
-    for (const HeldPlace &place : held_.places) {
-        if (!place.present)
-            continue;
-        const Outcome outcome = ::bringBack(home_, zones(), place);
-        if (outcome.ok)
-            ++back;
-        else
-            refused << tr("%1 was not brought back: %2.").arg(shortPath(place.from, home_), outcome.why);
-    }
-    notes_ << tr("%1 brought back.").arg(counted(back, tr("%1 place was"), tr("%1 places were"))) << refused;
-    pendingAfter_ = true;
-    readHeld();
-    scan();
-}
-
-// How many places the holding folder really holds now.
-static int placesHeld(const SetAside &held)
-{
-    int places = 0;
-    for (const HeldPlace &place : held.places)
-        places += place.present;
-    return places;
-}
-
-void Window::askLetGo()
-{
-    if (held_.empty())
-        return;
-    const int places = placesHeld(held_);
-    const Space space = spaceAt(home_);
-    BeforePage::Content content;
-    content.title = tr("Let it all go, and free %1?").arg(bytesText(held_.bytes));
-    content.happensTitle = tr("What happens");
-    content.happens << tr("The holding folder %1 is deleted, with everything in it: %2, %3.")
-                           .arg(shortPath(held_.root, home_), counted(places, tr("%1 place"), tr("%1 places")), bytesText(held_.bytes));
-    content.happens << tr("This cannot be undone. Afterwards the places cannot be brought back.");
-    if (held_.sameDisk && space.known)
-        content.happens << tr("The disk then has about %1 free instead of %2.").arg(bytesText(space.free + held_.bytes), bytesText(space.free));
-    else if (!held_.sameDisk)
-        content.happens << tr("The holding folder is not on the disk your home folder is on, so that disk gets no room from this.");
-    content.happens << tr("Nothing outside the holding folder is deleted.");
-    content.foot = tr("If you are not sure, bring places back first.");
-    content.go = tr("Let it all go");
-    openBefore(QStringLiteral("mess"), after_, content, [this] {
-        // The page for what was set aside, while the folder is deleted and read again.
-        after_->showReading();
-        go(after_);
-        letGoNow();
-    });
-}
-
-void Window::askBringAllBack()
-{
-    if (held_.empty())
-        return;
-    const int places = placesHeld(held_);
-    BeforePage::Content content;
-    content.title = tr("Bring everything back?");
-    content.happensTitle = tr("What happens");
-    content.happens << tr("%1, %2, are moved out of the holding folder to where they were.")
-                           .arg(counted(places, tr("%1 place"), tr("%1 places")), bytesText(held_.bytes));
-    content.happens << tr("Nothing is deleted. A place is not brought back when something is at its old place now: it stays in the "
-                          "holding folder, and the page says which and why.");
-    if (held_.sameDisk)
-        content.happens << tr("The room on the disk does not change: the places are on the same disk either way.");
-    content.foot = tr("What is not brought back can still be let go later.");
-    content.go = tr("Bring everything back");
-    openBefore(QStringLiteral("mess"), after_, content, [this] {
-        after_->showReading();
-        go(after_);
-        bringAllBack();
-    });
-}
-
-void Window::letGoNow()
-{
-    const qint64 before = spaceAt(home_).free;
-    const Outcome outcome = ::letGo(home_, apparent_);
-    notes_.clear();
-    const Space after = spaceAt(home_);
-    if (outcome.ok) {
-        letGone_ = true;
-        notes_ << tr("Let go: %1 was deleted from the holding folder. The disk reports %2 free now; it was %3 a moment ago.")
-                      .arg(bytesText(outcome.bytes), bytesText(after.free), bytesText(before));
-    } else {
-        notes_ << tr("Not everything was let go: %1. %2 was deleted.").arg(outcome.why, bytesText(outcome.bytes));
-    }
-    pendingAfter_ = true;
-    readHeld();
-    scan();
-}
-
-void Window::tryAgain(const QString &path)
-{
-    for (const Finding &finding : requested_)
-        if (finding.path == path) {
-            handingSystems_ = false;
-            holding_ = newHolding(home_);
-            requested_ = {finding};
-            showHandPage();
-            return;
-        }
-}
-
 // ---------------------------------------------------------------- The two systems
 
 void Window::showSystems()
@@ -888,7 +495,7 @@ void Window::readState()
         refresher_->fresh();
         drawDisk(); // which partitions are the two systems comes from here
         // A page that is being worked on is left alone.
-        if (job_ == Job::None && stack_->currentWidget() != hand_)
+        if (job_ == Job::None)
             drawSystems();
     });
     reading_->start();
@@ -905,7 +512,7 @@ bool Window::stale() const
 void Window::drawSystems(const QString &why)
 {
     if (compared_ && why.isEmpty())
-        systems_->show(comparison_, said_, comparedWhen_, stale());
+        systems_->show(comparison_, comparedWhen_, stale());
     else
         systems_->showState(state_, why);
 }
@@ -953,11 +560,9 @@ void Window::compare()
                                  : new Run(rootHelper_, QStringList{recab_} + arguments, this);
     job_ = Job::Comparing;
     stopped_ = false;
-    said_.clear();
     // It stays on the tab: the two sides fill as they are read.
     systems_->showComparing(state_);
     go(systems_);
-    frame_->setAgentNote(tr("Comparing the two systems"));
     connect(run_, &Run::event, systems_, &SystemsPage::progress);
     connect(run_, &Run::finished, this, &Window::compared);
     run_->start();
@@ -977,7 +582,6 @@ void Window::compared(bool ok)
     run_ = nullptr;
     job_ = Job::None;
     run->deleteLater();
-    frame_->setAgentNote(QString());
     QString why;
     if (stopped_) {
         // Nothing to say: the person stopped it.
@@ -1029,166 +633,4 @@ void Window::recall()
     comparedAnswer_ = kept["answer"].toObject();
     comparedWhen_ = QDateTime::fromSecsSinceEpoch(kept["when"].toInteger());
     comparedKey_ = kept["state"].toString();
-}
-
-void Window::showExplain()
-{
-    if (!compared_)
-        return;
-    handingSystems_ = true;
-    HandPage::Ask ask;
-    ask.title = tr("Ask the agent what differs?");
-    ask.happens << tr("The agent is given the %1 between %2 and %3, as the issue, the facts and the expected result below.")
-                       .arg(counted(comparison_.count(), tr("%1 difference"), tr("%1 differences")), comparison_.running.slot,
-                            comparison_.other.slot);
-    ask.happens << tr("It is asked to say what the differences are, and told to change nothing on either system.");
-    ask.happens << tr("It works as you, so it reads only what you can read, unless you approve a command as administrator.");
-    ask.happens << tr("What it answers is shown on the page for the two systems.");
-    ask.issue = comparison_.issue();
-    ask.facts = comparison_.facts();
-    ask.expected = comparison_.expected();
-    ask.go = tr("Ask the agent");
-    hand_->show(ask);
-    go(hand_);
-}
-
-bool Window::agentAsks() const
-{
-    return run_ && stack_->currentWidget() == work_ && work_->asking();
-}
-
-void Window::answerAgent(const QString &words)
-{
-    work_->answer(words);
-}
-
-// ---------------------------------------------------------------- The agent
-
-void Window::sendShown()
-{
-    send(hand_->prompt());
-}
-
-void Window::send(const QString &prompt)
-{
-    if (run_)
-        return;
-    run_ = new Run(agent_, {}, this);
-    // Its questions are answered on the same input; Activity lists the run
-    // under what was asked.
-    run_->setPrompt(prompt, QStringLiteral("Recdirstat"), requestTitle(prompt));
-    // The places the person approved, and where they are moved to: the helper moves
-    // what the agent names from this list; the agent only decides. (The shared Run
-    // has no extra fields for a request, so its input line is written here.)
-    if (!handingSystems_ && !requested_.isEmpty() && !holding_.isEmpty()) {
-        QJsonArray places, askFirst;
-        for (const Finding &finding : std::as_const(requested_)) {
-            places << finding.path;
-            if (!finding.sure)
-                askFirst << finding.path;
-        }
-        const QJsonObject line{{"prompt", prompt},
-                               {"app", QStringLiteral("Recdirstat")},
-                               {"title", requestTitle(prompt)},
-                               {"set_aside", QJsonObject{{"holding", holding_}, {"places", places}, {"ask_first", askFirst}}}};
-        run_->setInput(QJsonDocument(line).toJson(QJsonDocument::Compact) + '\n');
-    }
-    if (handingSystems_) {
-        job_ = Job::Explaining;
-        said_.clear();
-        // What the agent answers is the result; keep it for the page.
-        connect(run_, &Run::event, this, [this](const QJsonObject &event) {
-            if (event["event"] == QLatin1String("agent"))
-                said_ += (said_.isEmpty() ? QString() : QStringLiteral("\n")) + event["summary"].toString();
-        });
-        work_->begin(tr("The agent is looking into the differences"), tr("It is given recab's list of the differences, and told to change nothing."),
-                     run_, tr("Nothing is changed either way"));
-    } else {
-        job_ = Job::Clearing;
-        // What the agent says of each place, kept for the page after it.
-        placed_.clear();
-        notes_.clear();
-        ranHere_ = true;
-        letGone_ = false;
-        const Space space = spaceAt(home_);
-        freeBefore_ = space.known ? space.free : -1;
-        connect(run_, &Run::event, this, [this](const QJsonObject &event) {
-            if (event["event"] != QLatin1String("place"))
-                return;
-            // The helper says outcome and why; a program speaking the protocol itself may say result and reason.
-            QJsonObject said = event;
-            if (!said.contains("result"))
-                said["result"] = event["outcome"];
-            if (!said.contains("reason"))
-                said["reason"] = event["why"];
-            placed_.insert(event["path"].toString(), said);
-        });
-        work_->begin(tr("The agent is setting the mess aside"),
-                     choice_.kind == AgentChoice::Other
-                         ? tr("%1 moves the places itself and Recdirstat shows what it reports; what was set aside is read back from the holding folder.")
-                               .arg(choice_.name)
-                         : tr("The agent decides, and the helper moves only what is on the list into the holding folder. Anything marked "
-                              "to ask first is asked about before it is moved."),
-                     run_,
-                     tr("What was set aside so far stays set aside; the next page shows it"));
-    }
-    go(work_);
-    run_->start();
-    frame_->setOwnRun(run_);
-}
-
-void Window::finished(bool ok)
-{
-    const Job job = job_;
-    run_ = nullptr;
-    frame_->setOwnRun(QString()); // Activity reads the run's record again
-    next_->read();        // the agent may have changed the next system
-    job_ = Job::None;
-    if (!ok) {
-        // A failure stays on the work page, which says why and offers the way
-        // back. A run the person stopped has nothing more to say.
-        if (work_->stopped()) {
-            job_ = job;
-            leaveWork();
-        } else {
-            job_ = job; // for the way back
-        }
-        return;
-    }
-    switch (job) {
-    case Job::Clearing:
-        scan(); // see what the disk looks like now, not what the agent says
-        pendingAfter_ = true;
-        after_->showReading();
-        go(after_);
-        readHeld();
-        break;
-    case Job::Comparing:
-        break; // has its own end, on the systems page
-    case Job::Explaining:
-        if (said_.isEmpty())
-            said_ = tr("The agent finished without saying anything.");
-        drawSystems();
-        go(systems_);
-        break;
-    case Job::None:
-        break;
-    }
-}
-
-// The way back from work that stopped or failed.
-void Window::leaveWork()
-{
-    const Job job = job_;
-    job_ = Job::None;
-    if (job == Job::Clearing) {
-        scan(); // part of it may have been set aside
-        pendingAfter_ = true;
-        after_->showReading();
-        go(after_);
-        readHeld();
-    } else {
-        drawSystems();
-        go(systems_);
-    }
 }

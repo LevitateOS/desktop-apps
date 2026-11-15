@@ -43,9 +43,6 @@ public:
     // Each change names the place it is made in (see model.h, `Place`).
     Run *install(const QString &name, Place place);
     Run *update(const QString &name, Place place);
-    // The same install with Recipe's agent repair on, and the prompt (issue,
-    // facts, expected result) handed to it. `recipe update` has no repair.
-    Run *fixWithAgent(const QString &name, const QString &prompt, Place place);
     Run *remove(const QString &name, Place place);
     // Activates the newest earlier version a store still holds; no recipe
     // runs. Only where a store stands behind the software.
@@ -65,15 +62,6 @@ public:
     Run *addSource(const QString &addressOrFolder);
     Run *removeSource(const QString &name);
 
-    // The agent, asked to write a recipe: the prompt on its input as one JSON
-    // line, its questions answered on the same input. `title` is what the
-    // Activity page lists the run under. `mayWrite` names the folders the
-    // agent may write in although its commands are asked each time: the
-    // person's own recipe folder, for the recipe it writes.
-    Run *agent(const QString &prompt, const QString &title, const QStringList &mayWrite = QStringList());
-    // The program the window starts as its agent; the frame shows it.
-    QString agentProgram() const { return agent_; }
-
 private:
     using Answered = std::function<void(const QJsonObject &answer, const QString &problem)>;
     void query(const QStringList &arguments, Answered then);
@@ -87,7 +75,7 @@ private:
     // The store whose sources are listed and fetched: the computer's.
     QStringList store() const;
     bool locked() const;
-    QString program_, rootHelper_, recipesPath_, packageRoot_, systemRoot_, agent_;
+    QString program_, rootHelper_, recipesPath_, packageRoot_, systemRoot_;
     bool explicit_ = false;
     int loading_ = 0;
 };

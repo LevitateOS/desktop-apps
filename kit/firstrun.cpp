@@ -3,13 +3,9 @@
 #include "help.h"
 #include "look.h"
 #include "parts.h"
-#include "run.h"
 
 #include <QAbstractButton>
-#include <QFileInfo>
 #include <QHBoxLayout>
-#include <QJsonArray>
-#include <QJsonDocument>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -21,12 +17,6 @@ QString keyOf(Frame::App app)
 {
     return app == Frame::Recipe ? QStringLiteral("recipe") : app == Frame::Recab ? QStringLiteral("system")
                                                                                  : QStringLiteral("disk");
-}
-
-// The same test as Settings and Activity use for the helper.
-QString helper()
-{
-    return qEnvironmentVariable("LEVITATE_ACTIVITY_AGENT", "levitate-agent");
 }
 
 bool onPage(const QWidget *widget, const QWidget *page)
@@ -61,39 +51,6 @@ FirstRunPage::FirstRunPage(Frame::App app, QWidget *parent)
     , app_(app)
 {
     draw();
-}
-
-void FirstRunPage::read()
-{
-    if (asking_)
-        return;
-    agent_ = Asking;
-    draw();
-    asking_ = new Run(helper(), {"--status"}, this);
-    connect(asking_, &Run::finished, this, [this](bool ok) {
-        Run *run = asking_;
-        asking_ = nullptr;
-        run->deleteLater();
-        const QJsonObject answer = QJsonDocument::fromJson(run->answer()).object();
-        if (!ok || !answer.contains("agents")) {
-            agent_ = CouldNotAsk;
-            problem_ = run->problem();
-            draw();
-            return;
-        }
-        QJsonObject chosen;
-        for (const QJsonValue &agent : answer["agents"].toArray())
-            if (agent["id"].toString() == answer["chosen"].toString())
-                chosen = agent.toObject();
-        agentName_ = chosen["name"].toString(answer["chosen"].toString());
-        const QJsonValue signedIn = chosen["signed_in"];
-        agent_ = !chosen["installed"].toBool() ? NotInstalled
-                 : !signedIn.isBool()           ? SignInUnknown
-                 : signedIn.toBool()            ? Ready
-                                                : NotSignedIn;
-        draw();
-    });
-    asking_->start();
 }
 
 void FirstRunPage::draw()
@@ -147,52 +104,6 @@ void FirstRunPage::draw()
             inside->addWidget(text(idea.first, true));
         }
         lines->addWidget(panel);
-    }
-
-    // ---- Is an agent ready
-    {
-        QLabel *head = strong(tr("The agent"));
-        QFont font = head->font();
-        font.setPointSizeF(font.pointSizeF() * 1.2);
-        head->setFont(font);
-        lines->addWidget(head);
-        const bool ready = agent_ == Ready;
-        auto *card = new Card(ready ? Card::Ready : agent_ == Asking ? Card::Plain : Card::Open);
-        QVBoxLayout *inside = card->column();
-        inside->setSpacing(4);
-        QString said, more;
-        switch (agent_) {
-        case Asking:
-            said = tr("Asking the agent…");
-            break;
-        case Ready:
-            said = tr("An agent is ready: %1 is installed and signed in.").arg(agentName_);
-            break;
-        case NotSignedIn:
-            said = tr("No agent is ready yet: %1 is installed, but not signed in.").arg(agentName_);
-            break;
-        case NotInstalled:
-            said = tr("No agent is ready yet: %1 is not installed.").arg(agentName_);
-            break;
-        case SignInUnknown:
-            said = tr("%1 is installed. Whether it is signed in could not be asked.").arg(agentName_);
-            break;
-        case CouldNotAsk:
-            said = tr("The agent could not be asked.");
-            more = problem_;
-            break;
-        }
-        inside->addWidget(strong(said));
-        if (!more.isEmpty())
-            inside->addWidget(dim(text(more, true)));
-        if (agent_ == NotSignedIn || agent_ == NotInstalled || agent_ == CouldNotAsk) {
-            inside->addWidget(text(tr("You can use %1 now. The agent is needed only when you hand it something.").arg(t.name),
-                                   true));
-            ClickLabel *go = linkLabel(agent_ == NotSignedIn ? tr("Sign in in Settings") : tr("Choose an agent in Settings"));
-            connect(go, &ClickLabel::clicked, this, &FirstRunPage::openSettings);
-            inside->addWidget(go, 0, Qt::AlignLeft);
-        }
-        lines->addWidget(card);
     }
 
     // ---- On: outside the scrolled part, so the one button is always in view.

@@ -15,8 +15,6 @@ qt_add_executable(disk-gui
     src/pages.cpp
     src/disk.cpp
     src/browse.cpp
-    src/after.cpp
-    src/setaside.cpp
     src/rules.cpp
     src/systems.cpp
     src/window.cpp
@@ -30,13 +28,11 @@ qt_add_executable(disk-gui
     ../kit/work.cpp
     ../kit/before.cpp
     ../kit/frame.cpp
-    ../kit/activity.cpp
-    ../kit/settings.cpp
+    ../kit/windowsize.cpp
     ../kit/help.cpp
     ../kit/firstrun.cpp
     ../kit/helpstory.cpp
     ../kit/nextsystem.cpp
-    ../kit/livestory.cpp
 )
 target_include_directories(disk-gui PRIVATE ../kit)
 target_compile_options(disk-gui PRIVATE -Wall -Wextra)

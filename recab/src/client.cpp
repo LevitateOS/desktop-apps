@@ -1,14 +1,12 @@
 #include "client.h"
 
 #include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
 
 RecabClient::RecabClient(QObject *parent)
     : QObject(parent)
     , program_(qEnvironmentVariable("RECAB_GUI_RECAB", "recab"))
     , rootHelper_(qEnvironmentVariable("RECAB_GUI_ROOT_HELPER", "pkexec"))
-    , agent_(qEnvironmentVariable("RECAB_GUI_AGENT", "levitate-agent"))
     , reboot_(qEnvironmentVariable("RECAB_GUI_REBOOT", "reboot"))
     , osRelease_(qEnvironmentVariable("RECAB_GUI_OS_RELEASE", "/etc/os-release"))
 {
@@ -143,13 +141,6 @@ Run *RecabClient::change(const QStringList &arguments)
     return new Run(rootHelper_, QStringList{program_} + all, this);
 }
 
-Run *RecabClient::agent(const QString &prompt, const QString &title)
-{
-    auto *run = new Run(agent_, {}, this);
-    run->setPrompt(prompt, QStringLiteral("Recab"), title);
-    return run;
-}
-
 Run *RecabClient::reboot()
 {
     if (rootHelper_.isEmpty())
@@ -178,9 +169,4 @@ QString RecabClient::commandWords(const QStringList &arguments) const
             break;
     }
     return QStringLiteral("recab ") + words.join(QLatin1Char(' '));
-}
-
-QString RecabClient::agentName() const
-{
-    return QFileInfo(agent_).fileName();
 }

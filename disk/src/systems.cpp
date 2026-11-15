@@ -28,7 +28,7 @@ namespace {
 struct ChangeKind {
     QString words;  // in a table cell
     QString brief;  // under the bar
-    QString inFact; // in a sentence to the agent
+    QString inFact; // in the text that is copied
     QColor colour;
 };
 
@@ -427,10 +427,9 @@ QStringList Comparison::facts() const
     return facts;
 }
 
-QString Comparison::expected() const
+QString Comparison::copyText() const
 {
-    return QObject::tr("I am told what these differences are: which change each belongs to, and whether anything "
-                       "differs that no change explains. Nothing is changed on either system.");
+    return QObject::tr("%1\n\nThe facts:\n- %2\n").arg(issue(), facts().join(QStringLiteral("\n- ")));
 }
 
 // ---------------------------------------------------------------- The page
@@ -587,6 +586,7 @@ void SystemsPage::showState(const SystemsState &state, const QString &why)
     if (!state.known) {
         column->addWidget(heading(tr("The two systems could not be read")));
         column->addWidget(text(state.problem, true));
+        column->addWidget(copyForAgentButton([problem = state.problem] { return problem; }), 0, Qt::AlignLeft);
         auto *again = new QPushButton(tr("Try again"));
         again->setDefault(true);
         connect(again, &QPushButton::clicked, this, &SystemsPage::readAgain);
@@ -612,6 +612,7 @@ void SystemsPage::showState(const SystemsState &state, const QString &why)
         auto *verdict = new Verdict;
         verdict->column()->addWidget(strong(tr("They could not be compared")));
         verdict->column()->addWidget(text(why, true));
+        verdict->column()->addWidget(copyForAgentButton([why] { return why; }), 0, Qt::AlignLeft);
         column->addWidget(verdict);
     }
     SideFrame *frames[2];
@@ -684,7 +685,7 @@ void SystemsPage::progress(const QJsonObject &event)
     }
 }
 
-void SystemsPage::show(const Comparison &c, const QString &said, const QDateTime &when, bool stale)
+void SystemsPage::show(const Comparison &c, const QDateTime &when, bool stale)
 {
     QVBoxLayout *column = fresh();
     forget();
@@ -803,13 +804,6 @@ void SystemsPage::show(const Comparison &c, const QString &said, const QDateTime
         delete explain;
     }
 
-    if (!said.isEmpty()) {
-        auto *panel = new Panel;
-        panel->column()->addWidget(strong(tr("What the agent says")));
-        panel->column()->addWidget(text(said, true));
-        body->addWidget(panel);
-    }
-
     list_ = nullptr;
     if (!c.identical()) {
         auto *list = list_ = new QTreeWidget;
@@ -872,10 +866,7 @@ void SystemsPage::show(const Comparison &c, const QString &said, const QDateTime
     notes << tr("Nothing was changed.");
     foot->addWidget(dim(text(notes.join(QLatin1Char(' ')), true)), 1);
     if (!c.identical()) {
-        auto *hand = new QPushButton(tr("Ask the agent what differs…"));
-        hand->setDefault(said.isEmpty() && !stale);
-        connect(hand, &QPushButton::clicked, this, &SystemsPage::handOver);
-        foot->addWidget(hand);
+        foot->addWidget(copyForAgentButton([c] { return c.copyText(); }));
     }
     body->addLayout(foot);
 }

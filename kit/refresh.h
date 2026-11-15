@@ -1,6 +1,6 @@
 // When a window should read its state again: when the person asks for it
 // (F5 or Ctrl+R), and when they come back to the window after a while, since
-// an agent or a terminal may have changed things in the meantime.
+// a terminal may have changed things in the meantime.
 #pragma once
 
 #include <QElapsedTimer>

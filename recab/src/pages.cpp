@@ -28,6 +28,43 @@ namespace {
 QPushButton *push(QHBoxLayout *row, const QString &words, const ActionVerdict &verdict, bool main = false,
                   QStringList *why = nullptr);
 
+// What went wrong and what is known, as a panel; and the same as plain text for
+// "Copy for agent".
+Panel *factsPanel(const QString &issue, const QStringList &facts)
+{
+    auto *panel = new Panel;
+    panel->column()->setSpacing(8);
+    panel->column()->addWidget(strong(QObject::tr("What happened")));
+    panel->column()->addWidget(text(issue, true));
+    panel->column()->addWidget(strong(QObject::tr("What is known")));
+    panel->column()->addWidget(text(QStringLiteral("• ") + facts.join(QStringLiteral("\n• ")), true));
+    return panel;
+}
+
+QString failedStartIssue(const Status &s)
+{
+    return QObject::tr("The next system stopped during start-up on %1 and the computer fell back to %2.")
+        .arg(s.trialWhen, s.name(s.runningRelease));
+}
+
+QStringList failedStartFacts(const Status &s)
+{
+    QStringList facts;
+    facts << (s.trialLogLines ? QObject::tr("What failed: %1; its log, %2 lines").arg(s.trialDetail).arg(s.trialLogLines)
+                              : QObject::tr("What failed: %1").arg(s.trialDetail));
+    QStringList differs = s.changeTitles();
+    if (s.otherRelease != s.runningRelease)
+        differs.prepend(QObject::tr("the update to %1").arg(s.otherRelease));
+    facts << QObject::tr("The next system differs from the running one by: %1").arg(differs.join(QObject::tr("; ")));
+    facts << QObject::tr("The running system starts on the same computer");
+    return facts;
+}
+
+QString forAgentText(const QString &issue, const QStringList &facts)
+{
+    return QObject::tr("The issue:\n%1\n\nThe facts:\n- %2\n").arg(issue, facts.join(QStringLiteral("\n- ")));
+}
+
 QPushButton *primary(const QString &words)
 {
     auto *button = new QPushButton(words);
@@ -296,29 +333,18 @@ void SystemPage::show(const Status &s)
         column->addLayout(top);
     }
 
-    // The failed start is about one thing: handing it to the agent.
+    // The failed start is about one thing: what failed, to copy for an agent.
     if (s.state == QLatin1String("failed")) {
-        QStringList facts;
-        facts << (s.trialLogLines ? tr("What failed: %1; its log, %2 lines").arg(s.trialDetail).arg(s.trialLogLines)
-                                  : tr("What failed: %1").arg(s.trialDetail));
-        QStringList differs = titles;
-        if (s.otherRelease != s.runningRelease)
-            differs.prepend(tr("the update to %1").arg(s.otherRelease));
-        facts << tr("The next system differs from the running one by: %1").arg(differs.join(tr("; ")));
-        facts << tr("The running system starts on the same computer");
-        auto *prompt = new PromptPanel(
-            tr("The next system stopped during start-up on %1 and the computer fell back to %2.").arg(s.trialWhen, running),
-            facts,
-            tr("The next system starts to the login screen with every change in it working. If one of them cannot "
-               "work, say which and leave it out."));
+        const QStringList facts = failedStartFacts(s);
+        const QString issue = failedStartIssue(s);
+        auto *prompt = factsPanel(issue, facts);
         auto *buttons = new QHBoxLayout;
         auto *again = new QPushButton(tr("Try the same again"));
         again->setEnabled(s.can("restart").ready);
         if (!s.can("restart").ready)
             again->setToolTip(s.can("restart").reason);
-        auto *fixNow = primary(tr("Let the agent fix it"));
+        auto *fixNow = copyForAgentButton([issue, facts] { return forAgentText(issue, facts); });
         connect(again, &QPushButton::clicked, this, &SystemPage::retry);
-        connect(fixNow, &QPushButton::clicked, this, [this, prompt] { emit fix(prompt->prompt()); });
         buttons->addWidget(again);
         // recab keeps no preparation for the failed system: it offers to replace it, with its own words.
         const QJsonObject replace = s.operationObject(QStringLiteral("replace_failed"));
@@ -407,9 +433,9 @@ void SystemPage::show(const Status &s)
     if (s.state == QLatin1String("working")) {
         // The row is shown as the mock-up has it: off, with why. recab runs one
         // command at a time on the next system.
-        act(list, tr("Change, finish, reset"), QString(), tr("Make a change…"),
-            ActionVerdict{false, tr("Not while this runs: two recab commands never work on the next system at once. "
-                                    "They come back when it has ended.")});
+        list->addWidget(dim(text(tr("Nothing can be started while this runs: two recab commands never work on the next "
+                                    "system at once. The choices come back when it has ended."),
+                                 true)));
     } else if (s.state == QLatin1String("on_trial")) {
         toNext = false;
         connect(act(list, tr("Keep this system"),
@@ -443,7 +469,7 @@ void SystemPage::show(const Status &s)
                                      tr("recab stopped at %1 thing. Open it to see what it is and what recab offers."),
                                      tr("recab stopped at %1 things. Open them to see what they are and what recab "
                                         "offers."))
-                           : tr("%1 was changed by you and by the update. An agent can settle it, or you decide.")
+                           : tr("%1 was changed by you and by the update. You decide.")
                                  .arg(s.clashes.first().path),
                     tr("Settle…"), ActionVerdict{true, QString()}, true),
                 &QPushButton::clicked, this, &SystemPage::settle);
@@ -459,11 +485,9 @@ void SystemPage::show(const Status &s)
                     &QPushButton::clicked, this, &SystemPage::openRelease);
     } else {
         toNext = false;
-        connect(act(list, tr("Change the system"),
-                    tr("Say what you want. An agent makes the change in the next system, beside the running one."),
-                    tr("Make a change…"), s.can("change"), true),
-                &QPushButton::clicked, this, &SystemPage::ask);
-        if (!updateName.isEmpty())
+        if (updateName.isEmpty())
+            list->addWidget(dim(text(tr("Nothing is waiting."), true)));
+        else
             connect(act(list, tr("A newer release is available: %1").arg(updateName),
                         tr("It goes into the next system like any other change. See what recab says about it first."),
                         tr("See it…"), ActionVerdict{true, QString()}),
@@ -495,76 +519,12 @@ void SystemPage::show(const Status &s)
     column->addStretch();
 }
 
-// ---------------------------------------------------------------- Ask
-
-void AskPage::show(const Status &s, const QString &request)
-{
-    QVBoxLayout *column = fresh();
-    auto *backLink = new ClickLabel(tr("‹ Back"));
-    dim(backLink);
-    connect(backLink, &ClickLabel::clicked, this, &AskPage::back);
-    column->addWidget(backLink, 0, Qt::AlignLeft);
-
-    auto *top = new QVBoxLayout;
-    top->setSpacing(1);
-    top->addWidget(heading(tr("What do you want to change?")));
-    top->addWidget(dim(text(tr("Say it in your own words. An agent works out how and makes the change in the next "
-                               "system. The running system is not touched."),
-                            true)));
-    column->addLayout(top);
-
-    auto *wish = new QPlainTextEdit(request);
-    wish->setAccessibleName(tr("The change you want"));
-    wish->setPlaceholderText(tr("For example: my graphics card is an NVIDIA RTX 4070 and I want NVIDIA's own driver."));
-    wish->setFixedHeight(74);
-    column->addWidget(wish);
-
-    QStringList facts{tr("The running system: %1").arg(s.name(s.runningRelease))};
-    if (s.otherRole == QLatin1String("next"))
-        facts << (s.changes.isEmpty() ? tr("The next system exists and holds no changes yet")
-                                      : tr("The next system already holds: %1").arg(s.changeTitles().join(tr("; "))));
-    else
-        facts << tr("The next system does not exist yet; it starts as a copy of the running one");
-    if (!s.updateRelease.isEmpty())
-        facts << tr("A newer release is available and not added: %1").arg(s.name(s.updateRelease));
-    if (s.real) {
-        // What this recab offers for it, so the agent need not guess.
-        facts << tr("The next system is made with `recab prepare`, changed with `recab change install|update|remove "
-                    "RECIPE` and `recab edit PATH`, and closed with `recab finalize`; `recab status --json` says "
-                    "where things stand");
-        facts << tr("Every recab command that changes something takes `--actor agent`, so the list of changes "
-                    "says who made each one");
-        if (!s.preparationId.isEmpty())
-            facts << tr("The open preparation is %1, revision %2").arg(s.preparationId).arg(s.preparationRevision);
-        facts << tr("This system runs from slot %1; the other is slot %2").arg(s.runningSlot, s.otherSlot);
-    }
-    auto *prompt = new PromptPanel(
-        tr("The person asks for the change written above."), facts,
-        tr("After a restart the change is in effect and the system starts as before. Nothing else changes."));
-    column->addWidget(prompt);
-    column->addStretch();
-
-    auto *buttons = new QHBoxLayout;
-    auto *cancel = new QPushButton(tr("Cancel"));
-    auto *hand = primary(tr("Hand it to the agent"));
-    connect(cancel, &QPushButton::clicked, this, &AskPage::back);
-    connect(hand, &QPushButton::clicked, this, [this, wish, prompt] {
-        const QString words = wish->toPlainText().trimmed();
-        if (!words.isEmpty())
-            emit handOver(tr("The request:\n%1\n\n%2").arg(words, prompt->prompt()));
-    });
-    buttons->addStretch();
-    buttons->addWidget(cancel);
-    buttons->addWidget(hand);
-    column->addLayout(buttons);
-}
-
 // ---------------------------------------------------------------- A clash
 
 namespace {
 
 // recab's command for one of its operations as a person would read it, for the
-// facts handed to the agent: its arguments as it gave them, then what it still
+// facts of a failure: its arguments as it gave them, then what it still
 // takes. `positional` fills the input that has no flag.
 QString commandOf(const QJsonObject &op, const QString &positional = QString())
 {
@@ -679,7 +639,7 @@ void ClashPage::showMerge(const Status &s)
     else
         delete offers;
 
-    // What the agent can settle: a side chosen for a file or directory, a package reproduced.
+    // What can be settled: a side chosen for a file or directory, a package reproduced.
     QStringList facts;
     QList<MergeConflict> work;
     bool byHandPossible = false;
@@ -703,19 +663,16 @@ void ClashPage::showMerge(const Status &s)
     if (!work.isEmpty()) {
         facts << tr("The release being added is %1; the running system's release is %2.")
                      .arg(release.isEmpty() ? tr("the one recab selected") : release, running);
-        auto *prompt = new PromptPanel(
+        const QString issue =
             counted(work.size(),
                     tr("Adding %2 to the next system stopped, and recab cannot decide %1 thing for the person."),
                     tr("Adding %2 to the next system stopped, and recab cannot decide %1 things for the person."))
-                .arg(release.isEmpty() ? tr("the release") : release),
-            facts,
-            tr("Every item above is settled. What I changed stays as I set it; the release's own changes are kept "
-               "where they do not undo that. Nothing else in the next system changes."));
+                .arg(release.isEmpty() ? tr("the release") : release);
+        auto *prompt = factsPanel(issue, facts);
         auto *hand = new QPushButton(tr("Decide by hand…"));
         hand->setEnabled(byHandPossible);
-        auto *fixNow = primary(tr("Let the agent fix it"));
+        auto *fixNow = copyForAgentButton([issue, facts] { return forAgentText(issue, facts); });
         connect(hand, &QPushButton::clicked, this, &ClashPage::byHand);
-        connect(fixNow, &QPushButton::clicked, this, [this, prompt] { emit fix(prompt->prompt()); });
         buttons->addWidget(hand);
         buttons->addStretch();
         buttons->addWidget(wait);
@@ -759,22 +716,19 @@ void ClashPage::show(const Status &s)
         true));
     column->addWidget(verdict);
 
-    auto *prompt = new PromptPanel(
-        tr("The update and a local change both altered %1. The next system cannot be finished until there is one "
-           "result.")
-            .arg(clash.path),
-        {tr("In the next system now: %1").arg(clash.local), tr("From the update: %1").arg(clash.release),
-         tr("The file as %1 shipped it").arg(s.name(s.runningRelease))},
-        tr("One %1 that the program reading it accepts. What I changed stays as I set it. The update's own changes are "
-           "kept where they do not undo that.")
-            .arg(clash.path));
+    const QString issue = tr("The update and a local change both altered %1. The next system cannot be finished until "
+                             "there is one result.")
+                              .arg(clash.path);
+    const QStringList clashFacts{tr("In the next system now: %1").arg(clash.local),
+                                 tr("From the update: %1").arg(clash.release),
+                                 tr("The file as %1 shipped it").arg(s.name(s.runningRelease))};
+    auto *prompt = factsPanel(issue, clashFacts);
     auto *buttons = new QHBoxLayout;
     auto *hand = new QPushButton(tr("Decide by hand…"));
     auto *wait = new QPushButton(tr("Later"));
-    auto *fixNow = primary(tr("Let the agent fix it"));
+    auto *fixNow = copyForAgentButton([issue, clashFacts] { return forAgentText(issue, clashFacts); });
     connect(hand, &QPushButton::clicked, this, &ClashPage::byHand);
     connect(wait, &QPushButton::clicked, this, &ClashPage::later);
-    connect(fixNow, &QPushButton::clicked, this, [this, prompt] { emit fix(prompt->prompt()); });
     buttons->addWidget(hand);
     buttons->addStretch();
     buttons->addWidget(wait);
@@ -783,62 +737,6 @@ void ClashPage::show(const Status &s)
     column->addWidget(prompt);
     column->addStretch();
 }
-
-// ---------------------------------------------------------------- What the agent did
-
-void ProposedPage::show(const Status &s)
-{
-    QVBoxLayout *column = fresh();
-    auto *top = new QVBoxLayout;
-    top->setSpacing(1);
-    top->addWidget(heading(tr("The agent resolved the clash")));
-    top->addWidget(dim(text(
-        tr("Its result is in the next system, not in the running one. Nothing is final until you finish and restart."),
-        true)));
-    column->addLayout(top);
-
-    auto *did = new Panel;
-    did->column()->addWidget(strong(tr("What it did")));
-    did->column()->addWidget(text(s.proposalSummary, true));
-    if (!s.proposalScope.isEmpty())
-        did->column()->addWidget(dim(text(s.proposalScope, true)));
-    column->addWidget(did);
-
-    auto *against = new Panel;
-    against->column()->addWidget(strong(tr("Against what you expected")));
-    auto *form = new QFormLayout;
-    form->setHorizontalSpacing(24);
-    form->setVerticalSpacing(7);
-    for (const Check &check : s.checks) {
-        QString words;
-        if (check.verdict == QLatin1String("yes"))
-            words = check.note.isEmpty() ? tr("Yes") : tr("Yes: %1").arg(check.note);
-        else if (check.verdict == QLatin1String("no"))
-            words = check.note.isEmpty() ? tr("No") : tr("No: %1").arg(check.note);
-        else
-            words = check.note.isEmpty() ? tr("Not known") : tr("Not known: %1").arg(check.note);
-        QLabel *value = check.verdict == QLatin1String("yes") ? strong(words) : dim(text(words));
-        form->addRow(text(check.expected), value);
-    }
-    against->column()->addLayout(form);
-    column->addWidget(against);
-    column->addStretch();
-
-    auto *buttons = new QHBoxLayout;
-    auto *again = new QPushButton(tr("Ask again…"));
-    auto *hand = new QPushButton(tr("Decide by hand…"));
-    auto *yes = primary(tr("Accept"));
-    connect(again, &QPushButton::clicked, this, &ProposedPage::askAgain);
-    connect(hand, &QPushButton::clicked, this, &ProposedPage::byHand);
-    connect(yes, &QPushButton::clicked, this, &ProposedPage::accept);
-    buttons->addWidget(again);
-    buttons->addWidget(hand);
-    buttons->addStretch();
-    buttons->addWidget(yes);
-    column->addLayout(buttons);
-}
-
-// ---------------------------------------------------------------- A question
 
 // ---------------------------------------------------------------- Shared by the two pages
 
@@ -849,16 +747,13 @@ QString whenText(qint64 unixTime)
     return QLocale().toString(QDateTime::fromSecsSinceEpoch(unixTime), QLocale::ShortFormat);
 }
 
-// "You" for what this window asked for (`--actor person`), "The agent" for
-// the agent, the caller's own label for anyone else, nothing when recab has none.
+// "You" for what this window asked for (`--actor person`), the caller's own label for anyone else, nothing when recab has none.
 QString whoText(const QString &actor)
 {
     if (actor.isEmpty())
         return {};
     if (actor == QLatin1String("person"))
         return QObject::tr("You");
-    if (actor.startsWith(QLatin1String("agent")))
-        return QObject::tr("The agent");
     return actor;
 }
 
@@ -1044,9 +939,7 @@ void NextPage::show(const Status &s)
         auto *panel = new Panel;
         auto *buttons = new QHBoxLayout;
         QStringList why;
-        connect(push(buttons, tr("Make a change…"), s.can("change"), true, &why), &QPushButton::clicked, this,
-                &NextPage::ask);
-        connect(push(buttons, tr("Install software…"), s.can("change")), &QPushButton::clicked, this,
+        connect(push(buttons, tr("Install software…"), s.can("change"), true, &why), &QPushButton::clicked, this,
                 &NextPage::installSoftware);
         buttons->addStretch();
         panel->column()->addLayout(buttons);
@@ -1083,7 +976,6 @@ void NextPage::show(const Status &s)
                                      true)));
         } else {
             auto *buttons = new QHBoxLayout;
-            connect(push(buttons, tr("Make a change…"), s.can("change")), &QPushButton::clicked, this, &NextPage::ask);
             connect(push(buttons, tr("Install software…"), s.can("change")), &QPushButton::clicked, this,
                     &NextPage::installSoftware);
             buttons->addStretch();
@@ -1246,9 +1138,7 @@ void NextPage::show(const Status &s)
     } else if (state == QLatin1String("failed")) {
         connect(push(buttons, tr("Try the same again"), s.can("restart"), true, &why), &QPushButton::clicked, this,
                 &NextPage::restart);
-        auto *agent = new QPushButton(tr("Hand it to the agent…"));
-        connect(agent, &QPushButton::clicked, this, &NextPage::openOverview);
-        buttons->addWidget(agent);
+        buttons->addWidget(copyForAgentButton([s] { return forAgentText(failedStartIssue(s), failedStartFacts(s)); }));
     } else if (clash) {
         auto *settle = primary(tr("Settle the clash…"));
         connect(settle, &QPushButton::clicked, this, &NextPage::settle);
@@ -1910,7 +1800,7 @@ void HistoryPage::show(const History &h)
                             true)));
     head->addLayout(top, 1);
     auto *group = new QButtonGroup(this);
-    const QStringList filters{tr("All"), tr("Restarts"), tr("By the agent")};
+    const QStringList filters{tr("All"), tr("Restarts")};
     for (int i = 0; i < filters.size(); ++i) {
         auto *button = new QPushButton(filters[i]);
         button->setCheckable(true);
@@ -1930,7 +1820,7 @@ void HistoryPage::show(const History &h)
 
     QList<HistoryRow> rows;
     for (const HistoryRow &row : h.rows)
-        if (filter_ == 0 || (filter_ == 1 && row.restart) || (filter_ == 2 && row.byAgent))
+        if (filter_ == 0 || (filter_ == 1 && row.restart))
             rows << row;
 
     auto *tree = new QTreeWidget;

@@ -1,12 +1,14 @@
 #include "parts.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QStyle>
 #include <QStyleOptionFocusRect>
 #include <QSvgRenderer>
@@ -281,40 +283,12 @@ void Tile::paintEvent(QPaintEvent *)
     painter.drawText(rect(), Qt::AlignCenter, letter_);
 }
 
-PromptPanel::PromptPanel(const QString &issue, const QStringList &facts, const QString &expected, QWidget *parent)
-    : Panel(parent)
-    , issue_(issue)
-    , facts_(facts)
-    , expected_(new QPlainTextEdit(expected))
+QPushButton *copyForAgentButton(const std::function<QString()> &text, QWidget *parent)
 {
-    auto *title = new QVBoxLayout;
-    title->setSpacing(0);
-    title->addWidget(strong(tr("What the agent is given")));
-    title->addWidget(dim(text(tr("You can change the expected result: it says what should be true afterwards."))));
-    column()->addLayout(title);
-    // Each part has its name above it, so the text gets the whole width of the panel
-    // (a column of names beside it left the widest name's width empty under the others).
-    auto *parts = new QVBoxLayout;
-    parts->setSpacing(8);
-    auto part = [parts](const QString &name, QWidget *content) {
-        auto *one = new QVBoxLayout;
-        one->setSpacing(2);
-        one->addWidget(strong(name));
-        one->addWidget(content);
-        parts->addLayout(one);
-    };
-    part(tr("The issue"), text(issue, true));
-    part(tr("The facts"), text(QStringLiteral("• ") + facts.join(QStringLiteral("\n• ")), true));
-    expected_->setAccessibleName(tr("The expected result"));
-    expected_->setFixedHeight(66);
-    part(tr("The expected result"), expected_);
-    column()->addLayout(parts);
-}
-
-QString PromptPanel::prompt() const
-{
-    return tr("The issue:\n%1\n\nThe facts:\n- %2\n\nThe expected result:\n%3\n")
-        .arg(issue_, facts_.join(QStringLiteral("\n- ")), expected_->toPlainText().trimmed());
+    auto *button = new QPushButton(QObject::tr("Copy for agent"), parent);
+    button->setToolTip(QObject::tr("Copies the full text to the clipboard, to paste into your own agent"));
+    QObject::connect(button, &QPushButton::clicked, button, [text] { QApplication::clipboard()->setText(text()); });
+    return button;
 }
 
 StepMark::StepMark(int number, QWidget *parent)

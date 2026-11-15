@@ -317,18 +317,6 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
     grid->setRowStretch(row, 1);
     scroll->setWidget(inner);
     column->addWidget(scroll, 1);
-
-    // What no recipe exists for yet can be asked for: an agent writes one.
-    auto *foot = new QHBoxLayout;
-    foot->addWidget(dim(text(row && !search.isEmpty() ? tr("Not what you were looking for? An agent can write a recipe for it.")
-                             : !search.isEmpty() ? tr("An agent can write a recipe for it. You read it before anything is installed.")
-                                                 : tr("Missing something? An agent can write a recipe for it."),
-                             true)),
-                    1);
-    auto *ask = new QPushButton(search.isEmpty() ? tr("Ask for software…") : tr("Ask for “%1”…").arg(search));
-    connect(ask, &QPushButton::clicked, this, [this, search] { emit askFor(search); });
-    foot->addWidget(ask);
-    column->addLayout(foot);
 }
 
 void BrowsePage::showProblem(const QString &problem)
@@ -835,7 +823,6 @@ void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place
     name_ = name;
     run_ = run;
     marks_.clear();
-    agentNote_.clear();
     lines_.clear();
     log_.clear();
     stepsTotal_ = stepsStarted_ = 0;
@@ -1006,11 +993,6 @@ void RunPage::onEvent(const QJsonObject &event)
         state_->setText(tr("Building %1: %2 of %3").arg(shown).arg(event["done"].toInt()).arg(event["total"].toInt()));
     } else if (kind == QLatin1String("say")) {
         state_->setText(event["text"].toString());
-    } else if (kind == QLatin1String("agent")) {
-        // The agent changed the recipe during this run: say what, where it can be seen.
-        agentNote_ = event["summary"].toString();
-        state_->setText(tr("The agent changed the recipe: %1").arg(agentNote_));
-        output_->appendPlainText(tr("agent: %1").arg(agentNote_));
     }
 }
 
@@ -1018,8 +1000,6 @@ void RunPage::onFinished(bool ok)
 {
     emit status(QString());
     if (ok) {
-        if (!agentNote_.isEmpty())
-            emit note(tr("The agent changed the recipe: %1").arg(agentNote_));
         emit succeeded(name_);
         return;
     }
@@ -1072,7 +1052,7 @@ void RunPage::onFinished(bool ok)
     connect(again, &QPushButton::clicked, this, [this, name] { emit retry(name); });
     connect(leave, &QPushButton::clicked, this, &RunPage::back);
     if (heldRefusal) {
-        // Nothing ran, so there is no plan to show; and nothing for an agent to fix:
+        // Nothing ran, so there is no plan to show; and nothing to copy:
         // the person asked it to stay as it is.
         planBox_->hide();
         outputTitle_->hide();
@@ -1094,8 +1074,8 @@ void RunPage::onFinished(bool ok)
         return;
     }
 
-    // Recipe's premise is that an agent does the fixing. The page puts together
-    // what the agent is handed: the issue, the facts, and the expected result.
+    // The page puts together the issue and the facts; "Copy for agent" puts them
+    // on the clipboard with the whole output.
     const QJsonObject refused = failure["refused"].toObject();
     const QString hook = failure["hook"].toString();
     const QString doing = updatingFrom_.isEmpty() ? tr("Installing %1 %2").arg(shown, version)
@@ -1124,8 +1104,8 @@ void RunPage::onFinished(bool ok)
         facts << tr("The recipe: %1").arg(found->path);
     if (!log_.isEmpty())
         facts << tr("Recipe keeps the log and the retained record of this run in %1").arg(log_);
-    // The last lines of what the run printed, so the agent need not ask for them: a bounded number,
-    // each cut short. The whole output is in the log when `recipe` named one.
+    // The last lines of what the run printed: a bounded number, each cut short.
+    // The whole output is in the log when `recipe` named one, and is copied in full.
     QString outputFact;
     if (!lines_.isEmpty()) {
         constexpr int most = 20, widest = 240;
@@ -1141,6 +1121,14 @@ void RunPage::onFinished(bool ok)
     }
     facts << unchanged;
 
+    // The full text for "Copy for agent": the issue, the facts, then the whole output.
+    QStringList copied = facts;
+    copied.removeAll(outputFact);
+    auto copyText = [this, issue, copied] {
+        return tr("The issue:\n%1\n\nThe facts:\n- %2\n\nThe output:\n%3\n")
+            .arg(issue, copied.join(QStringLiteral("\n- ")), output_->toPlainText());
+    };
+
     auto *showOutput = new QPushButton(tr("Show the output"));
     showOutput->setCheckable(true);
     connect(showOutput, &QPushButton::toggled, this, [this](bool on) {
@@ -1148,20 +1136,16 @@ void RunPage::onFinished(bool ok)
         output_->setVisible(on);
     });
     if (!updatingFrom_.isEmpty()) {
-        // Recipe's own repair (`--autofix`) is an option of `recipe install` only; `recipe update`
-        // takes none (cli.rs, Commands::Update), so a stopped update has no repair to offer.
-        // What stopped, and what Recipe recorded, are still said.
+        // What stopped, and what Recipe recorded, are said.
         verdict->column()->addWidget(text(issue, true));
         for (const QString &fact : facts.mid(0, facts.size() - 1)) // the last is `unchanged`, said above
             if (fact != outputFact) // the output is one click away, under "Show the output"
                 verdict->column()->addWidget(dim(text(fact, true)));
-        verdict->column()->addWidget(text(tr("Recipe lets its agent repair a recipe only while installing it; "
-                                             "it cannot do that for an update yet."),
-                                          true));
         buttons->addWidget(showOutput);
         buttons->addWidget(again);
         buttons->addWidget(leave);
         buttons->addStretch();
+        buttons->addWidget(copyForAgentButton(copyText));
         verdict->column()->addLayout(buttons);
         outputTitle_->hide();
         output_->hide();
@@ -1170,31 +1154,29 @@ void RunPage::onFinished(bool ok)
         return;
     }
 
-    auto *prompt = new PromptPanel(
-        issue, facts,
-        tr("%1 %2 installs and its own check passes. What the recipe may use stays as it is; if that has to "
-           "change, say what and why, and stop.")
-            .arg(shown, version));
+    auto *account = new Panel;
+    account->column()->addWidget(text(issue, true));
+    for (const QString &fact : facts.mid(0, facts.size() - 1)) // the last is `unchanged`, said above
+        if (fact != outputFact) // the output is one click away, under "Show the output"
+            account->column()->addWidget(dim(text(fact, true)));
 
-    auto *fixNow = primary(tr("Let the agent fix it"));
-    connect(fixNow, &QPushButton::clicked, this, [this, name, prompt] { emit fix(name, prompt->prompt()); });
     buttons->addWidget(showOutput);
     buttons->addWidget(again);
     buttons->addWidget(leave);
     buttons->addStretch();
-    buttons->addWidget(fixNow);
-    // The facts can be long (the output's last lines): they scroll, and the buttons stay in reach below them.
+    buttons->addWidget(copyForAgentButton(copyText));
+    // The facts can be long: they scroll, and the buttons stay in reach below them.
     auto *promptScroll = new QScrollArea;
     promptScroll->setWidgetResizable(true);
     promptScroll->setFrameShape(QFrame::NoFrame);
-    promptScroll->setWidget(prompt);
+    promptScroll->setWidget(account);
     column_->insertWidget(2, promptScroll, 1);
     auto *buttonRow = new QWidget;
     buttonRow->setLayout(buttons);
     buttons->setContentsMargins(0, 0, 0, 0);
     column_->insertWidget(3, buttonRow);
 
-    // The output stays one click away; the prompt already counts it among the facts.
+    // The output stays one click away.
     outputTitle_->hide();
     output_->hide();
     column_->addStretch();

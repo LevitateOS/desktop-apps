@@ -27,7 +27,7 @@ Environment:
   RECIPE_STANDIN_SPEED    time factor for an install; 0 runs it at once (default 1)
   RECIPE_STANDIN_STOP_AT  "name:hook": stay in the middle of that step forever
   RECIPE_STANDIN_REFUSE_NEW  a recipe whose install (not yet installed) the sandbox refuses,
-                          as it refuses Element's update; with --autofix the agent repairs it
+                          as it refuses Element's update
   RECIPE_STANDIN_FIXED    "element": Element's update is no longer refused (its source fixed it)
   RECIPE_STANDIN_STOP_AT  also "name:remove", "name:go-back", "name:hold" and "name:unhold": stay in the middle of
                           that short change forever; so do "storage:clear", "refresh:refresh", "source:add"
@@ -71,7 +71,7 @@ MACHINE_EVENTS = False
 def installed():
     if not os.path.exists(STATE):
         os.makedirs(STATE_DIR, exist_ok=True)
-        # The person's own store starts with one program an agent wrote for them,
+        # The person's own store starts with one program of their own,
         # an older version of it; the others' store is the catalog's.
         save(ME_START if STATE == ME else CATALOG["installed"])
     items = json.load(open(STATE))
@@ -160,10 +160,9 @@ def history():
 
 # ---------------------------------------------------------------- sources
 # Two to begin with: the catalog the image ships as a remote source, and the
-# person's own folder, which holds what an agent wrote for them.
+# person's own folder.
 
 SOURCES = os.path.join(STATE_DIR, "sources.json")
-WRITTEN = os.path.join(STATE_DIR, "written.json")
 OWN = os.path.expanduser("~/.local/share/recipe/recipes")
 
 
@@ -202,10 +201,8 @@ def sample(name, title, description, category, like):
 def recipes():
     found = []
     for item in CATALOG["recipes"]:
-        # `tree` is the one an agent wrote earlier: it lives in the person's own folder.
+        # `tree` is the one in in the person's own folder.
         found.append(dict(item, source="local" if item["name"] == "tree" else "levitate", path=recipe_file(item["name"])))
-    for item in read(WRITTEN, []):
-        found.append(dict(item, source="local"))
     for source in sources():
         if source["name"] == "levitate" or source.get("problem"):
             continue
@@ -328,7 +325,7 @@ def hook_event(name, hook, status, msg):
     emit(event="recipe-hook", recipe=name, hook=hook, status=status, msg=msg)
 
 
-def play(item, refuse=None, agent=False):
+def play(item, refuse=None):
     name = item["name"]
     # Each recipe says which of its steps it needs this time, once its checks have run.
     emit(event="plan", recipe=name, steps=steps_of(item))
@@ -338,14 +335,6 @@ def play(item, refuse=None, agent=False):
             sys.stderr.write("recipe: fetching %s %s from %s\n" % (name, item["version"], next(iter(item["sources"]))))
             total = max(item["needs"]["network_max_bytes"] // 4, 1 << 20)
             for part in range(1, 9):
-                if refuse and part == 3 and agent:
-                    # The sample repair: the agent reads the refusal and the prompt, and changes the recipe.
-                    emit(event="say", recipe=name, text="The agent is reading the failure and the recipe")
-                    pause(1.0)
-                    emit(event="agent", recipe=name, hook=hook, attempt=1,
-                         files=["/usr/share/recipe/recipes/%s.rhai" % name],
-                         summary="it now fetches the file from packages.element.io, which the recipe already allows")
-                    refuse = None
                 if refuse and part == 3:
                     hook_event(name, hook, "failed", "connection refused by the sandbox")
                     # `refused` is asked for: the real recipe names the step and its own message only.
@@ -371,7 +360,7 @@ def play(item, refuse=None, agent=False):
         hook_event(name, hook, "success", "step finished")
 
 
-def install(name, agent=False, update_only=False):
+def install(name, update_only=False):
     item = recipe(name)
     items = installed()
     current = next((each for each in items if each["name"] == name), None)
@@ -394,7 +383,7 @@ def install(name, agent=False, update_only=False):
     refuse = ("203.0.113.9:443" if (name == "element" and current and os.environ.get("RECIPE_STANDIN_FIXED") != name)
               or (not current and name == os.environ.get("RECIPE_STANDIN_REFUSE_NEW")) else None)
     for each in order:
-        play(each, refuse if each is item else None, agent)
+        play(each, refuse if each is item else None)
     about = item["about"].get("adds", {})
     entry = {
         "name": name, "version": item["version"],
@@ -622,7 +611,7 @@ def main(args):
     for arg in args:
         if skip:
             skip = False
-        elif arg in ("--recipes-path", "--package-root", "--autofix-prompt-file"):
+        elif arg in ("--recipes-path", "--package-root"):
             skip = True
         elif arg == "--path":
             pass  # `source add --path FOLDER`: the folder is the next word
@@ -631,10 +620,6 @@ def main(args):
     command = words[0] if words else ""
     if command in ("install", "update", "remove", "go-back", "hold", "unhold") and len(words) == 2:
         words[1] = words[1].split(":", 1)[-1]  # SOURCE:NAME; the stand-in's names are unique
-    if command == "update" and any(arg.startswith("--autofix") for arg in args):
-        # As the real recipe: `--autofix` is an option of `install` only (cli.rs, Commands::Update).
-        sys.stderr.write("error: unexpected argument '--autofix' found\n\nUsage: recipe update <RECIPE>\n")
-        sys.exit(2)
     if system:
         if command == "installed":
             print(json.dumps(system_view()))
@@ -673,13 +658,7 @@ def main(args):
     elif command in ("hold", "unhold") and len(words) == 2:
         hold(words[1], command == "hold")
     elif command in ("install", "update") and len(words) == 2:
-        if "--autofix-prompt-file" in args:
-            # What the agent is handed, kept so that a check can read it.
-            os.makedirs(STATE_DIR, exist_ok=True)
-            with open(args[args.index("--autofix-prompt-file") + 1]) as given, \
-                    open(os.path.join(STATE_DIR, "last-autofix-prompt.txt"), "w") as kept:
-                kept.write(given.read())
-        install(words[1], "--autofix" in args, command == "update")
+        install(words[1], command == "update")
     elif command == "remove" and len(words) == 2:
         remove(words[1])
     elif command == "go-back" and len(words) == 2:

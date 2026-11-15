@@ -44,8 +44,6 @@ signals:
     void install(const QString &name);
     void update(const QString &name, Place place);
     void retry();
-    // Ask the agent to write a recipe for this.
-    void askFor(const QString &what);
 private:
     QWidget *top_;
     QLabel *title_, *subtitle_;
@@ -90,9 +88,6 @@ public:
 signals:
     void back();
     void retry(const QString &name);
-    // Hand the failure to the agent: the issue, the facts and the expected result.
-    void fix(const QString &name, const QString &prompt);
-    void note(const QString &words);
     void succeeded(const QString &name);
     void failed(const QString &name);
     void status(const QString &words);
@@ -111,13 +106,12 @@ private:
     QWidget *planBox_ = nullptr;
     QMap<QString, StepMark *> marks_;
     QLabel *title_ = nullptr, *state_ = nullptr, *outputTitle_ = nullptr;
-    QString agentNote_;
     QProgressBar *bar_ = nullptr;
     QPlainTextEdit *output_ = nullptr;
     QPushButton *stop_ = nullptr;
     QLabel *stopNote_ = nullptr;
     int stepsTotal_ = 0, stepsStarted_ = 0;
-    // The run's output as the agent can be given it, and where `recipe` said it keeps its log.
+    // The run's output, and where `recipe` said it keeps its log.
     QStringList lines_;
     QString log_;
 };

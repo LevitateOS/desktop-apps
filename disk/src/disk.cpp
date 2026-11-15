@@ -214,7 +214,7 @@ DiskLayout layoutFromLsblk(const QJsonObject &answer, const QString &homeDevice,
     return best;
 }
 
-QList<Slice> composition(Node *tree, const QList<Finding> &found, const QString &home, qint64 heldBytes)
+QList<Slice> composition(Node *tree, const QList<Finding> &found, const QString &home)
 {
     qint64 files = 0, programs = 0, others = 0, leftovers = 0;
     // The top-level piece of a root a finding lies in: hidden ones are what programs keep.
@@ -243,13 +243,9 @@ QList<Slice> composition(Node *tree, const QList<Finding> &found, const QString 
             (piece->name.startsWith(QLatin1Char('.')) ? programs : files) -= finding.bytes;
         }
     }
-    // What was set aside is inside ~/.local; it is its own part, not "kept by programs".
-    const qint64 held = qMin(heldBytes, programs);
-    programs -= held;
     return {{QObject::tr("Your files"), qMax<qint64>(0, files), QColor(0x4f, 0x93, 0xd6)},
             {QObject::tr("What programs keep (hidden folders of the home folder)"), qMax<qint64>(0, programs), QColor(0x9a, 0x8f, 0x86)},
             {QObject::tr("Known leftovers"), leftovers, QColor(0xe0, 0xa0, 0x3a)},
-            {QObject::tr("Set aside by the agent"), held, QColor(0xa7, 0x7b, 0xd1)},
             {QObject::tr("Other folders read"), qMax<qint64>(0, others), QColor(0x5c, 0xb3, 0x7a)}};
 }
 
@@ -336,7 +332,7 @@ void DiskPage::show(const DiskInfo &info)
     }
     int rowsShown = 0;
     if (!info.scanning && !info.found.isEmpty()) {
-        auto *go = small(tr("Look and hand to the agent…"), true);
+        auto *go = small(tr("Look at the list"), true);
         connect(go, &QPushButton::clicked, this, &DiskPage::showMess);
         QString list = kinds.size() > 1 ? kinds.mid(0, kinds.size() - 1).join(tr(", ")) + tr(" and ") + kinds.last() : kinds.value(0);
         addRow(leftovers, tr("Known leftovers"), tr("in %1: %2.").arg(counted(info.found.size(), tr("%1 place"), tr("%1 places")), list), go);
@@ -350,15 +346,6 @@ void DiskPage::show(const DiskInfo &info)
                    ? tr("%1 of installed software, kept so you can go back. Recipe knows which are in use.")
                          .arg(counted(info.earlierGenerations, tr("%1 earlier generation"), tr("%1 earlier generations")))
                    : tr("Earlier versions of installed software, kept so you can go back. Recipe knows which are in use."),
-               go);
-        ++rowsShown;
-    }
-    if (info.heldRead && !info.held.empty() && info.held.bytes > 0) {
-        auto *go = small(tr("See what is set aside"));
-        connect(go, &QPushButton::clicked, this, &DiskPage::showHeld);
-        addRow(info.held.bytes, tr("Set aside by the agent"),
-               tr("in %1. Nothing is deleted until you let it go.")
-                   .arg(counted(info.held.places.size(), tr("%1 place"), tr("%1 places"))),
                go);
         ++rowsShown;
     }

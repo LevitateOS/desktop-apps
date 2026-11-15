@@ -4,7 +4,6 @@
 
 #include "beforewords.h"
 
-#include "activity.h"
 #include "frame.h"
 #include "refresh.h"
 
@@ -22,21 +21,6 @@
 #include <QToolButton>
 
 namespace {
-
-// What Activity calls a run: the first line under "The request:", else under
-// "The issue:", else the title of the page that shows it.
-QString requestTitle(const QString &prompt, const QString &fallback)
-{
-    for (const QString &heading : {QStringLiteral("The request:"), QStringLiteral("The issue:")}) {
-        const qsizetype at = prompt.indexOf(heading);
-        if (at < 0)
-            continue;
-        const QString line = prompt.mid(at + heading.size()).trimmed().section(QLatin1Char('\n'), 0, 0).trimmed();
-        if (!line.isEmpty())
-            return line.size() > 90 ? line.left(89).trimmed() + QStringLiteral("…") : line;
-    }
-    return fallback;
-}
 
 // What the work page is titled for one of recab's operations: its label is
 // written for a list of buttons, and is long for a heading.
@@ -69,15 +53,13 @@ Window::Window(QWidget *parent)
     back_ = new BackPage;
     historyPage_ = new HistoryPage;
     release_ = new ReleasePage;
-    ask_ = new AskPage;
     work_ = new WorkPage;
     clash_ = new ClashPage;
-    proposed_ = new ProposedPage;
     before_ = new BeforePage;
     for (QWidget *page : {static_cast<QWidget *>(system_), static_cast<QWidget *>(next_), static_cast<QWidget *>(back_),
                           static_cast<QWidget *>(historyPage_), static_cast<QWidget *>(release_),
-                          static_cast<QWidget *>(ask_), static_cast<QWidget *>(work_),
-                          static_cast<QWidget *>(clash_), static_cast<QWidget *>(proposed_), static_cast<QWidget *>(before_)})
+                          static_cast<QWidget *>(work_), static_cast<QWidget *>(clash_),
+                          static_cast<QWidget *>(before_)})
         stack_->addWidget(page);
 
     // The frame is the window: rail, the pages above, the strip, the status line.
@@ -89,13 +71,10 @@ Window::Window(QWidget *parent)
     frame_->addEntry(QStringLiteral("back"), tr("Getting back"));
     frame_->select(QStringLiteral("overview"));
     section_ = QStringLiteral("overview");
-    frame_->setAgent(client_.agentProgram());
     frame_->setStatus(tr("Read from recab on this machine"));
     setCentralWidget(frame_);
     connect(frame_, &Frame::chosen, this, [this](const QString &key) {
-        if (key == Frame::activityKey())
-            updateStrip();
-        else if (key == QLatin1String("next"))
+        if (key == QLatin1String("next"))
             showNext();
         else if (key == QLatin1String("history"))
             showHistory();
@@ -109,12 +88,7 @@ Window::Window(QWidget *parent)
         frame_->select(QStringLiteral("next"));
         showNext();
     });
-    connect(frame_, &Frame::goToRun, this, [this] {
-        frame_->select(section_);
-        display(work_);
-    });
 
-    connect(system_, &SystemPage::ask, this, [this] { showAsk(); });
     connect(system_, &SystemPage::operation, this, [this](const QJsonObject &op) { runOperation(op); });
     connect(next_, &NextPage::operation, this, [this](const QJsonObject &op) { runOperation(op); });
     connect(system_, &SystemPage::addUpdate, this, [this] { addUpdate(); });
@@ -129,8 +103,6 @@ Window::Window(QWidget *parent)
     connect(system_, &SystemPage::retry, this, [this] { restart(); });
     connect(system_, &SystemPage::recover, this, [this] { recover(); });
     connect(system_, &SystemPage::settle, this, &Window::showClash);
-    connect(system_, &SystemPage::fix, this,
-            [this](const QString &prompt) { fixWithAgent(prompt, tr("The agent is changing the next system")); });
 
     connect(system_, &SystemPage::openNext, this, [this] {
         frame_->select(QStringLiteral("next"));
@@ -166,7 +138,6 @@ Window::Window(QWidget *parent)
             QMessageBox::warning(this, tr("Recab"), tr("The history could not be saved to %1.").arg(path));
     });
 
-    connect(next_, &NextPage::ask, this, [this] { showAsk(); });
     connect(next_, &NextPage::installSoftware, this, &Window::installSoftware);
     connect(next_, &NextPage::reset, this, [this] { reset(); });
     connect(next_, &NextPage::settle, this, &Window::showClash);
@@ -179,10 +150,6 @@ Window::Window(QWidget *parent)
     connect(next_, &NextPage::keep, this, [this] { keep(); });
     connect(next_, &NextPage::goBack, this, [this] { goBack(); });
     connect(next_, &NextPage::openDisk, this, [this] { frame_->startApp(Frame::Recdirstat); });
-    connect(next_, &NextPage::openOverview, this, [this] {
-        frame_->select(QStringLiteral("overview"));
-        showMain();
-    });
 
     connect(back_, &BackPage::goBack, this, [this] { goBack(); });
     connect(back_, &BackPage::keep, this, [this] { keep(); });
@@ -194,16 +161,9 @@ Window::Window(QWidget *parent)
             QMessageBox::warning(this, tr("Recab"), tr("The steps could not be saved to %1.").arg(path));
     });
 
-    connect(ask_, &AskPage::back, this, &Window::showSection);
-    connect(ask_, &AskPage::handOver, this, [this](const QString &prompt) { handOver(prompt); });
-
     connect(work_, &WorkPage::back, this, &Window::showSection);
-    connect(work_, &WorkPage::activity, this, [this](const QString &words) {
-        frame_->setAgentNote(words);
-    });
     connect(work_, &WorkPage::done, this, [this](bool ok) {
         run_ = nullptr;
-        frame_->setOwnRun(QString()); // Activity reads the run's record again
         auto then = then_;
         then_ = nullptr;
         reload([then, ok] {
@@ -214,8 +174,6 @@ Window::Window(QWidget *parent)
 
     connect(clash_, &ClashPage::later, this, &Window::showSection);
     connect(clash_, &ClashPage::byHand, this, &Window::decideByHand);
-    connect(clash_, &ClashPage::fix, this,
-            [this](const QString &prompt) { fixWithAgent(prompt, tr("The agent is settling the clash")); });
 
     // The Before page: Cancel leaves everything as it was; the button does it.
     connect(before_, &BeforePage::cancelled, this, [this] {
@@ -231,17 +189,13 @@ Window::Window(QWidget *parent)
             go();
     });
 
-    connect(proposed_, &ProposedPage::accept, this, &Window::acceptProposal);
-    connect(proposed_, &ProposedPage::askAgain, this, &Window::showClash);
-    connect(proposed_, &ProposedPage::byHand, this, &Window::decideByHand);
-
     connect(system_, &SystemPage::readAgain, this, [this] { reload([this] { showSection(); }); });
     connect(system_, &SystemPage::readAsAdministrator, this, [this] {
         asRoot_ = true;
         reload([this] { showSection(); });
     });
 
-    // F5, and coming back to the window after a while: an agent or a terminal
+    // F5, and coming back to the window after a while: a terminal
     // may have changed the system in the meantime.
     refresher_ = new Refresher(this, 20);
     connect(refresher_, &Refresher::asked, this, [this](bool byHand) {
@@ -249,7 +203,6 @@ Window::Window(QWidget *parent)
             || stack_->currentWidget() == historyPage_ || stack_->currentWidget() == release_ || byHand)
             refresh();
     });
-    connect(refresher_, &Refresher::asked, frame_, &Frame::readAgain);
     auto *again = new QToolButton;
     again->setText(tr("Read again"));
     again->setToolTip(tr("Read the system again (F5)"));
@@ -326,16 +279,6 @@ void Window::reload(std::function<void()> then)
     reading_->start();
 }
 
-bool Window::agentAsks() const
-{
-    return run_ && work_->asking();
-}
-
-void Window::answerAgent(const QString &words)
-{
-    work_->answer(words);
-}
-
 void Window::display(QWidget *page)
 {
     stack_->setCurrentWidget(page);
@@ -356,9 +299,8 @@ void Window::display(QWidget *page)
 void Window::updateStrip()
 {
     // The next system's page and Overview say it themselves; every other
-    // page, and Activity, gets the strip.
-    frame_->setStripAllowed(frame_->activityShown()
-                            || (stack_->currentWidget() != system_ && stack_->currentWidget() != next_));
+    // page gets the strip.
+    frame_->setStripAllowed(stack_->currentWidget() != system_ && stack_->currentWidget() != next_);
     frame_->setNextSystem(status_.otherRole == QLatin1String("next") ? status_.changeTitles() : QStringList());
 }
 
@@ -441,12 +383,6 @@ bool Window::saveSteps(const QString &path)
     return file.write(backStepsText(status_).toUtf8()) >= 0;
 }
 
-void Window::showAsk(const QString &request)
-{
-    ask_->show(status_, request);
-    display(ask_);
-}
-
 void Window::showClash()
 {
     clash_->show(status_);
@@ -475,7 +411,6 @@ void Window::work(Run *run, const QString &title, const QString &subtitle, std::
     work_->begin(title, subtitle, run);
     display(work_);
     run->start();
-    frame_->setOwnRun(run);
 }
 
 // Short changes with no page of their own, one after another.
@@ -516,31 +451,6 @@ void Window::chain(QList<Run *> runs, const QString &made, bool restartLast, boo
         chain(runs, made, restartLast, false);
     });
     run->start();
-}
-
-void Window::handOver(const QString &prompt, bool askFirst)
-{
-    // Only the reuse of the system from before is asked: the request itself
-    // was read on the Ask page, and the agent's page says what it is given.
-    if (askFirst && status_.otherRole == QLatin1String("previous")) {
-        askBefore([this] { return beforewords::reuse(client_, status_); }, [this, prompt] { handOver(prompt, false); });
-        return;
-    }
-    work(client_.agent(prompt, requestTitle(prompt, tr("Preparing the next system"))), tr("Preparing the next system"),
-         tr("The running system is not touched. You can keep working."), [this](bool ok) { sectionUnlessStopped(ok); });
-}
-
-void Window::fixWithAgent(const QString &prompt, const QString &title)
-{
-    work(client_.agent(prompt, requestTitle(prompt, title)), title, tr("It works in the next system only. The running system is not touched."),
-         [this](bool ok) {
-             if (ok && !status_.proposalPath.isEmpty()) {
-                 proposed_->show(status_);
-                 display(proposed_);
-             } else {
-                 sectionUnlessStopped(ok);
-             }
-         });
 }
 
 // What an operation says on the Before page, by the operation's id; the pages
@@ -864,11 +774,6 @@ void Window::reset(bool askFirst)
         });
     });
     drop->start();
-}
-
-void Window::acceptProposal()
-{
-    chain({client_.change({"resolve", status_.proposalPath, "--proposal"})});
 }
 
 // One question for each file that clashes, then all the answers at once.

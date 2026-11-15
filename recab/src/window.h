@@ -9,14 +9,12 @@
 
 #include <functional>
 
-class AskPage;
 class ClashPage;
 class HistoryPage;
 class ReleasePage;
 class Frame;
 class NextPage;
 class BackPage;
-class ProposedPage;
 class Refresher;
 class QStackedWidget;
 class SystemPage;
@@ -39,13 +37,11 @@ public:
     // After a long run: the section, unless the run failed and its page says why (it stays,
     // and its Back leads to the section).
     void sectionUnlessStopped(bool ok);
-    void showAsk(const QString &request = QString());
     void showClash();
 
     // Each of these that changes something shows the Before page first, which
     // says what will happen; "askFirst = false" does it at once (the picture
-    // mode's direct calls). Handing a request to the agent has its own page.
-    void handOver(const QString &prompt, bool askFirst = true);
+    // mode's direct calls).
     void addUpdate(bool askFirst = true);
     void goBack(bool askFirst = true);
     void keep(bool askFirst = true);
@@ -58,8 +54,6 @@ public:
     void finish(bool askFirst = true);
     void restart(bool askFirst = true);
     void recover(bool askFirst = true);
-    void fixWithAgent(const QString &prompt, const QString &title);
-    void acceptProposal();
     void stopRun();
     // Starts Recipe, where software is installed into this same next system.
     void installSoftware();
@@ -92,9 +86,6 @@ public:
     void replaceFailed(bool askFirst = true);
     // Writes the history as plain text.
     bool saveHistory(const QString &path);
-    // Whether the agent has asked something; and answering it.
-    bool agentAsks() const;
-    void answerAgent(const QString &words);
 
     const Status &status() const { return status_; }
     Frame *frame() const { return frame_; }
@@ -115,8 +106,7 @@ private:
     void askBefore(std::function<BeforePage::Content()> content, std::function<void()> go);
     // The Before page of an operation, empty when it has none.
     BeforePage::Content beforeOperation(const QJsonObject &op) const;
-    // Shows one of the pages. The rail marks Overview for all of them; when
-    // Activity is showing it stays, and the page changes beneath it.
+    // Shows one of the pages. The rail marks the entry the page belongs to.
     void display(QWidget *page);
     // The strip about the next system, on every page but Overview.
     void updateStrip();
@@ -138,12 +128,10 @@ private:
     BackPage *back_;
     HistoryPage *historyPage_;
     ReleasePage *release_;
-    // The rail entry the pages in between (ask, work, clash) belong to.
+    // The rail entry the pages in between (work, clash) belong to.
     QString section_;
-    AskPage *ask_;
     WorkPage *work_;
     ClashPage *clash_;
-    ProposedPage *proposed_;
     BeforePage *before_;
     std::function<BeforePage::Content()> remake_;
     std::function<void()> go_;

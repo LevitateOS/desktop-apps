@@ -19,13 +19,11 @@ qt_add_executable(recipe-gui
     ../kit/refresh.cpp
     ../kit/work.cpp
     ../kit/frame.cpp
-    ../kit/activity.cpp
-    ../kit/settings.cpp
+    ../kit/windowsize.cpp
     ../kit/help.cpp
     ../kit/firstrun.cpp
     ../kit/helpstory.cpp
     ../kit/nextsystem.cpp
-    ../kit/livestory.cpp
     ../kit/before.cpp
     src/beforewords.cpp
     src/pages.cpp

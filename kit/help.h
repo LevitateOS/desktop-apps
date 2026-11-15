@@ -1,8 +1,8 @@
 // The Help page: one page for each of the three apps, owned by the frame (the
 // frame knows which app it is, so the app adds nothing). It says what the app
 // is for, the few ideas a person needs, how to do what the app can do (each
-// ending in a link to the page where it is done), what the agent is, and what
-// to do when something is wrong. Everything on it is a sentence that is true of
+// ending in a link to the page where it is done), and what to do when something
+// is wrong. Everything on it is a sentence that is true of
 // the app as built; what is not built is left out (see the "Not done" list of
 // the app's README before adding a sentence).
 #pragma once
@@ -23,15 +23,13 @@ struct HelpIdea {
 };
 
 // A thing the app can do, or a trouble, with the page that is its way on.
-// `target` is a rail key ("next"), `Frame::activityKey()`, `Frame::settingsKey()`,
-// or a page that is not on the rail and that the app has offered with
-// `Frame::addHelpTarget`; with no target the row has no link.
+// `target` is a rail key ("next"); with no target the row has no link.
 struct HelpRow {
     QString title, words, target, page; // `page`: how the link names it ("The next system")
 };
 
 struct HelpText {
-    QString name, purpose, never, agentInThisApp;
+    QString name, purpose, never;
     QList<HelpIdea> ideas;
     QList<HelpRow> how, wrong;
     // The other two apps, one line each.
@@ -45,9 +43,8 @@ class HelpPage : public Page {
 public:
     explicit HelpPage(Frame::App app, QWidget *parent = nullptr);
 
-    // Draws the page for the pages that exist now: `targets` are the rail's keys
-    // and the pages the app offered besides. A thing to do whose target is not
-    // among them is left out, so no link leads nowhere. The frame calls it each
+    // Draws the page for the pages that exist now: `targets` are the rail's keys.
+    // A thing to do whose target is not among them is left out, so no link leads nowhere. The frame calls it each
     // time the page is shown.
     void draw(const QStringList &targets);
 
@@ -62,7 +59,7 @@ public:
     bool scrollDown();
 
 signals:
-    // A link: a page of the app, Activity or Settings.
+    // A link: a page of the app.
     void go(const QString &target);
     // "Open Recipe" and the like.
     void startApp(Frame::App app);

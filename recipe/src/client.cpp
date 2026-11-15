@@ -7,7 +7,6 @@
 #include <QJsonDocument>
 #include <QDir>
 #include <QRegularExpression>
-#include <QTemporaryFile>
 
 RecipeClient::RecipeClient(QObject *parent)
     : QObject(parent)
@@ -16,7 +15,6 @@ RecipeClient::RecipeClient(QObject *parent)
     , recipesPath_(qEnvironmentVariable("RECIPE_GUI_RECIPES_PATH"))
     , packageRoot_(qEnvironmentVariable("RECIPE_GUI_PACKAGE_ROOT"))
     , systemRoot_(qEnvironmentVariable("RECIPE_GUI_SYSTEM_ROOT", "/var/lib/recipe"))
-    , agent_(qEnvironmentVariable("RECIPE_GUI_AGENT", "levitate-agent"))
     // Set, even to nothing, means one explicit store and no choice of place.
     , explicit_(qEnvironmentVariableIsSet("RECIPE_GUI_PACKAGE_ROOT"))
 {
@@ -355,24 +353,6 @@ Run *RecipeClient::update(const QString &name, Place place)
     return change(lead(place) + QStringList{"update", name, "--machine-events"} + collection() + at(place), place);
 }
 
-// Recipe's own repair: `--autofix` is an option of `recipe install` only (cli.rs,
-// Commands::Install); `recipe update` takes none, so there is no repair of an update.
-Run *RecipeClient::fixWithAgent(const QString &name, const QString &prompt, Place place)
-{
-    auto *file = new QTemporaryFile(QDir::tempPath() + "/recipe-gui-prompt-XXXXXX.txt");
-    if (file->open()) {
-        file->write(prompt.toUtf8());
-        file->close();
-    }
-    Run *run = change(lead(place)
-                          + QStringList{"install", name, "--machine-events", "--autofix",
-                                        "--autofix-prompt-file", file->fileName()}
-                          + collection() + at(place),
-                      place);
-    file->setParent(run); // removed with the run
-    return run;
-}
-
 Run *RecipeClient::remove(const QString &name, Place place)
 {
     return change(lead(place) + QStringList{"remove", name, "--machine-events"} + collection() + at(place), place);
@@ -419,11 +399,4 @@ Run *RecipeClient::addSource(const QString &addressOrFolder)
 Run *RecipeClient::removeSource(const QString &name)
 {
     return change(QStringList{"source", "remove", name} + store(), Place::Computer);
-}
-
-Run *RecipeClient::agent(const QString &prompt, const QString &title, const QStringList &mayWrite)
-{
-    auto *run = new Run(agent_, {}, this);
-    run->setPrompt(prompt, QStringLiteral("Recipe"), title, mayWrite);
-    return run;
 }

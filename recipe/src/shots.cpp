@@ -1,11 +1,8 @@
 #include "shots.h"
 
-#include "activity.h"
-#include "settings.h"
 #include "before.h"
 #include "frame.h"
 #include "helpstory.h"
-#include "livestory.h"
 #include "look.h"
 #include "nextsystem.h"
 
@@ -16,6 +13,7 @@
 #include "window.h"
 
 #include <QAbstractButton>
+#include <QClipboard>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
@@ -223,12 +221,11 @@ private:
 void frameShots(Window &window, const Save &save, const Expect &expect)
 {
     Frame *frame = window.frame();
-    for (const char *title : {"Browse", "Installed", "Updates", "Sources", "Storage", "Activity", "Settings", "Help"})
+    for (const char *title : {"Browse", "Installed", "Updates", "Sources", "Storage", "Help"})
         expect(QStringLiteral("the rail has %1").arg(title), frame->entryTitles().contains(QString::fromLatin1(title)));
     expect(QStringLiteral("Storage follows Sources in the rail"),
            frame->entryTitles().mid(0, 5) == QStringList({"Browse", "Installed", "Updates", "Sources", "Storage"}));
-    expect(QStringLiteral("Settings is under Activity and Help under Settings, the frame's own"),
-           frame->entryTitles().mid(frame->entryTitles().size() - 3) == QStringList({"Activity", "Settings", "Help"}));
+    expect(QStringLiteral("Help is the last entry, the frame's own"), frame->entryTitles().last() == "Help");
     expect(QStringLiteral("the window is 1100 by 700"), window.size() == QSize(1100, 700));
 
     window.chooseSource(QString());
@@ -300,222 +297,22 @@ void frameShots(Window &window, const Save &save, const Expect &expect)
     const QString status = frame->statusText();
     expect(QStringLiteral("the status line says where the recipes are from and when (%1)").arg(status),
            status.contains(" read at ") && status.contains("source"));
-    expect(QStringLiteral("the status line names the agent (%1)").arg(frame->agentText()),
-           frame->agentText() == QStringLiteral("Agent: %1").arg(QFileInfo(qEnvironmentVariable("RECIPE_GUI_AGENT")).fileName()));
 }
 
-// The pages of the frame that are not Recipe's: Activity. It needs runs to
-// show, which `gui/agent/fixtures/records` makes by driving the built
-// levitate-agent with the stand-in Codex. Pictures `a-*`.
-void activityShots(Window &window, const QString &folder, const Save &save, const Expect &expect, QTextStream &out)
+void helpShots(Window &window, const Save &save, const Expect &expect)
 {
-    Frame *frame = window.frame();
-    const QString script = qEnvironmentVariable("RECIPE_GUI_RECORDS");
-    const QString agent = qEnvironmentVariable("LEVITATE_ACTIVITY_AGENT");
-    if (script.isEmpty() || agent.isEmpty()) {
-        out << "not as expected: Activity needs RECIPE_GUI_RECORDS (gui/agent/fixtures/records) and "
-               "LEVITATE_ACTIVITY_AGENT (the built levitate-agent), see README.md\n";
-        expect(QStringLiteral("the records for Activity could be made"), false);
-        return;
-    }
-    const QString where = QDir(folder).filePath("a-records");
-    // The runs it leaves going are stopped when this ends, whichever way it ends.
-    struct Stopper {
-        QString script, where;
-        ~Stopper() { QProcess::execute(script, {"--stop", where}); }
-    } stopper{script, where};
-    QProcess make;
-    make.start(script, {where, agent});
-    make.waitForFinished(300000);
-    const QString said = QString::fromUtf8(make.readAllStandardOutput()).trimmed();
-    expect(QStringLiteral("the records for Activity were made (%1)").arg(QString::fromUtf8(make.readAllStandardError()).trimmed()),
-           make.exitStatus() == QProcess::NormalExit && make.exitCode() == 0 && said.startsWith("state="));
-    if (!said.startsWith("state="))
-        return;
-    const QString state = said.section(' ', 0, 0).mid(6);
-    const QString waitingId = said.section("waiting_id=", 1).section(' ', 0, 0);
-    const QString runtime = said.section("runtime=", 1).section(' ', 0, 0);
-    const QByteArray stateBefore = qgetenv("XDG_STATE_HOME"), runtimeBefore = qgetenv("XDG_RUNTIME_DIR");
-    qputenv("XDG_STATE_HOME", state.toUtf8());
-    // The sockets of the runs it left going: attaching needs them.
-    qputenv("XDG_RUNTIME_DIR", runtime.toUtf8());
-    ActivityPage *page = frame->activity();
-
-    frame->readAgain();
-    waitFor([&] { return page->loaded() && frame->badge(Frame::activityKey()) > 0; });
-    expect(QStringLiteral("the Activity entry counts the one run that waits"),
-           frame->badge(Frame::activityKey()) == 2 && frame->badgeWarns(Frame::activityKey()));
-
-    frame->choose(Frame::activityKey());
-    waitFor([&] { return page->listedTitles().size() == 5 && !page->detailText().isEmpty(); });
-    expect(QStringLiteral("Activity is showing and marked"), frame->activityShown() && frame->selected() == Frame::activityKey());
-    expect(QStringLiteral("Activity lists the five runs, newest first"),
-           page->listedTitles()
-               == QStringList({"Install the NVIDIA driver", "Update Element", "Turn off password logins over ssh",
-                               "Install htop for this computer", "Install Krita for this computer"}));
-    save(window, "a-activity-list");
-
-    page->chooseTitle("Install htop for this computer");
-    waitFor([&] { return page->detailText().contains("ls -l"); });
-    expect(QStringLiteral("a done run shows its commands and the agent's last word"),
-           page->detailText().contains("ls -l") && page->detailText().contains("I made the change. Everything checks out."));
-    save(window, "a-a-done-run");
-
-    // The run that waits is this window's own: Go to it leaves Activity for the work page.
-    page->chooseTitle("Turn off password logins over ssh");
-    waitFor([&] { return page->detailText().contains("It asks"); });
-    frame->setOwnRun(waitingId);
-    expect(QStringLiteral("the frame knows the id of this window's own run"), frame->ownRun() == waitingId && !waitingId.isEmpty());
-    waitFor([&] { return page->offersGoTo(); });
-    expect(QStringLiteral("this window's own live run offers Go to it, and its question can be answered here too (%1)")
-               .arg(page->answerButtons().join(", ")),
-           waitFor([&] { return page->answerButtons() == QStringList({"Red", "Blue"}); }) && page->offersGoTo()
-               && !page->detailText().contains("It waits in this window")
-               && !page->detailText().contains("Only the window that started it"));
-    save(window, "a-this-windows-own-run");
-    clickButton(page, QStringLiteral("Go to it"));
-    settle(200);
-    expect(QStringLiteral("Go to it leaves Activity for Recipe's own pages"),
-           !frame->activityShown() && frame->selected() == "browse");
-    frame->choose(Frame::activityKey());
-    frame->setOwnRun(QString());
-    waitFor([&] { return page->loaded() && !page->offersGoTo(); });
-
-    page->showOnlyThisApp(true);
-    expect(QStringLiteral("only Recipe's runs are listed"),
-           page->listedTitles() == QStringList({"Update Element", "Install htop for this computer", "Install Krita for this computer"}));
-    save(window, "a-only-recipe");
-    page->showOnlyThisApp(false);
-
-    expect(QStringLiteral("the strip shows on Activity while the next system holds a change"),
-           frame->stripShown() && frame->stripText() == QStringLiteral("The next system holds 1 change."));
-    save(window, "a-activity-with-the-strip");
-
-    // The agent in the status line, asked of levitate-agent with the stand-in Codex.
-    const QString codex = QDir(QFileInfo(script).absolutePath()).filePath("codex");
-    qputenv("LEVITATE_AGENT_CODEX", codex.toUtf8());
-    const QString stand = qEnvironmentVariable("RECIPE_GUI_AGENT");
-    frame->setAgent(agent);
-    waitFor([&] { return frame->agentText() == "Agent: Codex, signed in"; }, 20);
-    expect(QStringLiteral("the status line names the agent and that it is signed in (%1)").arg(frame->agentText()),
-           frame->agentText() == "Agent: Codex, signed in");
-    qunsetenv("LEVITATE_AGENT_CODEX");
-    frame->setAgent(stand);
-
-    QProcess::execute(script, {"--stop", where});
-    if (stateBefore.isEmpty())
-        qunsetenv("XDG_STATE_HOME");
-    else
-        qputenv("XDG_STATE_HOME", stateBefore);
-    if (runtimeBefore.isEmpty())
-        qunsetenv("XDG_RUNTIME_DIR");
-    else
-        qputenv("XDG_RUNTIME_DIR", runtimeBefore);
-    frame->setOwnRun(QString());
-    window.showBrowse();
-    settle(100);
-
-    // Runs that outlive their window: found, followed, answered and stopped from Activity.
-    // Each one is started by a window of its own, through "Ask for software", that then closes.
-    livestory::prepare(QDir(folder).filePath("a"), QFileInfo(script).absolutePath());
-    auto start = [&](const QString &story, const QString &request) {
-        livestory::useStory(story);
-        const QByteArray before = qgetenv("RECIPE_GUI_AGENT");
-        qputenv("RECIPE_GUI_AGENT", agent.toUtf8());
-        auto *started = new Window;
-        qputenv("RECIPE_GUI_AGENT", before);
-        started->show();
-        waitFor([&] { return !started->busy(); });
-        started->askAgent(QStringLiteral("The request:\n%1\n").arg(request));
-        return livestory::Started{started, started->frame()};
-    };
-    livestory::run(*frame, window, start, save, expect, "a");
-    // What the helper was given for the first of them: it may write in the person's own recipe folder.
-    {
-        QFile log(livestory::codexLog());
-        QString first;
-        if (log.open(QIODevice::ReadOnly))
-            first = QString::fromUtf8(log.readAll()).section('\n', 0, 0);
-        const QJsonObject call = QJsonDocument::fromJson(first.toUtf8()).object();
-        QStringList args;
-        for (const QJsonValue &arg : call["args"].toArray())
-            args << arg.toString();
-        const QString own = QDir::homePath() + "/.local/share/recipe/recipes";
-        expect(QStringLiteral("the agent was started with a sandbox that may write, in the person's own recipe folder (%1)")
-                   .arg(args.join(' ')),
-               args.contains("workspace-write") && args.contains("-C") && args.value(args.indexOf("-C") + 1) == own
-                   && call["cwd"].toString() == own && QDir(own).exists());
-    }
-    livestory::finish();
-    window.showBrowse();
-    settle(100);
-}
-
-// The frame's Settings page: the entry under Activity, and the page opening.
-// It reads through the built levitate-agent with the stand-in Codex and a
-// settings folder of the story's own.
-void settingsShots(Window &window, const QString &folder, const Save &save, const Expect &expect)
-{
-    Frame *frame = window.frame();
-    const QString script = qEnvironmentVariable("RECIPE_GUI_RECORDS");
-    if (script.isEmpty() || qEnvironmentVariable("LEVITATE_ACTIVITY_AGENT").isEmpty()) {
-        expect(QStringLiteral("Settings needs RECIPE_GUI_RECORDS and LEVITATE_ACTIVITY_AGENT, see README.md"), false);
-        return;
-    }
-    const QString home = QDir(folder).filePath("settings-home");
-    QDir(home).removeRecursively();
-    QDir().mkpath(home);
-    const QByteArray config = qgetenv("XDG_CONFIG_HOME"), codex = qgetenv("LEVITATE_AGENT_CODEX");
-    qputenv("XDG_CONFIG_HOME", (home + "/config").toUtf8());
-    qputenv("LEVITATE_AGENT_CODEX", QDir(QFileInfo(script).absolutePath()).filePath("codex").toUtf8());
-    SettingsPage *page = frame->settings();
-    frame->choose(Frame::settingsKey());
-    waitFor([&] { return page->loaded() || !page->problem().isEmpty(); });
-    expect(QStringLiteral("Settings opens and is marked (%1)").arg(page->problem()),
-           frame->settingsShown() && frame->selected() == Frame::settingsKey() && page->loaded());
-    expect(QStringLiteral("it is the same page: the agent, what it may do, the windows"),
-           page->pageText().contains("The agent that does the work") && page->pageText().contains("Installed, and signed in")
-               && page->pageText().contains("What the agent may do without asking")
-               && page->pageText().contains("Each window opens at the size it had."));
-    save(window, "f-settings");
-    frame->choose(QStringLiteral("browse"));
-    expect(QStringLiteral("choosing Browse leaves Settings"), !frame->settingsShown() && frame->selected() == "browse");
-    for (auto [name, value] : {std::pair{"XDG_CONFIG_HOME", config}, std::pair{"LEVITATE_AGENT_CODEX", codex}}) {
-        if (value.isEmpty())
-            qunsetenv(name);
-        else
-            qputenv(name, value);
-    }
-}
-
-// The strip about the next system: read with the recab the story names, after
-// one prepare and one change in its own scratch state; and no strip when the
-// program does not exist.
-// The pages the frame owns after Settings: Help for Recipe, and the page a person
-// sees the first time. The checks are `../kit/helpstory.*`; this says which page
-// of Recipe each target is.
-void helpShots(Window &window, const QString &folder, const Save &save, const Expect &expect)
-{
-    const QString script = qEnvironmentVariable("RECIPE_GUI_RECORDS");
-    if (script.isEmpty()) {
-        expect(QStringLiteral("Help needs RECIPE_GUI_RECORDS (gui/agent/fixtures/records) to find the stand-in Codex"), false);
-        return;
-    }
     helpstory::Plan plan;
     plan.app = Frame::Recipe;
     plan.window = &window;
     plan.frame = window.frame();
     plan.firstEntry = QStringLiteral("browse");
     plan.idle = [&] { waitUntilIdle(window, 30); };
-    plan.folder = folder;
-    plan.fixtures = QFileInfo(script).absolutePath();
     plan.pageShown = [&](const QString &key) {
         QWidget *page = key == QLatin1String("browse")      ? static_cast<QWidget *>(window.findChild<BrowsePage *>())
                         : key == QLatin1String("installed") ? static_cast<QWidget *>(window.findChild<InstalledPage *>())
                         : key == QLatin1String("updates")   ? static_cast<QWidget *>(window.findChild<UpdatesPage *>())
                         : key == QLatin1String("sources")   ? static_cast<QWidget *>(window.findChild<SourcesPage *>())
                         : key == QLatin1String("storage")   ? static_cast<QWidget *>(window.findChild<StoragePage *>())
-                        : key == QLatin1String("ask")       ? static_cast<QWidget *>(window.findChild<WishPage *>())
                                                             : nullptr;
         return page && page->isVisible();
     };
@@ -558,8 +355,6 @@ void stripShots(Window &window, const QString &folder, const Save &save, const E
     window.showSources();
     window.showRecipe("htop");
     expect(QStringLiteral("and on every other page"), frame->stripShown());
-    window.showWish(QString());
-    expect(QStringLiteral("including the page that asks for software"), frame->stripShown());
     window.showBrowse();
 
     // Its button starts Recab; here no Recab exists, and the status line says so.
@@ -568,8 +363,6 @@ void stripShots(Window &window, const QString &folder, const Save &save, const E
     expect(QStringLiteral("Finish and restart starts Recab, and says when it cannot (%1)").arg(frame->statusText()),
            frame->statusText().contains("Recab could not be started"));
     qunsetenv("LEVITATE_APP_SYSTEM");
-
-    activityShots(window, folder, save, expect, out);
 
     // The running system on trial: recab still calls the other system "next" (the preparation
     // that made the running system is kept until the trial is kept), but it is the system from
@@ -1025,7 +818,7 @@ void storageBefore(Window &window, const Save &save, const Expect &expect)
     expect(QStringLiteral("recipe's history has the story's changes (%1)").arg(history.size()), history.size() >= 3);
     const QStringList lines = window.storagePage()->historyLines();
     expect(QStringLiteral("the page lists as many as recipe reports (%1)").arg(lines.size()), lines.size() == history.size());
-    expect(QStringLiteral("newest first: the update of Element, the agent's install of Krita, then the two goings back (%1)").arg(lines.join(" | ")),
+    expect(QStringLiteral("newest first: the update of Element, the install of Krita, then the two goings back (%1)").arg(lines.join(" | ")),
            lines.size() >= 4 && lines[0] == "Updated Element from 1.12.3 to 1.12.4, from levitate"
                && lines[1] == "Installed Krita 5.2.13, from levitate"
                && lines[2] == "Went back to GIMP 3.0.4, from 3.0.2" && lines[3] == "Went back to GIMP 3.0.2, from 3.0.4");
@@ -1133,10 +926,10 @@ void holdShots(Window &window, const Save &save, const Expect &expect)
     window.startInstall("gimp", Place::Computer);
     waitUntilIdle(window, 30);
     words = wordsOn(window);
-    expect(QStringLiteral("a refused update of a held program: recipe's own sentence, no agent to fix it"),
+    expect(QStringLiteral("a refused update of a held program: recipe's own sentence"),
            words.contains("GIMP is kept at version 3.0.4")
                && words.contains("gimp is held, so it is not updated. Release it with: recipe unhold gimp")
-               && !words.contains("Let the agent fix it") && !words.contains("What the agent is given"));
+               );
     save(window, "16d-held-refused");
 
     // Released again: its update counts and is offered.
@@ -1504,7 +1297,7 @@ int takeShots(Window &window, const QString &folder)
                 ok_ = false;
             }
         };
-        livestory::guardRefuses(refused, folder, "RECIPE_GUI_RECIPE");
+        helpstory::guardRefuses(refused, folder, "RECIPE_GUI_RECIPE");
     }
     // Before recipe has answered: what a person sees while the catalog is read.
     bool ok = ok_ && window.grab().save(QDir(folder).filePath("0-reading.png"));
@@ -1608,12 +1401,6 @@ int takeShots(Window &window, const QString &folder)
             said << "not as expected: the facts say that the address is not a host name\n";
             ok = false;
         }
-        // `recipe update` takes no `--autofix` (cli.rs): a stopped update offers no repair, and says so.
-        if (words.contains("Let the agent fix it")
-            || !words.contains("Recipe lets its agent repair a recipe only while installing it")) {
-            said << "not as expected: a stopped update offers no agent repair, and says why\n";
-            ok = false;
-        }
         // Where recipe keeps the log is a fact of the stop; the output itself is under "Show the output".
         if (!words.contains("Recipe keeps the log and the retained record of this run in ")
             || words.contains("of the run's output")) {
@@ -1666,47 +1453,37 @@ int takeShots(Window &window, const QString &folder)
         hold("going back again returns", window.catalog().installedItem("gimp")->version == now);
     }
 
-    // Recipe's repair belongs to an install: a first install the sandbox refuses, handed to
-    // Recipe's agent with `recipe install --autofix`.
+    // A first install the sandbox refuses: the failure offers "Copy for agent", which puts the issue, the facts
+    // and the whole output on the clipboard, and nothing else.
     qputenv("RECIPE_STANDIN_REFUSE_NEW", "krita");
     window.startInstall("krita", Place::Computer);
     waitUntilIdle(window);
-    if (!wordsOn(window).contains("Let the agent fix it")) {
-        said << "not as expected: a stopped install offers Let the agent fix it\n";
-        ok = false;
-    }
     {
-        // The agent is given the last lines of the run's output and where recipe keeps its log, not a count.
         const QString facts = wordsOn(window);
-        const bool given = facts.contains("The last 2 lines of the run's output (2 lines in all):")
-                           && facts.contains("recipe: fetching krita 5.2.13 from")
+        const bool given = facts.contains("Copy for agent")
                            && facts.contains("Recipe keeps the log and the retained record of this run in ")
                            && !facts.contains("The output of the run: ");
         if (!given) {
-            said << "not as expected: the facts for the agent carry the output's last lines and the log's place\n";
+            said << "not as expected: a stopped install carries Copy for agent and the log's place\n";
             ok = false;
         }
-        ok &= save(window, "8a-agent-facts");
-        const qsizetype beforeFix = changesAsked().size();
-        clickButton(window.runPage(), "Let the agent fix it");
-        waitUntilIdle(window);
-        QFile handed(QDir(qEnvironmentVariable("RECIPE_STANDIN_STATE")).filePath("last-autofix-prompt.txt"));
-        const QString prompt = handed.open(QIODevice::ReadOnly) ? QString::fromUtf8(handed.readAll()) : QString();
-        if (!prompt.contains("The last 2 lines of the run's output (2 lines in all):\n    recipe: diagnostics: ")
-            || !prompt.contains("recipe: fetching krita 5.2.13 from")
-            || !prompt.contains("Recipe keeps the log and the retained record of this run in " + qEnvironmentVariable("RECIPE_STANDIN_STATE") + "/logs/")) {
-            said << "not as expected: the prompt file handed to recipe holds the last lines and the log's place\n";
-            ok = false;
-        }
-        const QList<Asked> now = changesAsked().mid(beforeFix);
-        if (now.size() != 1 || now[0].arguments.mid(0, 4) != QStringList{"install", "levitate:krita", "--machine-events", "--autofix"}
-            || !window.catalog().installedItem("krita", Place::Computer)) {
-            said << "not as expected: the repair is `recipe install NAME --machine-events --autofix ...`, and it installs\n";
+        ok &= save(window, "8a-failure-facts");
+        QApplication::clipboard()->clear();
+        const qsizetype beforeCopy = changesAsked().size();
+        clickButton(window.runPage(), "Copy for agent");
+        const QString copied = QApplication::clipboard()->text();
+        if (!copied.contains("The issue:\n") || !copied.contains("The facts:\n")
+            || !copied.contains("recipe: fetching krita 5.2.13 from")
+            || !copied.contains("Recipe keeps the log and the retained record of this run in ")
+            || changesAsked().size() != beforeCopy) {
+            said << "not as expected: Copy for agent puts the issue, the facts and the output on the clipboard and starts nothing\n";
             ok = false;
         }
     }
-    ok &= save(window, "8-agent-fixed");
     qunsetenv("RECIPE_STANDIN_REFUSE_NEW");
+    window.startInstall("krita", Place::Computer);
+    waitUntilIdle(window);
+    ok &= save(window, "8-installed-again");
     // Element's source has since published a recipe that stays on its list: the update goes through.
     qputenv("RECIPE_STANDIN_FIXED", "element");
     window.startInstall("element", Place::Computer);
@@ -1734,44 +1511,6 @@ int takeShots(Window &window, const QString &folder)
     ok &= save(window, "10-one-source");
     window.chooseSource(QString());
 
-    // Asking for software no source has: the agent asks back, then writes the recipe.
-    window.showWish("a file manager for the terminal");
-    ok &= save(window, "11-ask-for-software");
-    const Origin *ownFolder = window.catalog().origin("local");
-    {
-        QStringList words;
-        if (auto *page = window.findChild<WishPage *>())
-            for (QLabel *label : page->findChildren<QLabel *>())
-                words << label->text();
-        expect(QStringLiteral("the ask page says the agent may write in the person's own recipe folder only (%1)")
-                   .arg(ownFolder ? ownFolder->path : QString()),
-               ownFolder && words.join('\n').contains("may write in your own recipe folder only (" + ownFolder->path + ")."));
-    }
-    window.askAgent(QStringLiteral("The request:\na file manager for the terminal\n\nThe issue:\nNo recipe for it "
-                                   "exists.\n\nThe expected result:\nOne recipe that recipe info accepts.\n"));
-    for (int waited = 0; !window.agentAsks() && window.busy() && waited < 1800; ++waited)
-        settle(50);
-    expect("the agent asks which one", window.agentAsks());
-    ok &= save(window, "12-the-agent-asks");
-    {
-        // What Activity will list the run under was handed to the agent.
-        QFile sent(QDir(qEnvironmentVariable("RECIPE_STANDIN_STATE")).filePath("last-prompt.json"));
-        const QJsonObject said = sent.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(sent.readAll()).object() : QJsonObject();
-        expect("the agent is told this is Recipe, and the first line of the request as the title",
-               said["app"].toString() == "Recipe" && said["title"].toString() == "a file manager for the terminal");
-        expect("the agent is allowed to write in the person's own recipe folder, which was made first",
-               ownFolder && said["may_write"].toArray() == QJsonArray{ownFolder->path} && QDir(ownFolder->path).exists());
-        // "Go to it" on Activity returns to this run's page.
-        window.showBrowse();
-        emit window.frame()->goToRun();
-        expect("going to the run shows its page again", window.agentAsks());
-    }
-    window.answerAgent(QStringLiteral("Yazi"));
-    waitUntilIdle(window);
-    expect("the recipe the agent wrote is listed", window.catalog().recipe("yazi") != nullptr);
-    expect("it is not installed", window.catalog().installedItem("yazi") == nullptr);
-    ok &= save(window, "13-the-recipe-it-wrote");
-
     window.removeSource("acme", false);
     waitUntilIdle(window);
     expect("a removed source is gone", window.catalog().origin("acme") == nullptr);
@@ -1798,14 +1537,13 @@ int takeShots(Window &window, const QString &folder)
         storageAfter(window, save_, expect);
     }
 
-    // The frame: the rail, the strip about the next system, Activity.
+    // The frame: the rail, the strip about the next system.
     auto saved = [&](QWidget &widget, const QString &name) { ok &= save(widget, name); };
     auto held = [&](const QString &what, bool holds) { expect(what, holds); };
     frameShots(window, saved, held);
     holdShots(window, saved, held);
     gapShots(window, saved, held);
-    settingsShots(window, folder, saved, held);
-    helpShots(window, folder, saved, held);
+    helpShots(window, saved, held);
     stripShots(window, folder, saved, held, out);
     placesShots(folder, saved, held);
     out << (ok ? "all flows ended where they should\n" : "some flows did not end where they should\n");

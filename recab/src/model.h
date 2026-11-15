@@ -15,7 +15,7 @@
 struct ChangeItem {
     QString id, kind, title; // kind: software, file, update, other
     // What the next system's page lists. Only the real recab says more than
-    // a title: `what` is the title without "by the agent" (the page has a
+    // a title: `what` is the title (the page has a
     // column for who), `action` and `package` are recab's own words for it
     // (install, update, remove, edit; the package or the edited path), `actor`
     // is the label the caller gave (empty when none) and `when` the unix time
@@ -31,10 +31,6 @@ struct ActionVerdict {
 
 struct Clash {
     QString path, local, release;
-};
-
-struct Check {
-    QString expected, verdict, note; // verdict: yes, no, unknown
 };
 
 // A thing the selected release and the next system disagree about, as recab's
@@ -119,8 +115,6 @@ struct Status {
     qint64 updateBytes = 0;
 
     QList<Clash> clashes;
-    QString proposalPath, proposalSummary, proposalScope; // what an agent did about a clash
-    QList<Check> checks;
 
     // The last restart into a next system. Outcome: "kept" (the running
     // system is the one tried), "failed" (the computer came back), "other"
@@ -171,7 +165,6 @@ struct HistoryRow {
     QString kind, what, who, ended, detail, slot, preparation, actor;
     Mood mood = Plain;
     bool restart = false;      // a restart, its keeping or return, going back
-    bool byAgent = false;
     // Whom recab names for it: only a change has an actor.
     bool carriesActor = false;
 };

@@ -26,8 +26,6 @@ class RunPage;
 class SourcesPage;
 class StoragePage;
 class UpdatesPage;
-class WishPage;
-class WorkPage;
 
 class Window : public QMainWindow {
     Q_OBJECT
@@ -45,16 +43,11 @@ public:
     void askUpdate(const QString &name, Place place);
     // Starts the install or update at once, with no Before step: for the run
     // the person has just agreed to, and for "Try again".
-    void startInstall(const QString &name, Place place = Place::Computer, const QString &agentPrompt = QString());
+    void startInstall(const QString &name, Place place = Place::Computer);
     void askRemove(const QString &name, Place place = Place::Computer);
     void stopRun();
     void showSources();
     void showStorage();
-    // Ask the agent for a recipe: the page, and handing its prompt over.
-    void showWish(const QString &wish = QString());
-    void askAgent(const QString &prompt);
-    bool agentAsks() const;
-    void answerAgent(const QString &words);
     // Reads the catalog again, as F5 does.
     void refresh();
     // Fetches the sources' lists again (one, or all), then reads the catalog.
@@ -148,7 +141,6 @@ private:
     QString origin_;    // the source chosen on the Browse page; empty: all
     QString category_;  // the category last browsed
     bool read_ = false; // the catalog was read at least once
-    QString written_;   // the recipe the agent said it wrote
     Refresher *refresher_;
     QString readWords_, buildingWords_;
 
@@ -164,6 +156,4 @@ private:
     UpdatesPage *updates_;
     SourcesPage *sources_;
     StoragePage *storage_;
-    WishPage *wish_;
-    WorkPage *work_;
 };

@@ -1,5 +1,5 @@
 #include "look.h"
-#include "settings.h"
+#include "windowsize.h"
 #include "shots.h"
 #include "window.h"
 
@@ -21,18 +21,16 @@ int main(int argc, char **argv)
     parser.addHelpOption();
     parser.addVersionOption();
     const QCommandLineOption look("look", "From a checkout: a stand-in look, levitate or acorn.", "name");
-    const QCommandLineOption shots("shots", "From a checkout: look, save a picture of what was found and of the "
-                                            "hand-over into this folder, then quit.",
+    const QCommandLineOption shots("shots", "From a checkout: look and save a picture of what was found into this "
+                                            "folder, then quit.",
                                    "folder");
-    const QCommandLineOption handOver("hand-over", "With --shots: also hand the mess to the agent, look again, "
-                                                   "compare the two systems and ask the agent what differs.");
-    parser.addOptions({look, shots, handOver});
+    parser.addOptions({look, shots});
     parser.process(app);
     if (parser.isSet(look))
         applyLook(parser.value(look));
     // A picture run must not reach the person's real system: it needs every stand-in named.
     if (parser.isSet(shots)) {
-        const int refused = guardPictureMode("disk-gui", {"DISK_GUI_AGENT", "DISK_GUI_RECAB", "DISK_GUI_RECIPE", "DISK_GUI_FILES", "DISK_GUI_LSBLK", "DISK_GUI_ROOTS", "DISK_GUI_HOME"}, {"DISK_GUI_ROOT_HELPER"});
+        const int refused = guardPictureMode("disk-gui", {"DISK_GUI_RECAB", "DISK_GUI_RECIPE", "DISK_GUI_FILES", "DISK_GUI_LSBLK", "DISK_GUI_ROOTS", "DISK_GUI_HOME"}, {"DISK_GUI_ROOT_HELPER"});
         if (refused)
             return refused;
     }
@@ -41,7 +39,7 @@ int main(int argc, char **argv)
     // Opens at the size it had; the picture modes always use the first size.
     rememberWindowSize(&window, "disk", {1100, 700}, !parser.isSet(shots));
     if (parser.isSet(shots))
-        return takeShots(window, parser.value(shots), parser.isSet(handOver));
+        return takeShots(window, parser.value(shots));
     window.show();
     return QApplication::exec();
 }

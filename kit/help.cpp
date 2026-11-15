@@ -31,7 +31,7 @@ HelpText systemText()
     t.purpose = QObject::tr(
         "Recab is where you change and update this computer's locked system. The running system cannot be "
         "changed while it runs, so a change is made in a second system beside it, and takes effect when you "
-        "restart into it. You say what you want, and an agent makes the change there.");
+        "restart into it.");
     t.never = QObject::tr(
         "It never starts a change or a restart by itself. Before one, it says what will happen and waits for you.");
     // The 15 minutes are recab's own wait for start-up (`recab trial`, its default timeout), as Overview says.
@@ -59,10 +59,6 @@ HelpText systemText()
                      "change, which uses its place. Going back restarts into it; “Getting back” has the button."),
          true}};
     t.how = {
-        {QObject::tr("Make a change"),
-         QObject::tr("Choose “Make a change…” and say what you want in your own words. The page shows what the agent "
-                     "is given before you hand it over. The agent works in the next system."),
-         QStringLiteral("next"), QObject::tr("The next system")},
         {QObject::tr("Install software"),
          QObject::tr("Software is installed with Recipe. “Install software…” starts Recipe, where what you install for "
                      "this computer goes into the next system."),
@@ -86,20 +82,11 @@ HelpText systemText()
          QObject::tr("History lists what recab recorded: when, what, who and how it ended. “Save as a file…” keeps it "
                      "as text."),
          QStringLiteral("history"), QObject::tr("History")}};
-    t.agentInThisApp = QObject::tr(
-        "In Recab it works through recab: its changes go into the next system and take effect after you restart into "
-        "it.");
     t.wrong = {
         {QObject::tr("A run stopped"),
-         QObject::tr("The page says why, and its output ends with the reason. Activity shows what the agent did; it does "
-                     "not list installs or restarts. Where a page offers “Let the agent fix it”, it shows the issue and "
-                     "the facts the agent would be given; the result you expect is the part you may change."),
-         Frame::activityKey(), QObject::tr("Activity")},
-        {QObject::tr("The agent does not answer"),
-         QObject::tr("Open Settings. If the agent is not signed in, choose “Sign in…” there. “Try it” asks the agent to "
-                     "say hello. The line at the bottom of the window names the agent on its right and says whether it is "
-                     "signed in."),
-         Frame::settingsKey(), QObject::tr("Settings")},
+         QObject::tr("The page says why, and its output ends with the reason. “Copy for agent” puts the whole output on "
+                     "the clipboard, to paste into your own agent."),
+         QString(), QString()},
         {QObject::tr("The desktop does not start"),
          QObject::tr("Getting back has the steps: which system to pick in the list at start-up, and how to make that "
                      "choice stay. “Save as a file…” keeps them as text. A next system that fails to start properly is "
@@ -111,7 +98,7 @@ HelpText systemText()
                      "failed says which step had been made before it."),
          QStringLiteral("overview"), QObject::tr("Overview")}};
     t.others = {{Frame::Recipe, QObject::tr("Find, install, update and remove software.")},
-                {Frame::Recdirstat, QObject::tr("See how full the disk is, find mess and set it aside, and compare the two "
+                {Frame::Recdirstat, QObject::tr("See how full the disk is, find mess, and compare the two "
                                           "systems.")}};
     return t;
 }
@@ -124,11 +111,10 @@ HelpText recipeText()
     t.name = QObject::tr("Recipe");
     t.purpose = QObject::tr(
         "Recipe is where you find software, see what its recipe will do and what it may use, install it, update it, go "
-        "back a version and remove it. Programs are fetched and built by Recipe, inside a sandbox. If there is no "
-        "recipe for what you want, you can ask the agent to write one.");
+        "back a version and remove it. Programs are fetched and built by Recipe, inside a sandbox.");
     t.never = QObject::tr(
         "It installs or updates nothing until you have read what will happen, on the page that says so, and pressed its "
-        "button. Asking the agent for a recipe installs nothing either.");
+        "button.");
     t.ideas = {
         {QObject::tr("Recipes"),
          QObject::tr("A recipe says how a program is fetched and built, what it needs and what it may use."),
@@ -152,10 +138,6 @@ HelpText recipeText()
          QObject::tr("Search, or pick a kind, then open a program and choose “Install”. A page says what will happen; "
                      "nothing starts until you press “Install”."),
          QStringLiteral("browse"), QObject::tr("Browse")},
-        {QObject::tr("Ask for software that has no recipe"),
-         QObject::tr("Choose “Ask for software…” under the list and say what you want. The agent may write a recipe in "
-                     "your own recipe folder. Nothing is installed."),
-         QStringLiteral("ask"), QObject::tr("Ask for software")},
         {QObject::tr("See what is installed, and remove it"),
          QObject::tr("Installed lists what is installed and in which place. “Open” starts a program from the place it is "
                      "installed in. A program can be removed; Remove asks first in its own small window. A program whose "
@@ -178,24 +160,13 @@ HelpText recipeText()
         {QObject::tr("See where recipes come from"),
          QObject::tr("Sources lists them. “Fetch again” reads one again; “Add a source…” takes an address or a folder."),
          QStringLiteral("sources"), QObject::tr("Sources")}};
-    t.agentInThisApp = QObject::tr(
-        "In Recipe, “Ask for software” lets it write in your own recipe folder, and only there, unless Settings allowed "
-        "it more.");
     t.wrong = {
         {QObject::tr("An install or update stopped"),
-         QObject::tr("The page says what stopped and shows what Recipe recorded. “Try again” repeats it. For an install, "
-                     "“Let the agent fix it” runs it again with the agent's repair on, given the issue, the facts and the "
-                     "result you expect, which you may change. You do not approve the repair first: the page reports what "
-                     "the agent changed when the run ends. Recipe starts that agent itself, so Activity does not list it. "
-                     "A stopped update has no such button. Removing, going back, keeping at a version, sources, fetching "
-                     "and clearing have a page of their own with Stop; if one does not finish it shows Recipe's message "
-                     "and “Try again”."),
-         QString(), QString()},
-        {QObject::tr("The agent does not answer"),
-         QObject::tr("Open Settings. If the agent is not signed in, choose “Sign in…” there. “Try it” asks the agent to "
-                     "say hello. The line at the bottom of the window names the agent on its right and says whether it is "
-                     "signed in."),
-         Frame::settingsKey(), QObject::tr("Settings")}};
+         QObject::tr("The page says what stopped and shows what Recipe recorded. “Try again” repeats it, and “Copy for "
+                     "agent” puts the whole output on the clipboard, to paste into your own agent. Removing, going back, "
+                     "keeping at a version, sources, fetching and clearing have a page of their own with Stop; if one does "
+                     "not finish it shows Recipe's message and “Try again”."),
+         QString(), QString()}};
     t.others = {{Frame::Recab, QObject::tr("Change and update the locked system, finish and restart into it, and go "
                                             "back.")},
                 {Frame::Recdirstat, QObject::tr("See how full the disk is, find mess and set it aside, and compare the two "
@@ -211,35 +182,23 @@ HelpText diskText()
     t.name = QObject::tr("Recdirstat");
     t.purpose = QObject::tr(
         "Recdirstat shows how full the place for your files is, where the mess is hiding, and how alike the two systems are. "
-        "The agent clears mess for you by setting places aside, not by deleting them; what belongs to Recipe is listed, "
-        "but Recdirstat leaves it alone.");
+        "What belongs to Recipe is listed, but Recdirstat leaves it alone.");
     t.never = QObject::tr(
-        "It changes nothing by itself. The window itself deletes only one thing, the holding folder of places set aside, "
-        "and only when you press “Let it all go” and agree on the page that says what goes.");
+        "It changes nothing on your disk: it only reads and shows.");
     t.ideas = {
         {QObject::tr("Mess"),
          QObject::tr("Mess is what the rules name as leftovers."),
          QObject::tr("Caches, build leftovers, the trash, old downloads, big files nobody has touched for a year, and "
                      "places you pick yourself. The rules look only at your home folder and Recipe's own folders, which are "
-                     "listed but never handed over. Each other place says what the agent would do with it: clear it, or "
-                     "ask you first. “Never suggest this” keeps a "
+                     "listed but never handed over. “Never suggest this” keeps a "
                      "place off the list; “Suggest it again” on Mess puts it back."),
-         true},
-        {QObject::tr("Setting aside"),
-         QObject::tr("The agent does not delete: it decides which places to set aside."),
-         QObject::tr("The helper that runs the agent moves those places, and only places you handed over, into a holding "
-                     "folder on the same disk. (A program you chose as the agent by its path moves them itself.) "
-                     "You can bring one place back, or everything "
-                     "back; the window refuses, and says why, when something is at the old place. Nothing is gone until "
-                     "you press “Let it all go”, which says first what goes and that it cannot be undone. Nothing lets "
-                     "it go by itself."),
          true},
         {QObject::tr("The two systems"),
          QObject::tr("A locked computer keeps two systems: the running one and the other beside it."),
          QObject::tr("“The two systems” reads both from start to end, which takes minutes, and changes neither. "
                      "If the other system can only be read by the administrator, it asks for the administrator's "
                      "password first. It says how alike they are and which folders "
-                     "differ, and you can ask the agent what differs. Changing, updating and going back are done in "
+                     "differ. Changing, updating and going back are done in "
                      "Recab."),
          true}};
     t.how = {
@@ -251,32 +210,13 @@ HelpText diskText()
          QObject::tr("Browse shows a folder as a list and as a map. “Biggest files” and “Not used for a year” list single "
                      "files of 1 MiB or more."),
          QStringLiteral("browse"), QObject::tr("Browse")},
-        {QObject::tr("Clear mess"),
-         QObject::tr("Tick the places, then choose “Hand it to the agent…”. A page says what will happen first. Places "
-                     "marked “asks first” are asked about in the window."),
+        {QObject::tr("Hand mess to your agent"),
+         QObject::tr("Tick the places, then choose “Copy for agent”, which puts the ticked places and the facts about "
+                     "them on the clipboard, to paste into your own agent."),
          QStringLiteral("mess"), QObject::tr("Mess")},
-        {QObject::tr("Bring a place back, or let it all go"),
-         QObject::tr("While anything is set aside, “Set aside by the agent” on The disk opens the page where each place "
-                     "can be brought back, or everything let go."),
-         QStringLiteral("disk"), QObject::tr("The disk")},
         {QObject::tr("Compare the two systems"),
          QObject::tr("Choose “Compare”. A page says first that both systems are read and that it takes minutes."),
          QStringLiteral("systems"), QObject::tr("The two systems")}};
-    t.agentInThisApp = QObject::tr(
-        "In Recdirstat it is asked which of the places you hand over to set aside, and is told to move nothing itself; the "
-        "helper moves them into a holding folder. What the page shows as set aside is read back from that folder, not "
-        "taken from what the agent says.");
-    t.wrong = {
-        {QObject::tr("A place could not be set aside"),
-         QObject::tr("The page for what was set aside lists it as “Could not”, with the reason, and “Try again” hands just "
-                     "that place over again. A place the agent says it set aside but that is not in the holding folder is "
-                     "flagged. Activity shows what the agent did."),
-         Frame::activityKey(), QObject::tr("Activity")},
-        {QObject::tr("The agent does not answer"),
-         QObject::tr("Open Settings. If the agent is not signed in, choose “Sign in…” there. “Try it” asks the agent to "
-                     "say hello. The line at the bottom of the window names the agent on its right and says whether it is "
-                     "signed in."),
-         Frame::settingsKey(), QObject::tr("Settings")}};
     t.others = {{Frame::Recipe, QObject::tr("Find, install, update and remove software.")},
                 {Frame::Recab, QObject::tr("Change and update the locked system, finish and restart into it, and go "
                                             "back.")}};
@@ -351,7 +291,7 @@ void HelpPage::draw(const QStringList &targets)
 
     // A link is only drawn when its page exists.
     auto exists = [&](const QString &target) {
-        return target == Frame::activityKey() || target == Frame::settingsKey() || targets.contains(target);
+        return targets.contains(target);
     };
     auto link = [&](QVBoxLayout *into, const HelpRow &row) {
         if (row.target.isEmpty())
@@ -409,47 +349,12 @@ void HelpPage::draw(const QStringList &targets)
     lines->addWidget(sectionHead(tr("How do I…")));
     lines->addWidget(rows(t.how));
 
-    // ---- The agent
-    lines->addSpacing(8);
-    lines->addWidget(sectionHead(tr("The agent")));
-    {
-        auto *panel = new Panel;
-        QVBoxLayout *inside = panel->column();
-        inside->setSpacing(6);
-        inside->addWidget(text(tr("The agent is a coding agent, Codex or Claude Code, that does the work you ask for. All "
-                                  "three apps start it through one helper and share one set of settings. It is given the "
-                                  "issue, the facts and the result you expect."),
-                               true));
-        inside->addWidget(strong(tr("What it may do without asking")));
-        inside->addWidget(text(tr("Read files and look things up."), true));
-        inside->addWidget(strong(tr("What it asks about")));
-        inside->addWidget(text(tr("Running commands as you, in your own folders: it asks each time, unless you choose "
-                                  "“Allowed” in Settings. “Allowed” lets it change files in your home folder itself; a "
-                                  "command it wants run for it is still asked each time."),
-                               true));
-        inside->addWidget(text(tr("Running a command as administrator: it always asks, and that cannot be switched off."),
-                               true));
-        inside->addWidget(text(tr("A question is on the page of the run and in Activity. You can answer in either. A run you "
-                                  "handed to the agent goes on if you close the window; Activity in any of the three apps "
-                                  "lists it and can answer its question."),
-                               true));
-        inside->addWidget(text(t.agentInThisApp, true));
-        inside->addWidget(text(tr("Claude Code is listed in Settings beside Codex, but this side has not been tried with a "
-                                  "real Claude Code yet."),
-                               true));
-        auto *settings = linkLabel(tr("Change this in Settings"));
-        connect(settings, &ClickLabel::clicked, this, [this] { emit go(Frame::settingsKey()); });
-        auto *activity = linkLabel(tr("See what the agent did in Activity"));
-        connect(activity, &ClickLabel::clicked, this, [this] { emit go(Frame::activityKey()); });
-        inside->addWidget(settings, 0, Qt::AlignLeft);
-        inside->addWidget(activity, 0, Qt::AlignLeft);
-        lines->addWidget(panel);
-    }
-
     // ---- When something is wrong
-    lines->addSpacing(8);
-    lines->addWidget(sectionHead(tr("When something is wrong")));
-    lines->addWidget(rows(t.wrong));
+    if (!t.wrong.isEmpty()) {
+        lines->addSpacing(8);
+        lines->addWidget(sectionHead(tr("When something is wrong")));
+        lines->addWidget(rows(t.wrong));
+    }
 
     // ---- The other apps
     lines->addSpacing(8);

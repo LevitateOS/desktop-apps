@@ -12,7 +12,7 @@
 
 // The kind of a place the person picked by hand (the last of messKinds()).
 inline constexpr int kindPicked = 6;
-// Recipe's own folders: listed, never handed over (Recipe has no command to clear them yet).
+// Recipe's own folders: listed, never copied (Recipe has no command to clear them yet).
 inline constexpr int kindRecipe = 2;
 
 struct MessKind {
@@ -28,7 +28,7 @@ struct Finding {
     QString what; // "Build output of recab"
     QString why;  // one sentence: why this can go
     QString how;  // how it should be cleared, when not simply by removing it
-    bool sure = true; // false: the agent asks before it removes this
+    bool sure = true; // false: check it before removing it
 };
 
 const QList<MessKind> &messKinds();
@@ -50,7 +50,7 @@ QString kindWords(int kind);
 QString lastUsedText(qint64 when, qint64 now);
 
 // Something the person pointed at on the map themselves. The rules do not
-// know what it is, so the agent is told to find out and ask. Findings that
+// know what it is, so it is marked to check first. Findings that
 // lie inside it are taken out of `found`: the picked thing stands for them.
 Finding pickedByHand(Node *node, const QString &home, QList<Finding> &found);
 

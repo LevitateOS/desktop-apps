@@ -7,14 +7,13 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QJsonArray>
-#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 
 bool WorkPage::stopped() const
 {
-    return (stop_ && !stop_->isEnabled()) || stoppedElsewhere_;
+    return stop_ && !stop_->isEnabled();
 }
 
 void WorkPage::begin(const QString &title, const QString &subtitle, Run *run, const QString &stopNote)
@@ -22,11 +21,8 @@ void WorkPage::begin(const QString &title, const QString &subtitle, Run *run, co
     run_ = run;
     marks_.clear();
     titles_.clear();
-    question_.clear();
-    choices_.clear();
-    asked_ = nullptr;
-    stoppedElsewhere_ = false;
     saysWhy_ = false;
+    reason_.clear();
     column_ = fresh();
 
     auto *header = new QHBoxLayout;
@@ -61,7 +57,11 @@ void WorkPage::begin(const QString &title, const QString &subtitle, Run *run, co
     panel->column()->addWidget(state_);
     column_->addWidget(panel);
 
-    column_->addWidget(strong(tr("Output")));
+    auto *outputHead = new QHBoxLayout;
+    outputHead->addWidget(strong(tr("Output")));
+    outputHead->addStretch();
+    outputHead->addWidget(copyForAgentButton([this] { return outputText(); }));
+    column_->addLayout(outputHead);
     output_ = new QPlainTextEdit;
     output_->setReadOnly(true);
     output_->setMaximumBlockCount(5000);
@@ -76,31 +76,18 @@ void WorkPage::begin(const QString &title, const QString &subtitle, Run *run, co
     connect(run, &Run::output, this, [this, run](const QString &line) {
         if (run != run_)
             return;
-        // Output only comes once the agent has its answer.
-        if (!question_.isEmpty())
-            answeredElsewhere();
         output_->appendPlainText(line);
-    });
-    connect(run, &Run::carriesOn, this, [this, run] {
-        if (run == run_)
-            onCarriesOn();
-        run->deleteLater();
     });
     connect(run, &Run::finished, this, [this, run](bool ok) {
         if (run == run_)
             onFinished(ok);
         run->deleteLater();
     });
-    emit activity(title);
 }
 
 void WorkPage::onEvent(const QJsonObject &event)
 {
     const QString kind = event["event"].toString();
-    // The agent says nothing while it waits: anything but a new question means
-    // an answer came, and it did not come from this page.
-    if (!question_.isEmpty() && kind != QLatin1String("question"))
-        answeredElsewhere();
     if (kind == QLatin1String("plan")) {
         // A plan sent again replaces the steps shown, it does not add to them.
         while (QLayoutItem *old = steps_->takeAt(0)) {
@@ -132,7 +119,6 @@ void WorkPage::onEvent(const QJsonObject &event)
             stepMark->setState(StepMark::Running);
             bar_->setRange(0, 0);
             state_->setText(titles_.value(id));
-            emit activity(titles_.value(id));
         } else if (outcome == QLatin1String("skipped")) {
             stepMark->setState(StepMark::Skipped);
         } else if (outcome == QLatin1String("failed")) {
@@ -151,106 +137,13 @@ void WorkPage::onEvent(const QJsonObject &event)
     } else if (kind == QLatin1String("say")) {
         state_->setText(event["text"].toString());
         output_->appendPlainText(event["text"].toString());
-    } else if (kind == QLatin1String("agent")) {
-        output_->appendPlainText(tr("agent: %1").arg(event["summary"].toString()));
-    } else if (kind == QLatin1String("question")) {
-        ask(event);
     }
-}
-
-// The agent asks and waits: the question, then a button for each choice, or
-// a line to type in when it gave none.
-void WorkPage::ask(const QJsonObject &event)
-{
-    if (asked_)
-        asked_->deleteLater();
-    question_ = event["id"].toString();
-    choices_.clear();
-    for (const QJsonValue &choice : event["choices"].toArray())
-        choices_ << choice.toString();
-    auto *panel = new Card(Card::Open);
-    asked_ = panel;
-    panel->column()->addWidget(strong(tr("The agent asks")));
-    panel->column()->addWidget(text(event["text"].toString(), true));
-    auto *row = new QHBoxLayout;
-    if (choices_.isEmpty()) {
-        auto *line = new QLineEdit;
-        auto *send = new QPushButton(tr("Answer"));
-        send->setDefault(true);
-        connect(send, &QPushButton::clicked, this, [this, line] { answer(line->text()); });
-        connect(line, &QLineEdit::returnPressed, send, &QPushButton::click);
-        row->addWidget(line, 1);
-        row->addWidget(send);
-    } else {
-        for (const QString &choice : choices_) {
-            auto *button = new QPushButton(choice);
-            connect(button, &QPushButton::clicked, this, [this, choice] { answer(choice); });
-            row->addWidget(button);
-        }
-        row->addStretch();
-    }
-    panel->column()->addLayout(row);
-    column_->insertWidget(1, panel);
-    bar_->setRange(0, 1);
-    bar_->setValue(0);
-    state_->setText(tr("Waiting for your answer"));
-    output_->appendPlainText(tr("agent asks: %1").arg(event["text"].toString()));
-    emit activity(tr("The agent is waiting for your answer"));
-}
-
-void WorkPage::answer(const QString &words)
-{
-    if (question_.isEmpty() || words.trimmed().isEmpty())
-        return;
-    run_->reply(question_, words.trimmed());
-    output_->appendPlainText(tr("you: %1").arg(words.trimmed()));
-    question_.clear();
-    choices_.clear();
-    if (asked_)
-        asked_->deleteLater();
-    asked_ = nullptr;
-    bar_->setRange(0, 0);
-    state_->setText(tr("The agent carries on"));
-    emit activity(tr("The agent carries on"));
-}
-
-void WorkPage::answeredElsewhere()
-{
-    question_.clear();
-    choices_.clear();
-    if (asked_)
-        asked_->deleteLater();
-    asked_ = nullptr;
-    bar_->setRange(0, 0);
-    state_->setText(tr("It was answered from Activity. The agent carries on"));
-    output_->appendPlainText(tr("the question was answered from Activity"));
-    emit activity(tr("The agent carries on"));
-}
-
-void WorkPage::onCarriesOn()
-{
-    emit activity(QString());
-    question_.clear();
-    choices_.clear();
-    if (asked_)
-        asked_->deleteLater();
-    asked_ = nullptr;
-    showVerdict(tr("The agent carries on without this window"),
-                tr("This window cannot reach it any more. Nothing was stopped; you can find it in Activity."));
-    emit done(false);
 }
 
 void WorkPage::onFinished(bool ok)
 {
-    emit activity(QString());
-    question_.clear();
-    choices_.clear();
-    if (asked_)
-        asked_->deleteLater();
-    asked_ = nullptr;
-    stoppedElsewhere_ = run_->wasStopped();
-    const bool stoppedByUser = !stop_->isEnabled() || stoppedElsewhere_;
-    const QString reason = run_->failure()["reason"].toString();
+    const bool stoppedByUser = !stop_->isEnabled();
+    const QString reason = reason_ = run_->failure()["reason"].toString();
     if (ok || stoppedByUser) {
         emit done(ok);
         return;
@@ -258,6 +151,12 @@ void WorkPage::onFinished(bool ok)
     showVerdict(tr("It stopped"),
                 reason.isEmpty() ? tr("The output below ends with the reason.") : reason);
     emit done(false);
+}
+
+QString WorkPage::outputText() const
+{
+    const QString lines = output_ ? output_->toPlainText() : QString();
+    return reason_.isEmpty() ? lines : tr("%1\n\n%2").arg(reason_, lines);
 }
 
 void WorkPage::showVerdict(const QString &title, const QString &words)

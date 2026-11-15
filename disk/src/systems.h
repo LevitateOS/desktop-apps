@@ -59,10 +59,10 @@ struct Comparison {
     double alike() const;
     // One sentence on what the other system is.
     QString roleWords() const;
-    // The issue, facts and expected result for an agent asked to explain.
+    // What the differences are, as plain text for "Copy for agent".
     QString issue() const;
     QStringList facts() const;
-    QString expected() const;
+    QString copyText() const;
 };
 
 // What recab says about the two systems without reading them through: quick
@@ -103,15 +103,13 @@ public:
     void showComparing(const SystemsState &state);
     // An event of the running comparison (plan, step, progress).
     void progress(const QJsonObject &event);
-    // `said` is what the agent answered when it was asked to explain, if it
-    // was. `when` is when the systems were compared; `stale` says they have
+    // `when` is when the systems were compared; `stale` says they have
     // changed since.
-    void show(const Comparison &comparison, const QString &said, const QDateTime &when, bool stale);
+    void show(const Comparison &comparison, const QDateTime &when, bool stale);
 
 signals:
     void compare();
     void stop();
-    void handOver();
     void readAgain();
     void openSystem();
 

@@ -22,17 +22,15 @@ void settle(int milliseconds);
 bool waitFor(const std::function<bool()> &holds, int seconds = 20);
 
 // The guard of the picture modes (`--shots`). A picture run starts the backend
-// programs of its app, the agent and the helper's own agents, and a root
-// helper, and writes settings and records: run bare it would do that to the
-// person's real computer. So it refuses to start unless each of them is named
-// in the environment: `programs` (the app's own variables, each a stand-in
-// that must be named and non-empty), `mayBeEmpty` (the root helper: set and
-// empty counts as named, it then runs the command directly), and the ones every
-// app shares (the helper, its Codex and Claude Code, its root helper, HOME, the
-// XDG folders; HOME must not be the person's own home folder). Returns 0 when
-// all are named, else says on standard error what is missing, in one sentence,
-// and returns 2: the program's exit code. Also turns the notifier off unless
-// the check named one, and marks the process as a picture run (`pictureMode`).
+// programs of its app and a root helper, and writes settings: run bare it
+// would do that to the person's real computer. So it refuses to start unless
+// each of them is named in the environment: `programs` (the app's own
+// variables, each a stand-in that must be named and non-empty), `mayBeEmpty`
+// (the root helper: set and empty counts as named, it then runs the command
+// directly), and the ones every app shares (HOME, the XDG folders; HOME must
+// not be the person's own home folder). Returns 0 when all are named, else
+// says on standard error what is missing, in one sentence, and returns 2: the
+// program's exit code. Also marks the process as a picture run (`pictureMode`).
 // Call it before the window is made: the window starts reading at once.
 int guardPictureMode(const QString &program, const QStringList &programs, const QStringList &mayBeEmpty);
 bool pictureMode();

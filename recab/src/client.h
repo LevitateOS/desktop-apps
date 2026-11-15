@@ -1,4 +1,4 @@
-// The only place that runs `recab`, the agent and the restart. Reading goes
+// The only place that runs `recab` and the restart. Reading goes
 // through as the desktop user; changes go through the root helper (pkexec),
 // which shows the desktop's own password prompt.
 #pragma once
@@ -35,10 +35,6 @@ public:
     // itself, with `--machine-events`; for the real recab it becomes recab's
     // own command, with the open preparation's id and revision.
     Run *change(const QStringList &arguments);
-    // The agent, with the prompt (issue, facts, expected result) on its input
-    // as one JSON line; its questions are answered on the same input.
-    // `title` is what Activity lists the run under.
-    Run *agent(const QString &prompt, const QString &title = QString());
     Run *reboot();
 
     // What a change runs, as a person reads it: "recab finalize", "recab
@@ -51,13 +47,9 @@ public:
     // this window runs them itself.
     bool asksPassword() const { return !rootHelper_.isEmpty(); }
 
-    QString agentName() const;
-    // The program that is started as the agent, as the frame shows it.
-    QString agentProgram() const { return agent_; }
-
 private:
     QStringList realArguments(const QStringList &arguments) const;
-    QString program_, rootHelper_, agent_, reboot_, osRelease_;
+    QString program_, rootHelper_, reboot_, osRelease_;
     // From the last status understood: which recab answers, and what its
     // commands need to be told.
     bool real_ = false;

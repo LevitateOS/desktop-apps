@@ -13,26 +13,15 @@ beyond the red for "this went wrong", so it takes each desktop's own style.
 
 The window is `gui/kit/frame.*` (see `../kit/README.md`): the rail on the left
 (the three apps, then Browse, Installed, Updates with the number of updates as
-its badge, Sources, Storage, then Activity, which the frame owns), the pages in the
+its badge, Sources, Storage, then Help, which the frame owns), the pages in the
 middle, a strip under them and a status line. There is no sidebar any more:
 the search, the box for the source and the box for the kind of software are
-the top of the Browse page. Settings is under Activity and Help under Settings (the
-frame's own pages, the same in all three apps; `gui/kit/README.md`). The story opens
-Settings (picture `f-settings`), reading through the built levitate-agent with the
-stand-in Codex and a settings folder of its own, and Help and the first page (pictures
-`h-help*`, `h-firstrun-*`, below).
+the top of the Browse page. Help is the frame's own page, the same in all three
+apps (`gui/kit/README.md`). The story opens Help and the first page (pictures
+`h-help*`, `h-firstrun*`, below).
 
 - The status line says where the recipes are from and when they were read (and
-  what is being built); "Read again" sits beside it; the agent is the frame's
-  (`Agent: agent` for a stand-in, by its file name).
-- "Ask for software" hands the agent the app name "Recipe" and the first line of
-  the request as the run's title, so Activity lists it; "Go to it" on Activity
-  comes back to the run's page. It also names the person's own recipe folder (the
-  "local" source's, made first if it is missing) as `may_write`, so the agent can write
-  the recipe although its commands are asked each time; the page says that the agent
-  may write in the person's own recipe folder only, unless Settings allowed it more. If the folder
-  cannot be made the agent is not started and the status line says so. "Let the agent fix it" is run by `recipe
-  --autofix`, not by this window's agent, so it is not in Activity.
+  what is being built); "Read again" sits beside it.
 - The strip ("The next system holds N changes.") is read with `recab status
   --json` (`RECIPE_GUI_RECAB`, default `recab`) after every read of the recipes.
   It shows on every page; when recab cannot be run there is no strip and no
@@ -62,7 +51,6 @@ none against the real `recipe` (see the end of this section).
   it: the running system's list names the software and its version, not its
   programs.").
 - **Closing the window while something runs asks first.** An install or update
-  (not the agent's run, which the frame already lets go of and Activity follows),
   or a short change, makes `closeEvent` ask "… is still running", with what stops
   ("If you close the window now it is stopped"), what is kept (what is already
   fetched and built), what is true of the software (nothing changed / `X 1.2 stays
@@ -80,17 +68,17 @@ none against the real `recipe` (see the end of this section).
   was on (drawn from a read made after the change) and the status line says what was
   done; when it did not finish the page stays with Recipe's own message, what is true
   (`fd 10.2.0 is still installed.`), the output, and "Try again" (the same command again)
-  and "Back". Recipe's agent repair is an option of `recipe install` only, so these
-  offer no "Let the agent fix it". The remove question is asked without blocking too
+  and "Back".The remove question is asked without blocking too
   (`Window::removeQuestion`). A read asked for while another is going is now done as
   soon as that one ends, so a page that waits for it is not left waiting.
-- **The agent is given the run's last lines, and where the log is.** The facts of a
+- **A stopped install shows the run's last lines, and where the log is.** The facts of a
   stopped install carry the last 20 lines of the run's output (each cut at 240
   characters, "N in all") and, when `recipe` printed it, the place of the run's log
   and retained record: the plain line `recipe: diagnostics: DIRECTORY` it prints at
   the start (`tools/recipe`, `invocation_log.rs`, one directory per invocation holding
   `worker.log`, `supervisor-stderr.log`, `authority.json`, `result.json`). The page
-  scrolls the facts and keeps its buttons below them. A stopped update names the log
+  scrolls the facts and keeps its buttons below them; "Copy for agent" puts the issue,
+  the facts and the whole output on the clipboard. A stopped update names the log
   and keeps the output under "Show the output".
 - **The password prompt says what the action covers** (`data/org.levitateos.recipe.policy`):
   install, update, remove, keeping at a version, going back, adding or removing a source,
@@ -109,7 +97,7 @@ none against the real `recipe` (see the end of this section).
   running, stopped, not finished), `17e` (fetching that did not finish), `18a`–`18d` (no
   recipe: Installed, its page, "No recipe named", and going back with no recipe in the
   open-computer window), `19a`/`19b` (closing during an install and during a remove), `8a`
-  (what the agent is given), `p8`/`p9` ("Open" for krita in the person's own store, and
+  (the facts of a stopped install), `p8`/`p9` ("Open" for krita in the person's own store, and
   when its program is gone). The stand-in's `krita` has two programs, `kritarunner` first and
   `krita` in its menu entry, so a story can tell which one Open chose; its `fd` is installed
   with no recipe, from a source that is gone, with an earlier version kept.
@@ -123,12 +111,6 @@ profile") for the first three and is not claimed for the others (their pages say
 instead). Whether the real `recipe` prints `recipe: diagnostics: DIR` into a pipe with
 `--machine-events` was read in the source, not run. A `.desktop` file's `DBusActivatable`,
 `TryExec` and `Path` are ignored.
-
-`gui/kit` was left alone by this work. `WorkPage` offers only "Back" on a failure and always
-reports its title as the agent's note, so short changes got a page of Recipe's own. (The
-frame used to let go of Activity's attached runs on every `Close` event of the window, even
-when the window then refused to close; it now does so only when the window really closed,
-and the live story checks it with a window that refuses.)
 
 ## State (2026-11-11)
 
@@ -168,7 +150,6 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
 `qt6-qtsvg-devel` on Rocky and Fedora).
 
 - `RECIPE_GUI_RECIPE`: the `recipe` to run (default: `recipe` on `PATH`).
-- `RECIPE_GUI_AGENT`: the agent for "Ask for software" (default `levitate-agent`).
 - `RECIPE_GUI_RECAB`: the `recab` that tells the strip what the next system
   holds (default: `recab` on `PATH`).
 - `RECIPE_GUI_ROOT_HELPER`: what changes are run through (default: `pkexec`;
@@ -189,39 +170,26 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
   `QT_QPA_PLATFORM=offscreen` it needs no display. **It refuses to start (exit code 2,
   and a sentence naming what is missing) unless every program it could run and every
   folder it could write is named in the environment**: `RECIPE_GUI_RECIPE`,
-  `RECIPE_GUI_AGENT`, `RECIPE_GUI_RECAB`, `RECIPE_GUI_PACKAGE_ROOT`,
-  `RECIPE_GUI_ROOT_HELPER` (empty is a name), the helper (`LEVITATE_ACTIVITY_AGENT`)
-  with its Codex and Claude Code (`LEVITATE_AGENT_CODEX`, `LEVITATE_AGENT_CLAUDE`) and
-  its root helper (`LEVITATE_AGENT_ROOT_HELPER`), and `HOME` (not your own) and the XDG
-  folders in scratch space. The desktop notifier is off unless `LEVITATE_AGENT_NOTIFIER`
-  names one, and no app is started that `LEVITATE_APP_*` does not name. The story
-  runs itself bare to check that.
+  `RECIPE_GUI_RECAB`, `RECIPE_GUI_PACKAGE_ROOT`,
+  `RECIPE_GUI_ROOT_HELPER` (empty is a name), and `HOME` (not your own) and the XDG
+  folders in scratch space. No app is started that `LEVITATE_APP_*` does not name. The
+  story runs itself bare to check that.
 
-The story also checks the frame, Activity and the strip, so it needs the
-stand-in agent, a recab that speaks the real shape with a scratch state of its
-own, and the records Activity shows (stand-in Codex, never a real agent; build
-the agent first with `cmake --build .artifacts/agent/build`):
+The story also checks the frame and the strip, so it needs a recab that speaks the real
+shape with a scratch state of its own:
 
 ```sh
-F=$PWD/gui/recipe/fixtures; A=$PWD/gui/agent/fixtures; S=/tmp/recipe-shots   # all state of the check lives here
+F=$PWD/gui/recipe/fixtures; S=/tmp/recipe-shots   # all state of the check lives here
 rm -rf $S; mkdir -p $S/home $S/store $S/run; chmod 700 $S/run
 QT_QPA_PLATFORM=offscreen HOME=$S/home XDG_CONFIG_HOME=$S/home/config XDG_STATE_HOME=$S/home/state \
-  XDG_DATA_HOME=$S/home/data XDG_RUNTIME_DIR=$S/run LEVITATE_AGENT_NOTIFIER= \
-  LEVITATE_AGENT_CODEX=$A/codex LEVITATE_AGENT_CLAUDE=$A/claude LEVITATE_AGENT_ROOT_HELPER= \
-  LEVITATE_ACTIVITY_AGENT=$PWD/.artifacts/agent/build/levitate-agent RECIPE_GUI_RECORDS=$A/records \
-  RECIPE_GUI_RECIPE=$F/recipe RECIPE_GUI_AGENT=$F/agent RECIPE_GUI_ROOT_HELPER= \
+  XDG_DATA_HOME=$S/home/data XDG_RUNTIME_DIR=$S/run \
+  RECIPE_GUI_RECIPE=$F/recipe RECIPE_GUI_ROOT_HELPER= \
   RECIPE_GUI_PACKAGE_ROOT=$S/store RECIPE_STANDIN_STATE=$S/state RECIPE_STANDIN_SPEED=0 \
   RECIPE_GUI_RECAB=$PWD/gui/recab/fixtures/recab-real RECAB_STANDIN_STATE=$S/recab RECAB_STANDIN_SPEED=0 \
   .artifacts/recipe-gui/build/recipe-gui --look levitate --shots $S/shots
 ```
 
-The runs the records fixture leaves going are stopped when the story ends, also when it
-fails. After the records, the story starts runs of its own through a second window's
-"Ask for software" with the helper as its agent, and checks that they outlive the window
-and are found, followed, answered, approved and stopped from Activity (`../kit/livestory.*`;
-pictures `a-live-question`, `a-live-approval`, `a-live-follow`), and that the helper was
-started with a sandbox that may write in the person's own recipe folder (`may_write`).
-After the strip checks it puts the stand-in recab's running system on trial, where recab
+After the strip checks the story puts the stand-in recab's running system on trial, where recab
 still calls the other system "next", and checks that no strip is shown (`s4-no-strip-on-trial`).
 
 The state folders must be new (the `rm -rf` above): the story expects no next system at the start, then
@@ -230,8 +198,7 @@ makes one with one `prepare` and one `change`. The story needs
 Before page has no choice) and says so when it is missing. Pictures: `1-…` to
 `14-…` are the flows (`2b-before-install`, `4b-before-update` are the Before
 step); `f1`–`f4` Browse (also with a search and a kind), Installed, Updates and
-Sources in the frame; `s1`–`s3` the strip and a window with no recab; `a-*`
-Activity; `p1`–`p6` the two places (below); `15a`–`15c` the program page (not
+Sources in the frame; `s1`–`s3` the strip and a window with no recab; `p1`–`p6` the two places (below); `15a`–`15c` the program page (not
 installed, installed, installed with an update and an earlier version kept),
 `15d`/`15e` Storage before and after clearing, `16a`–`16d` hold (Installed,
 Updates, the program page, the refused update of a held program), `17*`–`19*`, `8a`,
@@ -273,10 +240,8 @@ sees what "Open" started and from where. `RECIPE_STANDIN_STOP_AT` also takes `NA
 `source:add` and `source:remove`, and `RECIPE_STANDIN_FAIL` (`remove:NAME`, `go-back:NAME`,
 `hold:NAME`, `unhold:NAME`, `clear`, `refresh`, `source-add`, `source-remove`) makes that
 short change fail with plain lines and recipe's own message. An install prints
-`recipe: diagnostics: DIR` first and hands the prompt file it was given to
-`last-autofix-prompt.txt`. `fd` is installed in every store's start state with no recipe in
-the catalog, from the source `oldmirror`, and `updates` lists it under `problems`. The stand-in agent writes the app name and title it was given to
-`last-prompt.json` there, which the story reads.
+`recipe: diagnostics: DIR` first. `fd` is installed in every store's start state with no recipe in
+the catalog, from the source `oldmirror`, and `updates` lists it under `problems`.
 
 Against the real `recipe` from the checkout, into a test store, with the
 Ginux launcher and image selected as `tools/recipe/README.md` describes.
@@ -301,16 +266,16 @@ QT_QPA_PLATFORM=offscreen RECIPE_GUI_RECIPE=$PWD/target/debug/recipe \
 |---|---|
 | `src/model.*` | the data: recipes, what is installed, updates, as read from JSON |
 | `src/client.*` | the only code that runs `recipe`; a `Run` reports one change as events |
-| `../kit/` | shared with `gui/recab` and `gui/disk`: small widgets (step mark, letter tile, panels, the prompt handed to an agent), the page base, the work page, the command runner, sizes and counts as words, the stand-in looks |
-| `../kit/frame.*`, `activity.*`, `nextsystem.*` | the window frame, the Activity page it owns, and the strip's reader |
+| `../kit/` | shared with `gui/recab` and `gui/disk`: small widgets (step mark, letter tile, panels, the "Copy for agent" button), the page base, the work page, the command runner, sizes and counts as words, the stand-in looks |
+| `../kit/frame.*`, `nextsystem.*` | the window frame and the strip's reader |
 | `../kit/before.*` | the Before page: a question, "Nothing has started...", sections the app fills, Cancel and one button |
 | `src/beforewords.*` | the words for it, from what `recipe` reported |
 | `src/pages.*` | Browse (with its search and boxes), a program's page, a run, Installed, Updates, the remove question |
-| `src/sources.*` | the Sources page, and asking the agent for a recipe |
+| `src/sources.*` | the Sources page |
 | `src/storage.*` | the Storage page: what the earlier versions and what is installed take, per store, and what was done to the stores (the history as sentences) |
 | `src/window.*` | the frame, its rail and status, and the flows between pages |
 | `src/shots.*` | the stand-in looks and the picture mode |
-| `fixtures/` | the stand-in `recipe` with its sample catalog and sources, and the stand-in agent |
+| `fixtures/` | the stand-in `recipe` with its sample catalog and sources |
 | `data/` | the menu entry and the polkit action |
 
 ## What the front end asks of `recipe`
@@ -336,8 +301,6 @@ Changes, through the root helper (as the person for software "for me"; with `--s
 | `recipe go-back NAME --machine-events` | exists: activates the newest earlier version again from the files a generation still holds; the final event only (`changed_package` in `commands.rs` covers it) |
 | `recipe storage --clear-earlier` | exists: deletes every earlier version. The window asks first ("Clear earlier versions…" on the Storage page; Installed points there). Recipe cannot clear one program's earlier versions alone, so the remove question no longer offers that. It adds a `clear-earlier` line to the history |
 | `recipe hold NAME`, `recipe unhold NAME` (with `--machine-events`) | exists (`commands.rs` `Commands::Hold`/`Unhold`, `packages.rs` `set_held`): `held` on the receipt, a new generation; the final event is `done` or `failed`. Through the root helper where the place needs it. Not for software in a locked computer's system: `system_route()` (`commands.rs` line 1381) hands only install, update, remove, installed and isinstalled to recab, so the window does not offer it there |
-| `recipe install NAME --autofix --autofix-prompt-file FILE --machine-events` | exists for `install`: Recipe's agent repair (Codex or Claude), with the front end's prompt appended to its own. Never run against a real agent |
-| `recipe update NAME --autofix ...` | does not exist: `update` takes no such options, so the window never sends it. A stopped update offers no repair and says so (the stand-in refuses it as the real `recipe` does) |
 
 Events are one JSON object per line. The front end reads these; any other
 line is shown as output. "Real" is what `recipe --machine-events` sends since
@@ -350,7 +313,6 @@ the real `recipe` (the others need a Ginux run).
 | `plan` | `recipe`, `steps`: the steps that recipe needs this time; the others are marked as not needed | yes, once that recipe's checks have run |
 | `recipe-hook` | `recipe`, `hook`, `status` (`running`, `success`, `failed`, `skipped`, and others the front end ignores), `msg` | yes; it is Recipe's own lifecycle event. `step` with `status` `done` is read the same way |
 | `fetch` | `recipe`, `source`, `bytes`, `total` (null when the server did not say) | yes |
-| `agent` | `recipe`, `hook`, `attempt`, `files`, `summary`: the agent changed the recipe during this run, which starts again | yes, from `--autofix` |
 | `done` | `recipe` | yes, the last event |
 | `failed` | `recipe`, `hook`, `reason` | yes, the last event; `hook` only where a step failed |
 | `failed` … `refused` | `endpoint` and the `declared` list, for a refused connection | yes, since tools/recipe `7f3e836`, compiled and not run (it needs a failed install under Ginux): `src/lib.rs` lines 107-114 add `refused` to the final `failed` event, `src/needs/report.rs` `refused_connection` (line 270) builds it from the first denied `ginux: audit` line. `endpoint` is the **numeric address** the audit names (`203.0.113.9:443`, or `[2001:db8::1]:443`), never a host name; `declared` is the recipe's NEEDS.network. The page says "the address 203.0.113.9, port 443, which is not on the recipe's list" and that recipe reports an address, not a name; the stand-in sends `203.0.113.9:443` |
@@ -447,8 +409,7 @@ use, and what comes with it (what it adds, what it needs and what only its build
 needs, what it keeps, licence, home page); the recipe (its file, its source, "Read
 it", and the three steps with the author's notes). Everything is from the catalog
 (`list --json`, `installed --json`, `updates --json`). Not on the page, because
-`recipe` carries nothing for it: "Repair", "Tell the agent it does not work",
-"Copy to your own recipes", "Needed by", and the limits that applied when this
+`recipe` carries nothing for it: "Copy to your own recipes", "Needed by", and the limits that applied when this
 version was built (`installed --json` carries them as `needs`, which the window does
 not read yet).
 
@@ -467,8 +428,7 @@ system or in the next system, where `recipe` does not support it. A held program
 - has no Before step until it is released: the update buttons are not drawn, and
   asking anyway (a stale page, "Try again") says so at the status line;
 - if its update is run anyway, `recipe` refuses it with its own sentence, which the
-  page shows as it is under "GIMP is kept at version 3.0.4", with only "Back" (there is
-  nothing for an agent to fix). The page tells this from the catalog (held when the run
+  page shows as it is under "GIMP is kept at version 3.0.4", with only "Back". The page tells this from the catalog (held when the run
   began) or from the words " is held, so it is not updated" in the reason, which is
   `recipe`'s own wording and would have to change here if `recipe`'s did.
 
@@ -479,7 +439,7 @@ Before page (`../kit/before.*`, words in `src/beforewords.*`), from the recipe's
 page, the Browse list, Installed and Updates ("Update all" asks about each
 update in turn). Its button ("Install", "Update") starts the run as before;
 "Cancel" and Escape come back to the page the person was on, and nothing was run.
-"Try again" and "Let the agent fix it" start at once: they repeat what was
+"Try again" starts at once: it repeats what was
 agreed to.
 
 - **Where it goes**: for an install, the places that do not hold the software
@@ -520,7 +480,7 @@ installed --json` print for that store (`same:` or `DIFFERENT:` lines):
 ```sh
 export HOME=$PWD/.artifacts/recipe-gui/real/home RECIPE_STATE_DIR=$PWD/.artifacts/recipe-gui/real/state
 QT_QPA_PLATFORM=offscreen RECIPE_GUI_RECIPE=$PWD/target/debug/recipe RECIPE_GUI_ROOT_HELPER= \
-  RECIPE_GUI_AGENT=$PWD/gui/recipe/fixtures/agent RECIPE_GUI_RECAB=/nonexistent/recab \
+  RECIPE_GUI_RECAB=/nonexistent/recab \
   RECIPE_GUI_RECIPES_PATH=$PWD/recipes RECIPE_GUI_PACKAGE_ROOT=$PWD/.artifacts/recipe-gui/real/packages \
   .artifacts/recipe-gui/build/recipe-gui --look levitate --shots $PWD/.artifacts/recipe-gui/shots-real --try ripgrep --read-only
 ```
@@ -530,16 +490,10 @@ QT_QPA_PLATFORM=offscreen RECIPE_GUI_RECIPE=$PWD/target/debug/recipe RECIPE_GUI_
 Both are the frame's (`gui/kit/README.md`, "Help" and "The first time"). Help for
 Recipe has the ideas (recipes, the sandbox and what a recipe may use, the two places
 software goes), what it can do with a link to Browse, Installed, Updates, Sources,
-Storage or "Ask for software", the agent, and what to do when an install or update
-stopped or the agent does not answer. Its links to the rail's entries need nothing
-from the window; "Ask for software" is not an entry, so the window calls
-`frame_->addHelpTarget("ask")` and shows `WishPage` on `Frame::helpLink("ask")`.
-Help says what the "When a run stops" section above says and no more: "Let the
-agent fix it" is named only for an install (`recipe update` takes no `--autofix`
-yet), the repair is not approved first, and Activity does not list it. The first
-page is shown once per person the first time Recipe opens (never in a picture
-run). The story checks both (`../kit/helpstory.*`; pictures `h-help*`, `h-help-went`,
-`h-firstrun-*`).
+Storage, and what to do when an install or update stopped ("Copy for agent"). Its links
+to the rail's entries need nothing from the window. The first page is shown once per
+person the first time Recipe opens (never in a picture run). The story checks both
+(`../kit/helpstory.*`; pictures `h-help*`, `h-help-went`, `h-firstrun*`).
 
 ## Reading and reading again
 
@@ -581,55 +535,26 @@ names it as `SOURCE:NAME` and has not run it against the real `recipe`. When two
 sources hold one name, the window shows the first and says nothing of the
 other.
 
-## Asking for software that has no recipe
+## When a run stops
 
-"Ask for software…" under the list, or "Ask for “…”…" after a search, opens a
-page where the person says what they want. It goes to the agent as `The
-request:`, `The issue:`, `The facts:` (where a person's own recipes go, how a
-recipe is checked, which recipes exist) and `The expected result:`, which the
-person can change. The agent is `RECIPE_GUI_AGENT` (default `levitate-agent`, which starts Codex; see
-`gui/agent/README.md`), handed
-the prompt as one JSON line, `{"prompt": "..."}`, with its input left open. It
-reports with `plan`, `step`, `output`, `agent` and `done`; an `agent` event
-with a `recipe` names what it wrote, and the window opens that recipe to be
-read. Nothing is installed. It may ask: a `question` event (`id`, `text`,
-`choices`) is shown with a button for each choice, and the answer goes back
-as `{"question": id, "answer": "..."}`.
-
-## When a run stops: the agent fixes it
-
-Recipe's premise is that an agent does the maintenance. A stopped run is not
-handed back to the person to sort out. The page puts together what the agent
-is given, in three parts, and shows it:
-
-- **The issue**: what stopped, in one sentence.
-- **The facts**: what Recipe recorded (the refused endpoint and the allowed
-  list, Recipe's own message, the recipe's path, the output, what is still
-  installed).
-- **The expected result**: what should be true afterwards. The person can
-  change this part; it is the only part that is theirs to say.
-
-"Let the agent fix it" runs the same install again with Recipe's agent repair
-on (`recipe install NAME --autofix --autofix-prompt-file FILE`) and that text as
-its extra prompt. It is offered for a stopped install only: `recipe update` takes
-no `--autofix`, so a stopped update says that Recipe's agent repairs a recipe
-only while installing it, and offers "Try again" and "Show the output". "Try
-again" and "Show the output" stay beside the repair too. What the agent changed is reported when the run ends;
-there is no step yet where the person approves the change before it is used.
+A stopped install shows what stopped, in two parts: **the issue** (one sentence) and **the
+facts** (what Recipe recorded: the refused endpoint and the allowed list, Recipe's own
+message, the recipe's path, what is still installed). "Try again" repeats the install,
+"Show the output" reveals the output, and **"Copy for agent"** puts the issue, the facts and
+the whole output on the clipboard, to paste where the person likes. That is all it
+does. A stopped update shows the same buttons.
 
 ## Not done
 
 - Not in the frame: the licence and sort boxes of the design (nothing behind
   them). The Installed page does not show its count in the rail.
-- Help says nothing of: Update all for programs that ask for nothing more, "Repair" or
-  "Tell the agent…", "Copy to your own recipes…", download sizes, sizes of builds,
+- Help says nothing of: Update all for programs that ask for nothing more, "Copy to your own recipes…", download sizes, sizes of builds,
   installing from a source at an address. It names Remove's own small window and says only that "Clear earlier
   versions…" asks first.
 - Not built from the redesign, because `recipe` does not carry it: the search and
   sort of Installed, a library line ("4 libraries are installed because a program
   needs them"), "Look…"/"Update…" buttons on each Updates row, "Newer releases no
-  recipe has yet", a source's "added by you on", "Switch off", "Hand to the agent…",
-  "Hand both to the agent…", "Repair", "Tell the agent…", "Copy to your own recipes…",
+  recipe has yet", a source's "added by you on", "Switch off", "Copy to your own recipes…",
   the sizes of downloads, builds, saved steps and run records on Storage, and
   "which build is running" as the reason something cannot be cleared.
 - "Update all" updates every update that is not kept, each after its own Before step;
@@ -654,12 +579,6 @@ there is no step yet where the person approves the change before it is used.
 - Not read: `recipe isinstalled` (the window never asks it).
 - The frame's checks were run offscreen against stand-ins; not on a real desktop.
 
-- "Ask for software" against a real agent: `levitate-agent` stands between and
-  starts Codex, but no recipe request has been run through it against the real
-  Codex. The stand-in writes no file.
-- A repair of a stopped update: `recipe update` has no `--autofix`.
-- Answering the agent during "Let the agent fix it": that agent is started by
-  Recipe itself, which has no way to pass a question on.
 - The source commands and `refresh` against the real `recipe`; a source's
   icons; two sources with one name.
 

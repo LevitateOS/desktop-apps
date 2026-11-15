@@ -11,7 +11,6 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSet>
-#include <QShortcut>
 #include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -19,12 +18,6 @@
 
 namespace {
 
-QPushButton *primary(const QString &words)
-{
-    auto *button = new QPushButton(words);
-    button->setDefault(true);
-    return button;
-}
 
 QIcon swatch(const QColor &colour)
 {
@@ -41,13 +34,13 @@ qint64 sum(const QList<Finding> &found)
     return total;
 }
 
-QString agentWords(const Finding &finding)
+QString verdictWords(const Finding &finding)
 {
     if (finding.kind == kindRecipe)
         return QObject::tr("left alone");
     if (finding.kind == kindPicked)
-        return QObject::tr("finds out, asks");
-    return finding.sure ? QObject::tr("clears") : QObject::tr("asks first");
+        return QObject::tr("check first");
+    return finding.sure ? QObject::tr("safe to remove") : QObject::tr("check first");
 }
 
 const int nodeRole = Qt::UserRole + 1;
@@ -63,7 +56,7 @@ void MessPage::showScanning(const QStringList &roots)
     found_.clear();
     list_ = nullptr;
     foot_ = head_ = what_ = why_ = nullptr;
-    show_ = open_ = takeOff_ = never_button_ = hand_ = nullptr;
+    show_ = open_ = takeOff_ = never_button_ = copy_ = nullptr;
     panel_ = nullptr;
     told_ = nullptr;
     picked_ = nullptr;
@@ -112,7 +105,7 @@ void MessPage::show(std::shared_ptr<Node> tree, const QList<Finding> &found, con
     QString under = tr("In %1.").arg(shortRoots.join(tr(", ")));
     if (space.known)
         under += QLatin1Char(' ') + tr("The disk has %1 left of %2.").arg(bytesText(space.free), bytesText(space.total));
-    under += QLatin1Char(' ') + tr("This window deletes nothing here: the agent sets places aside first, and you let them go later.");
+    under += QLatin1Char(' ') + tr("This window deletes nothing.");
     top->addWidget(dim(text(under, true)));
     header->addLayout(top, 1);
     auto *again = new QPushButton(tr("Look again"));
@@ -121,8 +114,8 @@ void MessPage::show(std::shared_ptr<Node> tree, const QList<Finding> &found, con
     column->addLayout(header);
 
     auto *hint = new QHBoxLayout;
-    hint->addWidget(strong(tr("Tick only what you want the agent to take")));
-    auto *sure = new ClickLabel(tr("Tick only what clears without asking"));
+    hint->addWidget(strong(tr("Tick the places you want to copy")));
+    auto *sure = new ClickLabel(tr("Tick only what is safe to remove"));
     sure->setForegroundRole(QPalette::Link);
     connect(sure, &ClickLabel::clicked, this, &MessPage::tickOnlySure);
     hint->addStretch();
@@ -130,7 +123,7 @@ void MessPage::show(std::shared_ptr<Node> tree, const QList<Finding> &found, con
     column->addLayout(hint);
 
     list_ = new QTreeWidget;
-    list_->setHeaderLabels({tr("What and where"), tr("Size"), tr("Last used"), tr("The agent")});
+    list_->setHeaderLabels({tr("What and where"), tr("Size"), tr("Last used"), tr("Verdict")});
     list_->setRootIsDecorated(true);
     list_->setIndentation(14);
     list_->setTextElideMode(Qt::ElideMiddle);
@@ -194,10 +187,8 @@ void MessPage::show(std::shared_ptr<Node> tree, const QList<Finding> &found, con
     auto *foot = new QHBoxLayout;
     foot_ = dim(text(QString(), true));
     foot->addWidget(foot_, 1);
-    foot->addWidget(dim(text(tr("Set aside first, so it can come back"))));
-    hand_ = primary(tr("Hand it to the agent…"));
-    connect(hand_, &QPushButton::clicked, this, &MessPage::handOver);
-    foot->addWidget(hand_);
+    copy_ = copyForAgentButton([this] { return copyText(); });
+    foot->addWidget(copy_);
     column->addLayout(foot);
     fillList();
     updatePanel();
@@ -257,7 +248,7 @@ void MessPage::fillList()
             const QString shown = shortPath(finding.path, home_);
             auto *line = new QTreeWidgetItem(group, {finding.what == shown ? shown : finding.what + QStringLiteral("  ·  ") + shown,
                                                      bytesText(finding.bytes), lastUsedText(finding.node->newest(), now_),
-                                                     agentWords(finding)});
+                                                     verdictWords(finding)});
             line->setData(0, nodeRole, QVariant::fromValue(static_cast<void *>(finding.node)));
             line->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
             if (finding.kind == kindRecipe) {
@@ -267,7 +258,7 @@ void MessPage::fillList()
                 line->setCheckState(0, unticked.contains(finding.node) ? Qt::Unchecked : Qt::Checked);
             }
             line->setToolTip(0, finding.path + QLatin1Char('\n') + finding.why
-                                    + (finding.sure ? QString() : QLatin1Char('\n') + tr("The agent asks you first.")));
+                                    + (finding.sure ? QString() : QLatin1Char('\n') + tr("Check it before removing it.")));
             if (finding.node == picked_)
                 current = line;
         }
@@ -348,9 +339,9 @@ void MessPage::updatePanel()
     if (!finding->how.isEmpty())
         words += QLatin1Char(' ') + finding->how;
     if (finding->kind == kindPicked)
-        words += QLatin1Char(' ') + tr("The agent is told to find out what it is and to ask before it sets anything aside.");
+        words += QLatin1Char(' ') + tr("Check what it is before removing it.");
     else if (!finding->sure)
-        words += QLatin1Char(' ') + tr("The agent asks you first.");
+        words += QLatin1Char(' ') + tr("Check it before removing it.");
     why_->setText(words);
 }
 
@@ -409,187 +400,33 @@ void MessPage::updateFoot()
     if (!foot_)
         return;
     const QList<Finding> ticked = chosen();
-    hand_->setEnabled(!ticked.isEmpty());
+    copy_->setEnabled(!ticked.isEmpty());
     qint64 certain = 0;
     for (const Finding &finding : ticked)
         if (finding.sure)
             certain += finding.bytes;
     foot_->setText(ticked.isEmpty()
                        ? tr("Nothing is ticked.")
-                       : tr("%1 ticked: %2, of which %3 goes without asking.")
+                       : tr("%1 ticked: %2, of which %3 is safe to remove.")
                              .arg(counted(ticked.size(), tr("%1 place"), tr("%1 places")), bytesText(sum(ticked)), bytesText(certain)));
 }
 
-// ---------------------------------------------------------------- The hand-over
-
-void HandPage::show(const QList<Finding> &chosen, qint64 scannedBytes, const QStringList &roots, const QString &holding,
-                    qint64 freeNow, const QString &home, const AgentChoice &agent)
+// The ticked places and the facts about each, as plain text for "Copy for agent".
+QString MessPage::copyText() const
 {
-    const bool other = agent.kind == AgentChoice::Other;
-    qint64 certain = 0;
-    QStringList facts;
-    QStringList asks;
-    for (const Finding &finding : chosen) {
-        if (finding.sure)
-            certain += finding.bytes;
-        else
-            asks << shortPath(finding.path, home);
-        QString line = tr("%1 (%2): %3").arg(finding.path, bytesText(finding.bytes), finding.why);
+    const QList<Finding> ticked = chosen();
+    QStringList lines;
+    for (const Finding &finding : ticked) {
+        QString line = tr("%1 (%2, last used %3): %4").arg(finding.path, bytesText(finding.bytes),
+                                                         lastUsedText(finding.node->newest(), now_), finding.what);
+        line += QLatin1Char(' ') + finding.why;
         if (!finding.how.isEmpty())
             line += QLatin1Char(' ') + finding.how;
-        if (!finding.sure)
-            line += tr(" Ask me first.");
-        facts << line;
+        line += QLatin1Char(' ') + (finding.kind == kindPicked ? tr("Picked by hand: check what it is first.")
+                                    : finding.sure             ? tr("Rules: safe to remove.")
+                                                               : tr("Rules: check first."));
+        lines << line;
     }
-    // The convention itself (how to name a place to set aside, to keep or to
-    // give up on, and which places to ask about) is told to the agent by the
-    // helper that runs it, together with the holding folder and the list this
-    // request carries; the issue says only what the person wants.
-    // What the program that is not the helper is told differs: nothing moves the places for it.
-    const QString issue =
-        (other ? tr("%1 of %2 in %3 is taken by things that look like leftovers. Decide for each place below whether it can go, "
-                    "and say so for each one: the person has approved this list. Move the places that can go into the holding "
-                    "folder this request names, and delete nothing.")
-               : tr("%1 of %2 in %3 is taken by things that look like leftovers. Decide for each place below whether it can go, "
-                    "and say so for each one: the person has approved this list, and the places you name to be set aside are moved "
-                    "for you into a holding folder, not deleted."))
-            .arg(bytesText(sum(chosen)), bytesText(scannedBytes), roots.join(tr(", ")));
-
-    // What happens, in sentences that are true of this list: each depends on
-    // what was ticked, never on a fixed picture of it.
-    Ask ask;
-    ask.title = tr("Hand these %1 to the agent?").arg(counted(chosen.size(), tr("%1 place"), tr("%1 places")));
-    const QString count = counted(chosen.size(), tr("%1 place"), tr("%1 places"));
-    if (other) {
-        ask.happens << tr("%1, the program you chose as the agent, is handed this request as it is, to clear %2, %3 in all. It decides about "
-                          "each place and moves the places itself; Recdirstat only shows what it reports.")
-                           .arg(agent.name, count, bytesText(sum(chosen)));
-        ask.happens << tr("What it sets aside goes into the holding folder %1, on the same disk as your files, and Recdirstat then reads that "
-                          "folder, so what the next page shows as set aside is what is really there. A place on another disk than your "
-                          "home folder cannot be set aside by moving. Nothing is gone until you let it go, and you can bring each place "
-                          "back before that.")
-                           .arg(shortPath(holding, home));
-    } else {
-        ask.happens << tr("The agent is asked to clear %1, %2 in all.").arg(count, bytesText(sum(chosen)))
-                           + QLatin1Char(' ')
-                           + (agent.commandsAllowed
-                                  ? tr("It is told to decide about each place and to leave the moving to the helper. Your Settings let the agent run "
-                                       "commands in your home folder without asking, so only that instruction keeps it from changing your files itself.")
-                                  : tr("It is told to decide about each place and not to move or delete anything itself."))
-                           + (agent.kind == AgentChoice::Unknown
-                                  ? QLatin1Char(' ') + tr("Recdirstat could not ask which agent is chosen (%1). This is what happens with Codex or Claude Code; "
-                                                          "a program chosen by its path would move the places itself.")
-                                                           .arg(agent.problem.isEmpty() ? tr("it did not answer") : agent.problem)
-                                  : QString());
-        ask.happens << tr("The helper that runs the agent moves what the agent names, and only places on this list, into the holding folder %1. "
-                          "A place on another disk than your home folder cannot be moved there and stays where it is. Nothing is gone "
-                          "until you let it go, and you can bring each place back before that.")
-                           .arg(shortPath(holding, home));
-    }
-    if (asks.isEmpty()) {
-        ask.happens << tr("You are asked about no place first: handing this list over is your approval of every place on it.");
-    } else {
-        const QStringList named = asks.mid(0, 3);
-        const QString about = counted(asks.size(), tr("%1 place"), tr("%1 places"));
-        const QString names = named.join(tr(", ")) + (asks.size() > named.size() ? tr(" and %1 more").arg(asks.size() - named.size()) : QString());
-        ask.happens << (other ? tr("It is told to ask you first about %1: %2. Whether it asks before it moves one of them is up to the program; "
-                                   "Recdirstat shows its question. For every other place, handing this list over is your approval.")
-                                    .arg(about, names)
-                              : tr("It asks you first about %1: %2. The helper does not move one of them before you were asked. "
-                                   "For every other place, handing this list over is your approval.")
-                                    .arg(about, names));
-    }
-    ask.happens << (other ? tr("It works as you. Whether it asks before a command as administrator is up to the program.")
-                          : tr("It works as you. A command as administrator runs only if you approve it."));
-    if (freeNow >= 0)
-        ask.happens << tr("Once you let it go, up to %1 is free: the disk would have up to %2 free instead of %3.")
-                           .arg(bytesText(sum(chosen)), bytesText(freeNow + sum(chosen)), bytesText(freeNow));
-    else
-        ask.happens << tr("Once you let it go, up to %1 is free. How much the disk has free now could not be read.")
-                           .arg(bytesText(sum(chosen)));
-    ask.issue = issue;
-    ask.facts = facts;
-    ask.expected =
-        tr("Each place on the list is answered for: set aside, kept, or could not, with a reason for the last two. Nothing "
-           "is deleted. Only the things listed are touched. Anything marked \"ask me first\" is asked about before you "
-           "name it to be set aside.")
-        + (certain > 0 ? QLatin1Char(' ') + tr("At least %1 is expected to be set aside, since that much goes without asking.").arg(bytesText(certain))
-                       : QString());
-    ask.go = tr("Hand it over");
-    show(ask);
-}
-
-// The layout of the shared "Before it happens" page (kit/before.*): the
-// question, the line that nothing has started, what happens, then Cancel and
-// the one button. The shared page has no part the person can edit, and the
-// request the agent is given has one (the expected result), so this page is
-// that layout with the request in it, not a BeforePage followed by another page.
-void HandPage::show(const Ask &ask)
-{
-    QVBoxLayout *column = fresh();
-    column->setContentsMargins(28, 20, 28, 16);
-    if (!escape_) {
-        escape_ = new QShortcut(Qt::Key_Escape, this);
-        escape_->setContext(Qt::WidgetWithChildrenShortcut);
-        connect(escape_, &QShortcut::activated, this, &HandPage::back);
-    }
-
-    auto *top = new QVBoxLayout;
-    top->setSpacing(1);
-    top->addWidget(heading(ask.title));
-    top->addWidget(dim(text(tr("Nothing has started. This is what will happen if you go on."))));
-    column->addLayout(top);
-
-    // The sections scroll; Cancel and the button under them do not.
-    auto *scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    auto *inner = new QWidget;
-    auto *sections = new QVBoxLayout(inner);
-    sections->setContentsMargins(0, 0, 4, 0);
-    sections->setSpacing(14);
-
-    auto *panel = new Panel;
-    panel->column()->addWidget(strong(tr("What happens")));
-    for (const QString &sentence : ask.happens) {
-        auto *row = new QHBoxLayout;
-        row->setSpacing(8);
-        row->addWidget(dim(text(QStringLiteral("•"))), 0, Qt::AlignTop);
-        row->addWidget(text(sentence, true), 1);
-        panel->column()->addLayout(row);
-    }
-    sections->addWidget(panel);
-    auto *request = prompt_ = new PromptPanel(ask.issue, ask.facts, ask.expected);
-    sections->addWidget(request);
-    sections->addStretch();
-    scroll->setWidget(inner);
-    column->addWidget(scroll, 1);
-
-    auto *buttons = new QHBoxLayout;
-    buttons->setSpacing(8);
-    buttons->addWidget(dim(text(tr("Only the expected result is yours to change."), true)), 1);
-    auto *cancel = new QPushButton(tr("Cancel"));
-    auto *go = new QPushButton(ask.go);
-    go->setDefault(true);
-    connect(cancel, &QPushButton::clicked, this, &HandPage::back);
-    connect(go, &QPushButton::clicked, this, [this, request] { emit send(request->prompt()); });
-    buttons->addWidget(cancel);
-    buttons->addWidget(go);
-    column->addLayout(buttons);
-    go->setFocus();
-}
-
-QString HandPage::pageText() const
-{
-    QStringList words;
-    for (const QLabel *label : findChildren<QLabel *>())
-        words << label->text();
-    for (const QAbstractButton *button : findChildren<QAbstractButton *>())
-        words << button->text();
-    return words.join(QLatin1Char('\n'));
-}
-
-QString HandPage::prompt() const
-{
-    return prompt_ ? prompt_->prompt() : QString();
+    return tr("These %1 take %2 on the disk and look like leftovers. Say for each whether it can go.\n\nThe places:\n- %3\n")
+        .arg(counted(ticked.size(), tr("%1 place"), tr("%1 places")), bytesText(sum(ticked)), lines.join(QStringLiteral("\n- ")));
 }

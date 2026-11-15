@@ -1,5 +1,5 @@
 #include "look.h"
-#include "settings.h"
+#include "windowsize.h"
 #include "shots.h"
 #include "window.h"
 
@@ -33,7 +33,7 @@ int main(int argc, char **argv)
         applyLook(parser.value(look));
     // A picture run must not reach the person's real system: it needs every stand-in named.
     if (parser.isSet(shots)) {
-        const int refused = guardPictureMode("recipe-gui", {"RECIPE_GUI_RECIPE", "RECIPE_GUI_AGENT", "RECIPE_GUI_RECAB", "RECIPE_GUI_PACKAGE_ROOT"}, {"RECIPE_GUI_ROOT_HELPER"});
+        const int refused = guardPictureMode("recipe-gui", {"RECIPE_GUI_RECIPE", "RECIPE_GUI_RECAB", "RECIPE_GUI_PACKAGE_ROOT"}, {"RECIPE_GUI_ROOT_HELPER"});
         if (refused)
             return refused;
     }

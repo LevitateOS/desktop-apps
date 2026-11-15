@@ -227,11 +227,7 @@ void BrowsePage::show(std::shared_ptr<Node> tree, const QList<Finding> &found, c
     strip->addWidget(stripText_, 1);
     listButton_ = new QPushButton(tr("See the list"));
     connect(listButton_, &QPushButton::clicked, this, &BrowsePage::showMess);
-    handButton_ = new QPushButton(tr("Hand it to the agent…"));
-    handButton_->setDefault(true);
-    connect(handButton_, &QPushButton::clicked, this, &BrowsePage::handOver);
     strip->addWidget(listButton_);
-    strip->addWidget(handButton_);
     column->addLayout(strip);
 
     // Back where the person was, else in the home folder, else at the top.
@@ -496,9 +492,9 @@ void BrowsePage::drawPanel()
     else if (around->node == shown)
         words = around->why + QLatin1Char(' ')
                 + (around->kind == kindPicked
-                       ? tr("You picked it. The agent is told to find out what it is and to ask before it sets anything aside.")
-                   : around->sure ? tr("The agent sets it aside without asking.")
-                                  : tr("The agent asks before it sets it aside."));
+                       ? tr("You picked it. Check what it is before removing it.")
+                   : around->sure ? tr("The rules say it is safe to remove.")
+                                  : tr("The rules say to check it before removing it."));
     else
         words = tr("Inside %1, which is on the list.").arg(around->what);
     note_->setText(words);
@@ -519,9 +515,8 @@ void BrowsePage::drawStrip()
         bytes += finding.bytes;
     stripText_->setText(found_.isEmpty()
                             ? tr("Nothing is on the list of mess.")
-                            : tr("%1 on the list of mess, %2. What the agent clears is set aside first, so it can come back.")
+                            : tr("%1 on the list of mess, %2.")
                                   .arg(counted(found_.size(), tr("%1 place is"), tr("%1 places are")), bytesText(bytes)));
-    handButton_->setEnabled(!found_.isEmpty());
     listButton_->setEnabled(!found_.isEmpty());
 }
 

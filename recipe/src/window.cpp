@@ -9,7 +9,6 @@
 #include "nextsystem.h"
 #include "parts.h"
 #include "refresh.h"
-#include "work.h"
 
 #include <QCloseEvent>
 #include <QComboBox>
@@ -30,20 +29,6 @@
 #include <QToolButton>
 #include <QUrl>
 
-namespace {
-
-// What Activity calls a run: the first line under "The request:", else the
-// first line of the prompt.
-QString requestTitle(const QString &prompt)
-{
-    const QString heading = QStringLiteral("The request:");
-    const qsizetype at = prompt.indexOf(heading);
-    const QString line = (at < 0 ? prompt : prompt.mid(at + heading.size())).trimmed().section(QLatin1Char('\n'), 0, 0).trimmed();
-    return line.size() > 90 ? line.left(89).trimmed() + QStringLiteral("…") : line;
-}
-
-} // namespace
-
 Window::Window(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -58,13 +43,11 @@ Window::Window(QWidget *parent)
     updates_ = new UpdatesPage;
     sources_ = new SourcesPage;
     storage_ = new StoragePage;
-    wish_ = new WishPage;
-    work_ = new WorkPage;
     change_ = new ChangePage;
     for (QWidget *page : {static_cast<QWidget *>(browse_), static_cast<QWidget *>(recipe_), static_cast<QWidget *>(before_),
                           static_cast<QWidget *>(runPage_), static_cast<QWidget *>(installed_),
                           static_cast<QWidget *>(updates_), static_cast<QWidget *>(sources_), static_cast<QWidget *>(storage_),
-                          static_cast<QWidget *>(wish_), static_cast<QWidget *>(work_), static_cast<QWidget *>(change_)})
+                          static_cast<QWidget *>(change_)})
         stack_->addWidget(page);
 
     // The frame is the window: the rail, the pages in it, the strip about the
@@ -77,7 +60,6 @@ Window::Window(QWidget *parent)
     frame_->addEntry(QStringLiteral("sources"), tr("Sources"));
     frame_->addEntry(QStringLiteral("storage"), tr("Storage"));
     frame_->select(QStringLiteral("browse"));
-    frame_->setAgent(client_.agentProgram());
     updateStatus();
     setCentralWidget(frame_);
 
@@ -99,10 +81,6 @@ Window::Window(QWidget *parent)
     });
     // The next system is finished in Recab, the way its button starts it.
     connect(frame_, &Frame::finishRequested, this, [this] { frame_->startApp(Frame::Recab); });
-    connect(frame_, &Frame::goToRun, this, [this] {
-        frame_->select(QStringLiteral("browse"));
-        stack_->setCurrentWidget(work_);
-    });
 
     connect(browse_->searchBox(), &QLineEdit::textChanged, this, [this] { showBrowse(category_); });
     connect(browse_->categoryBox(), &QComboBox::activated, this,
@@ -114,13 +92,6 @@ Window::Window(QWidget *parent)
     connect(browse_, &BrowsePage::install, this, [this](const QString &name) { askInstall(name); });
     connect(browse_, &BrowsePage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
     connect(browse_, &BrowsePage::retry, this, [this] { reload([this] { showBrowse(); }); });
-    connect(browse_, &BrowsePage::askFor, this, &Window::showWish);
-    // Help leads to "Ask for software" too; it is not a rail entry, so the frame is told of it.
-    frame_->addHelpTarget(QStringLiteral("ask"));
-    connect(frame_, &Frame::helpLink, this, [this](const QString &key) {
-        if (key == QLatin1String("ask"))
-            showWish();
-    });
     connect(updates_, &UpdatesPage::check, this, [this] { fetchSources(); });
     connect(sources_, &SourcesPage::refresh, this, &Window::fetchSources);
     connect(sources_, &SourcesPage::add, this, &Window::addSource);
@@ -129,39 +100,15 @@ Window::Window(QWidget *parent)
         chooseSource(name);
         showBrowse();
     });
-    connect(wish_, &WishPage::back, this, [this] { showBrowse(category_); });
-    connect(wish_, &WishPage::handOver, this, &Window::askAgent);
-    connect(work_, &WorkPage::back, this, [this] { reload([this] { showBrowse(category_); }); });
-    // The work page is the agent's; only an agent's run speaks for the agent in the status line.
-    connect(work_, &WorkPage::activity, this, [this](const QString &words) {
-        if (run_ && run_->isAgent())
-            frame_->setAgentNote(words);
-    });
     connect(change_, &ChangePage::back, this, [this] { leaveChange(); });
     connect(change_, &ChangePage::retry, this, [this] {
         if (remake_)
             change(changeWords_, remake_);
     });
-    connect(work_, &WorkPage::done, this, [this](bool ok) {
-        run_ = nullptr;
-        frame_->setOwnRun(QString()); // Activity reads the run's record again
-        if (!ok && !work_->stopped())
-            return; // the work page says why, and offers the way back
-        // The recipe it wrote is there to be read; nothing was installed.
-        const QString written = written_;
-        reload([this, written] {
-            if (!written.isEmpty() && catalog_.recipe(written))
-                showRecipe(written);
-            else
-                showBrowse(category_);
-        });
-    });
-
-    // F5, and coming back to the window after a while: an agent or a terminal
-    // may have installed or written something in the meantime.
+    // F5, and coming back to the window after a while: a terminal
+    // may have installed something in the meantime.
     refresher_ = new Refresher(this, 20);
     connect(refresher_, &Refresher::asked, this, [this](bool) { refresh(); });
-    connect(refresher_, &Refresher::asked, frame_, &Frame::readAgain);
     auto *again = new QToolButton;
     again->setText(tr("Read again"));
     again->setToolTip(tr("Read the recipes and what is installed again (F5)"));
@@ -203,9 +150,6 @@ Window::Window(QWidget *parent)
     });
     connect(runPage_, &RunPage::back, this, [this] { showBrowse(); });
     connect(runPage_, &RunPage::retry, this, [this](const QString &name) { startInstall(name, runPlace_); });
-    connect(runPage_, &RunPage::fix, this,
-            [this](const QString &name, const QString &prompt) { startInstall(name, runPlace_, prompt); });
-    connect(runPage_, &RunPage::note, this, [this](const QString &words) { frame_->flash(words); });
     connect(runPage_, &RunPage::succeeded, this, [this](const QString &name) { runEnded(name, true); });
     connect(runPage_, &RunPage::failed, this, [this](const QString &name) { runEnded(name, false); });
     connect(runPage_, &RunPage::status, this, [this](const QString &words) {
@@ -321,7 +265,7 @@ void Window::refresh()
     if (busy())
         return;
     QWidget *shown = stack_->currentWidget();
-    const bool drawn = shown != runPage_ && shown != work_ && shown != wish_ && shown != before_ && shown != change_;
+    const bool drawn = shown != runPage_ && shown != before_ && shown != change_;
     reload([this, drawn] {
         // A copy: drawing the page sets `again_` anew, and the one running must outlive that.
         if (const auto draw = again_; drawn && draw)
@@ -451,7 +395,7 @@ void Window::startQueued()
     }
 }
 
-void Window::startInstall(const QString &name, Place place, const QString &agentPrompt)
+void Window::startInstall(const QString &name, Place place)
 {
     if (run_ || changeRun_) {
         frame_->flash(tr("One thing at a time: wait for the running one, or stop it."));
@@ -459,18 +403,12 @@ void Window::startInstall(const QString &name, Place place, const QString &agent
         return;
     }
     const bool installed = catalog_.installedItem(name, place) != nullptr;
-    if (installed && !agentPrompt.isEmpty()) {
-        // `recipe update` takes no `--autofix`; the stopped page offers no repair of an update.
-        frame_->flash(tr("Recipe's agent repairs a recipe only while installing it, not for an update."));
-        return;
-    }
     // `recipe` is given SOURCE:NAME, so two sources with one name cannot be confused.
     const QString named = catalog_.qualified(name);
     runPlace_ = place;
     runName_ = name;
     runUpdate_ = installed;
-    run_ = !agentPrompt.isEmpty() ? client_.fixWithAgent(named, agentPrompt, place)
-           : installed ? client_.update(named, place) : client_.install(named, place);
+    run_ = installed ? client_.update(named, place) : client_.install(named, place);
     runPage_->begin(catalog_, name, run_, place);
     stack_->setCurrentWidget(runPage_);
     run_->start();
@@ -571,52 +509,6 @@ void Window::showStorage()
     frame_->follow(QStringLiteral("storage"));
     storage_->show(catalog_, client_.places());
     stack_->setCurrentWidget(storage_);
-}
-
-// ---------------------------------------------------------------- Asking for a recipe
-
-void Window::showWish(const QString &wish)
-{
-    again_ = nullptr;
-    wish_->show(catalog_, wish);
-    stack_->setCurrentWidget(wish_);
-}
-
-void Window::askAgent(const QString &prompt)
-{
-    if (run_ || changeRun_) {
-        frame_->flash(tr("One thing at a time: wait for the running one, or stop it."));
-        return;
-    }
-    written_.clear();
-    // The agent writes the recipe into the person's own folder, and may write
-    // nowhere else on its own: the folder is made first, so that it can.
-    const QString folder = ownRecipesFolder(catalog_);
-    if (!QDir().mkpath(folder)) {
-        frame_->flash(tr("The folder for your own recipes could not be made (%1), so the agent was not started.").arg(folder));
-        return;
-    }
-    run_ = client_.agent(prompt, requestTitle(prompt), {folder});
-    // The agent names the recipe it wrote, so the window can open it.
-    connect(run_, &Run::event, this, [this](const QJsonObject &event) {
-        if (event["event"] == QLatin1String("agent") && !event["recipe"].toString().isEmpty())
-            written_ = event["recipe"].toString();
-    });
-    work_->begin(tr("The agent is writing a recipe"), tr("It only writes the recipe. Nothing is installed."), run_,
-                 tr("A half-written recipe is left in the folder"));
-    stack_->setCurrentWidget(work_);
-    run_->start();
-    frame_->setOwnRun(run_);
-}
-
-bool Window::agentAsks() const
-{
-    return run_ && stack_->currentWidget() == work_ && work_->asking();
-}
-
-void Window::answerAgent(const QString &words)
-{
-    work_->answer(words);
 }
 
 QString Window::shownName(const QString &name) const
@@ -780,8 +672,8 @@ void Window::changeEnded(bool ok)
                     draw();
                 else
                     showBrowse(category_);
-            } else if (const auto draw = again_; draw && stack_->currentWidget() != runPage_ && stack_->currentWidget() != work_
-                                                  && stack_->currentWidget() != wish_ && stack_->currentWidget() != before_) {
+            } else if (const auto draw = again_; draw && stack_->currentWidget() != runPage_
+                                                  && stack_->currentWidget() != before_) {
                 draw();
             }
         });
@@ -939,10 +831,9 @@ void Window::open(const QString &name, Place place)
 
 Run *Window::runningRun() const
 {
-    // An agent's run goes on without the window (the frame lets go of it); the others end with it.
     if (changeRun_ && changeRun_->running())
         return changeRun_;
-    if (run_ && !run_->isAgent() && run_->running())
+    if (run_ && run_->running())
         return run_;
     return nullptr;
 }

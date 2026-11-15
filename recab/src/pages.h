@@ -9,7 +9,6 @@
 #include <QMap>
 #include <QWidget>
 
-class PromptPanel;
 class QLabel;
 class QPushButton;
 class QVBoxLayout;
@@ -26,7 +25,6 @@ public:
     void showProblem(const QString &problem, bool asAdministrator = false);
 signals:
     void operation(const QJsonObject &operation);
-    void ask();
     void addUpdate();
     void goBack();
     void keep();
@@ -40,7 +38,6 @@ signals:
     void reset();
     void recover();
     void settle();
-    void fix(const QString &prompt);
     void retry();
     void readAgain();
     void readAsAdministrator();
@@ -63,7 +60,6 @@ public:
     void show(const Status &status);
 signals:
     void operation(const QJsonObject &operation);
-    void ask();
     void installSoftware();
     void reset();
     void settle();
@@ -76,8 +72,6 @@ signals:
     void keep();
     void goBack();
     void openDisk();
-    // What to do about a next system that did not start is on Overview.
-    void openOverview();
     void openRelease();
 };
 
@@ -123,7 +117,7 @@ signals:
     void readAgain();
 private:
     History last_;
-    int filter_ = 0; // 0 all, 1 restarts, 2 by the agent
+    int filter_ = 0; // 0 all, 1 restarts
 };
 
 // What can be turned back from here, and what to do when the desktop does not
@@ -144,20 +138,8 @@ signals:
 // a paragraph; only what recab's own source and status confirm.
 QString backStepsText(const Status &status);
 
-// Say the change in words; an agent works out how.
-class AskPage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const Status &status, const QString &request = QString());
-signals:
-    void back();
-    void handOver(const QString &prompt);
-};
-
 // A release and the next system disagree: what recab stopped at, what each
-// kind of conflict is, what recab offers for it, and what the agent is given
-// to settle what a side can settle.
+// kind of conflict is, what recab offers for it, and the facts to copy for an agent.
 class ClashPage : public Page {
     Q_OBJECT
 public:
@@ -166,22 +148,9 @@ public:
 signals:
     void later();
     void byHand();
-    void fix(const QString &prompt);
     void adoptBaseline();
     void reproduce(const QString &package);
 private:
     // The real recab's merge: what it stopped at, kind by kind.
     void showMerge(const Status &status);
-};
-
-// What the agent did about the clash, against each thing that was expected.
-class ProposedPage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const Status &status);
-signals:
-    void accept();
-    void askAgain();
-    void byHand();
 };

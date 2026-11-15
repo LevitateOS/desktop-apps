@@ -164,15 +164,6 @@ Status Status::fromJson(const QJsonObject &object)
         s.clashes << Clash{clash["path"].toString(), clash["local"].toString(), clash["release"].toString()};
     }
 
-    const QJsonObject proposal = object["proposal"].toObject();
-    s.proposalPath = proposal["path"].toString();
-    s.proposalSummary = proposal["summary"].toString();
-    s.proposalScope = proposal["scope"].toString();
-    for (const QJsonValue &value : proposal["checks"].toArray()) {
-        const QJsonObject check = value.toObject();
-        s.checks << Check{check["expected"].toString(), check["verdict"].toString(), check["note"].toString()};
-    }
-
     const QJsonObject trial = object["last_trial"].toObject();
     s.trialOutcome = trial["outcome"].toString();
     s.trialDetail = trial["detail"].toString();
@@ -299,10 +290,7 @@ Status Status::fromReal(const QJsonObject &o, const QString &distro, const QStri
             s.otherState = p["phase"] == QLatin1String("ready") ? QStringLiteral("ready") : QStringLiteral("open");
         // Every finished change, oldest first, with who asked for it.
         for (const QJsonValue &value : p["changes"].toArray()) {
-            ChangeItem item = changeFrom(value.toObject());
-            if (item.actor.startsWith(QLatin1String("agent")))
-                item.title = QObject::tr("%1, by the agent").arg(item.title);
-            s.changes << item;
+            s.changes << changeFrom(value.toObject());
         }
         // A command that runs between two steps has left no word of what it does.
         const bool between = p["phase"] == QLatin1String("prepared") || p["phase"] == QLatin1String("ready");
@@ -448,8 +436,6 @@ QString whoWords(const QString &actor)
         return QObject::tr("recab names nobody");
     if (actor == QLatin1String("person"))
         return QObject::tr("You");
-    if (actor.startsWith(QLatin1String("agent")))
-        return QObject::tr("The agent");
     return actor;
 }
 
@@ -481,7 +467,6 @@ History History::fromJson(const QJsonObject &o, const QString &distro, const QSt
                       || kind == QLatin1String("rollback") || kind == QLatin1String("commit");
         if (kind == QLatin1String("change")) {
             row.carriesActor = true;
-            row.byAgent = row.actor.startsWith(QLatin1String("agent"));
             row.what = changeWords(e["action"].toString(), e["package"].toString());
             row.who = whoWords(row.actor);
             // How it ended: what happened to the next system it went into,

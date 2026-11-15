@@ -1,18 +1,16 @@
 #include "shots.h"
 
-#include "activity.h"
 #include "frame.h"
 #include "helpstory.h"
-#include "livestory.h"
 #include "look.h"
 #include "parts.h"
-#include "settings.h"
 #include "nextsystem.h"
 #include "pages.h"
 #include "window.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QGroupBox>
 #include <QInputDialog>
@@ -47,14 +45,49 @@ void waitUntilIdle(Window &window, int seconds = 30)
     settle(150);
 }
 
-const char *nvidia = "My graphics card is an NVIDIA RTX 4070. I want NVIDIA's own driver instead of the built-in one.";
-const char *sshd = "Turn off password logins over ssh; I only use keys.";
-
-QString asked(const char *request)
+// A change in the next system, made the way a person's own tool would make it: the window has no way to ask
+// for one. `which` is "nvidia" or "ssh" (the older stand-in also takes "fix-failed"). The stand-in is the
+// program named in RECAB_GUI_RECAB; the real shape needs its preparation first, which it reads back.
+void makeChange(Window &window, const char *which, const QString &actor = QStringLiteral("tool"))
 {
-    return QStringLiteral("The request:\n%1\n\nThe expected result:\nAfter a restart the change is in effect and the "
-                          "system starts as before. Nothing else changes.\n")
-        .arg(QLatin1String(request));
+    const QString recab = qEnvironmentVariable("RECAB_GUI_RECAB");
+    auto run = [&](const QStringList &arguments) {
+        QProcess process;
+        process.start(recab, arguments);
+        process.waitForFinished(120000);
+        return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    };
+    if (!window.status().real) {
+        run({"make-change", QLatin1String(which)});
+    } else {
+        if (window.status().preparationId.isEmpty()) {
+            run({"--json", "prepare"});
+            window.refresh();
+            waitUntilIdle(window);
+        }
+        const QStringList cas{"--preparation", window.status().preparationId, "--revision",
+                              QString::number(window.status().preparationRevision), "--actor", actor};
+        if (QLatin1String(which) == QLatin1String("nvidia"))
+            run(QStringList{"--json", "change", "install", "nvidia-driver"} + cas);
+        else
+            run(QStringList{"--json", "edit", "/etc/ssh/sshd_config"} + cas);
+    }
+    window.refresh();
+    waitUntilIdle(window);
+}
+
+// What "Copy for agent" copies on a page: the button is pressed and the clipboard read (empty when the
+// page has no such button).
+QString copiedFor(QWidget *page)
+{
+    for (QPushButton *button : page->findChildren<QPushButton *>()) {
+        if (button->text() == QLatin1String("Copy for agent") && button->isVisibleTo(page)) {
+            QApplication::clipboard()->clear();
+            button->click();
+            return QApplication::clipboard()->text();
+        }
+    }
+    return {};
 }
 
 
@@ -81,7 +114,7 @@ QString wordsOn(QWidget *page)
 // Shows one of the three pages and says what it holds; Overview again after.
 QString showWords(Window &window, int which)
 {
-    // As a click on the rail does: leaves Activity or Settings if they were showing.
+    // As a click on the rail does.
     window.frame()->select(which == 0 ? QStringLiteral("overview") : which == 1 ? QStringLiteral("next")
                                                                                 : QStringLiteral("back"));
     if (which == 0)
@@ -134,13 +167,6 @@ QString historyWords(Window &window, QStringList *rows = nullptr)
 QString overviewWords(Window &window) { return showWords(window, 0); }
 QString nextWords(Window &window) { return showWords(window, 1); }
 QString backWords(Window &window) { return showWords(window, 2); }
-
-// ---------------------------------------------------------------- Activity
-//
-// The pages of the frame that are not recab's: Activity, and the strip about
-// the next system. They need runs to show, which `gui/agent/fixtures/records`
-// makes by driving the built levitate-agent with the stand-in Codex. Both
-// stories call this while the next system holds changes.
 
 using Save = std::function<void(QWidget &, const QString &)>;
 using Expect = std::function<void(const QString &, bool)>;
@@ -262,6 +288,12 @@ Raised answering(const QString &folder, const QString &picture, const QString &b
     return raised;
 }
 
+QString fileText(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+}
+
 // Keeps the words a check judged, next to the pictures.
 void keepWords(const QString &folder, const QString &name, const QString &words)
 {
@@ -271,8 +303,8 @@ void keepWords(const QString &folder, const QString &name, const QString &words)
 }
 
 // A page that is taller than the window scrolls, and its last button can be brought into view: true when
-// the page has a scroll area with something to scroll and "Let the agent fix it" is wholly in view at the end of it.
-bool scrollsToAgentButton(QWidget *page, const QString &button)
+// the page has a scroll area with something to scroll (unless `needsScroll` is false) and the button is wholly in view at the end of it.
+bool scrollsToButton(QWidget *page, const QString &button, bool needsScroll = true)
 {
     QScrollArea *scroller = page->findChild<QScrollArea *>();
     QPushButton *target = nullptr;
@@ -289,16 +321,7 @@ bool scrollsToAgentButton(QWidget *page, const QString &button)
     const bool seen = scroller->viewport()->rect().contains(QRect(at, target->size()));
     bar->setValue(0);
     settle(50);
-    return tallerThanTheWindow && seen;
-}
-
-// The prompt an agent is handed from the page's panel (empty when the page has none).
-QString promptOf(QWidget *page)
-{
-    for (QWidget *child : page->findChildren<QWidget *>())
-        if (auto *panel = dynamic_cast<PromptPanel *>(child))
-            return panel->prompt();
-    return {};
+    return (tallerThanTheWindow || !needsScroll) && seen;
 }
 
 // The titles of the boxes a page holds (the recovery list is one).
@@ -311,523 +334,21 @@ QStringList groupTitles(QWidget *page)
     return titles;
 }
 
-// `holds`: how many changes the next system holds now, as the window knows.
-void activityShots(Window &window, const QString &folder, const QString &prefix, int holds, const Save &save,
-                   const Expect &expect, QTextStream &out)
-{
-    Frame *frame = window.frame();
-    const QString script = qEnvironmentVariable("RECAB_GUI_RECORDS");
-    const QString agent = qEnvironmentVariable("LEVITATE_ACTIVITY_AGENT");
-    if (script.isEmpty() || agent.isEmpty()) {
-        out << "not as expected: Activity needs RECAB_GUI_RECORDS (gui/agent/fixtures/records) and "
-               "LEVITATE_ACTIVITY_AGENT (the built levitate-agent), see README.md\\n";
-        expect(QStringLiteral("the records for Activity could be made"), false);
-        return;
-    }
-    // The runs, in a folder of their own; the page reads them through levitate-agent.
-    const QString where = QDir(folder).filePath(prefix + "-records");
-    // The runs it leaves going are stopped when this ends, whichever way it ends.
-    struct Stopper {
-        QString script, where;
-        ~Stopper() { QProcess::execute(script, {"--stop", where}); }
-    } stopper{script, where};
-    QProcess make;
-    make.start(script, {where, agent});
-    make.waitForFinished(300000);
-    const QString said = QString::fromUtf8(make.readAllStandardOutput()).trimmed();
-    expect(QStringLiteral("the records for Activity were made (%1)").arg(QString::fromUtf8(make.readAllStandardError()).trimmed()),
-           make.exitStatus() == QProcess::NormalExit && make.exitCode() == 0 && said.startsWith("state="));
-    if (!said.startsWith("state="))
-        return;
-    const QString state = said.section(' ', 0, 0).mid(6);
-    const QString waitingId = said.section("waiting_id=", 1).section(' ', 0, 0);
-    const QString runtime = said.section("runtime=", 1).section(' ', 0, 0);
-    const QByteArray stateBefore = qgetenv("XDG_STATE_HOME"), runtimeBefore = qgetenv("XDG_RUNTIME_DIR");
-    qputenv("XDG_STATE_HOME", state.toUtf8());
-    // The sockets of the runs it left going: attaching needs them.
-    qputenv("XDG_RUNTIME_DIR", runtime.toUtf8());
-    ActivityPage *page = frame->activity();
-
-    // What the rail shows before Activity is opened: the badge is true from the start.
-    frame->readAgain();
-    waitFor([&] { return page->loaded() && frame->badge(Frame::activityKey()) > 0; });
-    expect(QStringLiteral("the Activity entry counts the one run that waits"),
-           frame->badge(Frame::activityKey()) == 2 && frame->badgeWarns(Frame::activityKey()));
-
-    frame->choose(Frame::activityKey());
-    // The helper answers slowly when the machine is busy.
-    waitFor([&] { return page->listedTitles().size() == 5 && page->detailText().contains("you refused, so it was not run"); }, 60);
-    expect(QStringLiteral("Activity is showing and marked"), frame->activityShown() && frame->selected() == Frame::activityKey());
-    expect(QStringLiteral("Activity lists the five runs, newest first"),
-           page->listedTitles()
-               == QStringList({"Install the NVIDIA driver", "Update Element", "Turn off password logins over ssh",
-                               "Install htop for this computer", "Install Krita for this computer"}));
-    expect(QStringLiteral("the newest run is chosen and shows the administrator step the person refused"),
-           page->detailText().contains("you refused, so it was not run") && page->detailText().contains("id -u")
-               && page->detailText().contains("The whole prompt"));
-    expect(QStringLiteral("a run that is over is not offered as answerable"), !page->offersGoTo());
-    save(window, prefix + "-activity-list");
-
-    // A run that is done: what it ran and changed, and where.
-    page->chooseTitle("Install htop for this computer");
-    waitFor([&] { return page->detailText().contains("ls -l"); });
-    expect(QStringLiteral("a done run shows its commands, its files and the agent's last word"),
-           page->detailText().contains("ls -l") && page->detailText().contains("/home/x/a.txt")
-               && page->detailText().contains("in the agent's sandbox")
-               && page->detailText().contains("I made the change. Everything checks out."));
-    expect(QStringLiteral("a done run has no way to be answered"), !page->offersGoTo());
-    save(window, prefix + "-a-done-run");
-
-    page->chooseTitle("Turn off password logins over ssh");
-    waitFor([&] { return page->detailText().contains("It asks"); });
-    expect(QStringLiteral("a run that waits is followed and offers its choices as buttons, from any window (%1)")
-               .arg(page->answerButtons().join(", ")),
-           waitFor([&] { return page->following() && page->answerButtons() == QStringList({"Red", "Blue"}); })
-               && page->detailText().contains("It asks") && page->detailText().contains("Which colour?")
-               && !page->detailText().contains("Only the window that started it") && page->offersStop() && !page->offersGoTo());
-    save(window, prefix + "-a-run-that-waits");
-
-    // A run that is going, not waiting: counted as running, listed as such, and badged.
-    QStringList chips;
-    for (QLabel *label : page->findChildren<QLabel *>())
-        if (dynamic_cast<Chip *>(label))
-            chips << label->text();
-    page->chooseTitle("Install Krita for this computer");
-    waitFor([&] { return page->detailText().contains("is working on it"); });
-    expect(QStringLiteral("the page counts one run that waits and one that runs (%1)").arg(chips.join(", ")),
-           chips == QStringList({"1 waits for an answer", "1 running"}));
-    expect(QStringLiteral("a running run is described as working, with what it ran so far, can be stopped and not answered"),
-           page->detailText().contains("Codex is working on it") && page->detailText().contains("sleep 300")
-               && !page->detailText().contains("It asks") && !page->offersGoTo() && page->offersStop());
-    expect(QStringLiteral("the badge counts the waiting and the running run"),
-           frame->badge(Frame::activityKey()) == 2 && frame->badgeWarns(Frame::activityKey()));
-    expect(QStringLiteral("the list says it is running (%1)").arg(page->listedStates().join(" | ")),
-           page->listedStates().value(4) == "Running now");
-    save(window, prefix + "-a-run-that-runs");
-    page->chooseTitle("Turn off password logins over ssh");
-    waitFor([&] { return page->detailText().contains("It asks"); });
-
-    // The same run is this window's own live run: it can be gone to.
-    page->setOwnRun(waitingId);
-    waitFor([&] { return page->offersGoTo(); });
-    expect(QStringLiteral("this window's own live run offers Go to it, and can be answered here as well"),
-           page->offersGoTo() && page->answerButtons() == QStringList({"Red", "Blue"})
-               && !page->detailText().contains("It waits in this window"));
-    save(window, prefix + "-this-windows-own-run");
-    clickButton(page, QStringLiteral("Go to it"));
-    settle(200);
-    expect(QStringLiteral("Go to it leaves Activity for the app's own pages"),
-           !frame->activityShown() && frame->selected() == "overview");
-    frame->choose(Frame::activityKey());
-    page->setOwnRun(QString());
-    waitFor([&] { return page->loaded() && !page->offersGoTo(); });
-
-    // The filter.
-    page->showOnlyThisApp(true);
-    expect(QStringLiteral("only this app's runs are listed"),
-           page->listedTitles() == QStringList({"Install the NVIDIA driver", "Turn off password logins over ssh"}));
-    page->showOnlyThisApp(false);
-    expect(QStringLiteral("all apps again"), page->listedTitles().size() == 5);
-
-    // The strip, here, while the next system holds changes.
-    expect(QStringLiteral("the strip shows on Activity while the next system holds changes"),
-           frame->stripShown()
-               && frame->stripText() == (holds == 1 ? QStringLiteral("The next system holds 1 change.")
-                                                    : QStringLiteral("The next system holds %1 changes.").arg(holds)));
-    save(window, prefix + "-activity-with-the-strip");
-
-    // And on the pages that are not Overview, but not on Overview.
-    frame->choose(QStringLiteral("overview"));
-    settle(200);
-    expect(QStringLiteral("Overview is marked and carries no strip"),
-           !frame->activityShown() && frame->selected() == "overview" && !frame->stripShown());
-    window.showAsk();
-    settle(100);
-    expect(QStringLiteral("the strip shows on the page where a change is asked for"), frame->stripShown());
-    window.showMain();
-    settle(100);
-    expect(QStringLiteral("and goes again on Overview"), !frame->stripShown());
-
-    // The agent in the status line, asked of levitate-agent with the stand-in Codex.
-    const QString codex = QDir(QFileInfo(script).absolutePath()).filePath("codex");
-    qputenv("LEVITATE_AGENT_CODEX", codex.toUtf8());
-    const QString stand = qEnvironmentVariable("RECAB_GUI_AGENT");
-    auto agentSays = [&](const QString &words) {
-        waitFor([&] { return frame->agentText() == words; }, 20);
-        return frame->agentText() == words;
-    };
-    frame->setAgent(agent);
-    expect(QStringLiteral("the status line names the agent and that it is signed in (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex, signed in")));
-    qputenv("LEVITATE_STANDIN_SIGNED_OUT", "1");
-    frame->readAgain();
-    expect(QStringLiteral("the status line says when it is not signed in (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex, not signed in")));
-    qunsetenv("LEVITATE_STANDIN_SIGNED_OUT");
-    qputenv("LEVITATE_AGENT_CODEX", "/nonexistent/codex");
-    frame->readAgain();
-    expect(QStringLiteral("the status line says when it is not installed (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex is not installed")));
-    save(window, prefix + "-agent-not-installed");
-    qunsetenv("LEVITATE_AGENT_CODEX");
-    frame->setAgent(stand);
-    expect(QStringLiteral("a stand-in agent is shown by its file name"),
-           frame->agentText() == QStringLiteral("Agent: %1").arg(QFileInfo(stand).fileName()));
-
-    // Over: the waiting agent is stopped (the stopper above), and the page forgets the records.
-    QProcess::execute(script, {"--stop", where});
-    if (stateBefore.isEmpty())
-        qunsetenv("XDG_STATE_HOME");
-    else
-        qputenv("XDG_STATE_HOME", stateBefore);
-    if (runtimeBefore.isEmpty())
-        qunsetenv("XDG_RUNTIME_DIR");
-    else
-        qputenv("XDG_RUNTIME_DIR", runtimeBefore);
-    page->setOwnRun(QString());
-    window.showMain();
-    settle(100);
-
-    // Runs that outlive their window: found, followed, answered and stopped from Activity.
-    // Each one is started by a window of its own that then closes.
-    livestory::prepare(QDir(folder).filePath(prefix), QFileInfo(script).absolutePath());
-    auto start = [&](const QString &story, const QString &request) {
-        livestory::useStory(story);
-        const QByteArray before = qgetenv("RECAB_GUI_AGENT");
-        qputenv("RECAB_GUI_AGENT", agent.toUtf8());
-        auto *started = new Window;
-        qputenv("RECAB_GUI_AGENT", before);
-        started->show();
-        waitUntilIdle(*started);
-        started->handOver(asked(qPrintable(request)), false);
-        return livestory::Started{started, started->frame()};
-    };
-    livestory::run(*frame, window, start, save, expect, prefix);
-    livestory::finish();
-    frame->choose(QStringLiteral("overview"));
-    window.showMain();
-    settle(100);
-}
-
-// ---------------------------------------------------------------- Settings
-//
-// The page the frame owns after Activity: the agent, what it may do without
-// asking, and the windows. Everything runs through the built levitate-agent
-// with the stand-in Codex, and HOME and the XDG folders point into a folder of
-// the story's own, so nothing of the person's is read or written.
-
-QString fileText(const QString &path)
-{
-    QFile file(path);
-    return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
-}
-
-void settingsShots(Window &window, const QString &folder, const Save &save, const Expect &expect, QTextStream &out)
-{
-    Frame *frame = window.frame();
-    const QString script = qEnvironmentVariable("RECAB_GUI_RECORDS");
-    const QString agent = qEnvironmentVariable("LEVITATE_ACTIVITY_AGENT");
-    if (script.isEmpty() || agent.isEmpty()) {
-        out << "not as expected: Settings needs RECAB_GUI_RECORDS (gui/agent/fixtures/records) and "
-               "LEVITATE_ACTIVITY_AGENT (the built levitate-agent), see README.md\n";
-        expect(QStringLiteral("the helper for Settings could be named"), false);
-        return;
-    }
-    const QString fixtures = QFileInfo(script).absolutePath();
-    const QString other = QFileInfo(QDir(fixtures).filePath("../../disk/fixtures/agent")).canonicalFilePath();
-    const QString home = QDir(folder).filePath("settings-home");
-    QDir(home).removeRecursively();
-    QDir().mkpath(home);
-    const QString file = home + "/config/levitate/agent.json";
-    const QByteArrayList names{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "LEVITATE_AGENT_CODEX", "LEVITATE_AGENT_CLAUDE",
-                               "LEVITATE_AGENT_ROOT_HELPER",
-                               "LEVITATE_STANDIN_LOG", "LEVITATE_STANDIN_LOGIN_SECONDS", "LEVITATE_STANDIN_STORY"};
-    QMap<QByteArray, QByteArray> before;
-    for (const QByteArray &name : names)
-        if (qEnvironmentVariableIsSet(name.constData()))
-            before.insert(name, qgetenv(name.constData()));
-    // Where the size a window had is kept, here and not in the person's own folder.
-    QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, home + "/config");
-    qputenv("HOME", home.toUtf8());
-    qputenv("XDG_CONFIG_HOME", (home + "/config").toUtf8());
-    qputenv("XDG_STATE_HOME", (home + "/state").toUtf8());
-    qputenv("LEVITATE_AGENT_CODEX", QDir(fixtures).filePath("codex").toUtf8());
-    qputenv("LEVITATE_AGENT_CLAUDE", QDir(fixtures).filePath("claude").toUtf8());
-    qputenv("LEVITATE_AGENT_ROOT_HELPER", "");
-    qputenv("LEVITATE_STANDIN_LOG", (home + "/standin.log").toUtf8());
-    qputenv("LEVITATE_STANDIN_STORY", "plain");
-    // Long enough to look at the page while the sign in waits.
-    qputenv("LEVITATE_STANDIN_LOGIN_SECONDS", "2");
-
-    SettingsPage *page = frame->settings();
-    auto idle = [&] {
-        waitFor([&] { return !page->busy(); }, 30);
-    };
-    auto agentSays = [&](const QString &words) {
-        waitFor([&] { return frame->agentText() == words; }, 20);
-        return frame->agentText() == words;
-    };
-    auto shows = [&](const QString &words) { return page->pageText().contains(words); };
-    // The status line asks levitate-agent only when the window's agent is that program.
-    const QString stand = qEnvironmentVariable("RECAB_GUI_AGENT");
-    frame->setAgent(agent);
-    expect(QStringLiteral("the status line starts as the stand-in Codex signed in (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex, signed in")));
-
-    // The rail: Settings under Activity, added by the frame.
-    const QStringList titles = frame->entryTitles();
-    expect(QStringLiteral("the rail has Settings under Activity, and Help under Settings (%1)").arg(titles.join(", ")),
-           titles.size() >= 3 && titles.mid(titles.size() - 3) == QStringList({"Activity", "Settings", "Help"}));
-
-    // Before the helper has answered: it says so.
-    frame->choose(Frame::settingsKey());
-    expect(QStringLiteral("Settings is showing and marked, and no app page was asked for"),
-           frame->settingsShown() && frame->selected() == Frame::settingsKey() && !frame->activityShown());
-    expect(QStringLiteral("it says it is asking while it waits"), !page->loaded() && shows("Asking levitate-agent"));
-    QCoreApplication::processEvents(); // the new page is shown once the loop has run
-    window.grab().save(QDir(folder).filePath("s0-reading.png"));
-    waitFor([&] { return page->loaded(); });
-
-    // As first read.
-    expect(QStringLiteral("the page was read (%1)").arg(page->problem()), page->loaded() && page->problem().isEmpty());
-    for (const char *words : {"Settings", "One set for Recipe, Recab and Recdirstat. What is set here holds in all three.",
-                              "The agent that does the work", "Codex", "Installed, and signed in", "Sign out…",
-                              "Another program", "Any program that takes a request and reports back the same way", "Choose…",
-                              "Try it", "Asks the chosen agent to say hello.", "What the agent may do without asking",
-                              "Read files and look things up", "Always", "Run commands as you, in your own folders",
-                              "Ask each time", "Run a command as administrator", "Always asks. It cannot be switched off.",
-                              "The windows", "Each window opens at the size it had. Language follows the desktop.",
-                              "Settings are kept for you, not for everyone on this computer.",
-                              "Notices", "Tell me when the agent needs an answer or has finished, and no window is watching",
-                              "Claude Code", "This side has not been tried with a real Claude Code yet.",
-                              "Choose it to sign in or out here.",
-                              "With Allowed, the agent may change files in your home folder itself."})
-        expect(QStringLiteral("the page says: %1").arg(words), shows(QString::fromUtf8(words)));
-    // What has nothing behind it is still not offered.
-    expect(QStringLiteral("nothing is offered that has nothing behind it"), !shows("Write a recipe") && !shows("update"));
-    expect(QStringLiteral("notices are on, as the helper reports"), page->noticesInForce() && shows("Yes"));
-    expect(QStringLiteral("Codex is the chosen one and commands are asked each time"),
-           page->checkedAgent() == "codex" && page->commandsInForce() == "ask" && page->agentInForce() == "codex");
-    save(window, "s1-as-first-read");
-
-    // "Allowed": the helper's file says so, and so does the page.
-    page->pickCommands(QStringLiteral("Allowed"));
-    idle();
-    expect(QStringLiteral("the helper's file says allowed (%1)").arg(fileText(file).simplified()),
-           QJsonDocument::fromJson(fileText(file).toUtf8()).object()["run_commands"] == "allowed");
-    expect(QStringLiteral("the page shows what the helper reports: Allowed"),
-           page->commandsInForce() == "allowed" && page->pageText().contains("\nAllowed\n"));
-    save(window, "s2-allowed");
-
-    // Signing out asks first; nothing has changed until it is said yes.
-    expect(QStringLiteral("Sign out… is offered"), page->press(QStringLiteral("Sign out…")));
-    expect(QStringLiteral("it asks first, in place"),
-           shows("Sign out of Codex? The apps cannot hand anything to it until you sign in again."));
-    save(window, "s3-sign-out-asks");
-    expect(QStringLiteral("nobody is signed out yet (%1)").arg(frame->agentText()), frame->agentText() == "Agent: Codex, signed in");
-    expect(QStringLiteral("Keep it leaves it as it was"), page->press(QStringLiteral("Keep it")) && !shows("Sign out of Codex?"));
-    page->press(QStringLiteral("Sign out…"));
-    expect(QStringLiteral("saying yes signs out"), page->press(QStringLiteral("Sign out")));
-    idle();
-    expect(QStringLiteral("the row says not signed in, and offers to sign in"),
-           shows("Installed, not signed in") && shows("Sign in…") && !shows("Sign out…"));
-    expect(QStringLiteral("the status line follows at once (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex, not signed in")));
-    expect(QStringLiteral("the stand-in's own state says so"), fileText(home + "/.standin-codex-signed") == "out");
-    save(window, "s4-signed-out");
-
-    // A sign in that fails says why, in the row.
-    qputenv("LEVITATE_STANDIN_LOGIN_FAILS", "1");
-    page->press(QStringLiteral("Sign in…"));
-    idle();
-    qunsetenv("LEVITATE_STANDIN_LOGIN_FAILS");
-    expect(QStringLiteral("a failed sign in shows the helper's sentence in place (%1)").arg(page->notice()),
-           page->notice().contains("was not completed") && shows("was not completed") && shows("Installed, not signed in"));
-    save(window, "s5-sign-in-failed");
-
-    // Sign in again: what Codex prints (an address) is shown while it waits.
-    expect(QStringLiteral("Sign in… is offered"), page->press(QStringLiteral("Sign in…")));
-    waitFor([&] { return shows("https://auth.standin.invalid"); }, 15);
-    expect(QStringLiteral("the address Codex printed is shown while it waits"),
-           shows("https://auth.standin.invalid") && shows("Signing in") && page->busy());
-    save(window, "s6-signing-in");
-    idle();
-    expect(QStringLiteral("signed in again: the row says so"), shows("Installed, and signed in") && shows("Sign out…")
-                                                                   && !shows("Signing in"));
-    expect(QStringLiteral("and so does the status line (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex, signed in")));
-    save(window, "s7-signed-in-again");
-
-    // Another program, by its path; then back to Codex.
-    page->chooseProgram(other);
-    idle();
-    expect(QStringLiteral("the other program is chosen, as the helper reports it (%1)").arg(page->agentInForce()),
-           page->agentInForce() == other && page->checkedAgent() == "other" && shows(other) && shows("Found, and it can be run"));
-    {
-        const QJsonObject kept = QJsonDocument::fromJson(fileText(file).toUtf8()).object();
-        expect(QStringLiteral("the file has the path and kept the other setting"),
-               kept["agent"] == other && kept["run_commands"] == "allowed");
-    }
-    expect(QStringLiteral("the status line names it (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: agent")));
-    expect(QStringLiteral("the page says that only Codex and Claude Code read the setting"), shows("Only Codex and Claude Code read this setting."));
-    save(window, "s8-another-program");
-    expect(QStringLiteral("choosing Codex again"), page->press(QStringLiteral("Codex")));
-    idle();
-    expect(QStringLiteral("Codex is back, signed in (%1)").arg(page->agentInForce()),
-           page->agentInForce() == "codex" && page->checkedAgent() == "codex" && shows("Installed, and signed in"));
-    expect(QStringLiteral("the status line follows (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Codex, signed in")));
-    save(window, "s9-back-to-codex");
-
-    // Claude Code is a row like Codex: chosen, signed out and in through the helper.
-    const QString claudeFile = home + "/.standin-claude-signed";
-    save(window, "s9b-claude-listed");
-    expect(QStringLiteral("choosing Claude Code"), page->press(QStringLiteral("Claude Code")));
-    idle();
-    expect(QStringLiteral("Claude Code is the chosen one, as the helper reports it (%1)").arg(page->agentInForce()),
-           page->agentInForce() == "claude" && page->checkedAgent() == "claude"
-               && QJsonDocument::fromJson(fileText(file).toUtf8()).object()["agent"] == "claude");
-    expect(QStringLiteral("the status line names it (%1)").arg(frame->agentText()),
-           agentSays(QStringLiteral("Agent: Claude Code, signed in")));
-    expect(QStringLiteral("Sign out… is offered for it, and asks first"),
-           page->press(QStringLiteral("Sign out…")) && shows("Sign out of Claude Code?"));
-    expect(QStringLiteral("saying yes signs out of Claude Code"), page->press(QStringLiteral("Sign out")));
-    idle();
-    expect(QStringLiteral("the stand-in Claude Code is signed out, and the row says so"),
-           fileText(claudeFile) == "out" && shows("Installed, not signed in") && shows("Sign in…")
-               && agentSays(QStringLiteral("Agent: Claude Code, not signed in")));
-    expect(QStringLiteral("Sign in… signs in again"), page->press(QStringLiteral("Sign in…")));
-    idle();
-    expect(QStringLiteral("the stand-in Claude Code is signed in again"),
-           fileText(claudeFile) == "in" && agentSays(QStringLiteral("Agent: Claude Code, signed in")));
-    // The notices row: off and on again, written by the helper.
-    page->pickNotices(false);
-    idle();
-    expect(QStringLiteral("notices are off in the helper's file and on the page (%1)").arg(fileText(file).simplified()),
-           QJsonDocument::fromJson(fileText(file).toUtf8()).object()["notices"] == false && !page->noticesInForce()
-               && page->pageText().contains("No"));
-    save(window, "s9c-claude-and-notices-off");
-    page->pickNotices(true);
-    idle();
-    expect(QStringLiteral("and on again"),
-           QJsonDocument::fromJson(fileText(file).toUtf8()).object()["notices"] == true && page->noticesInForce());
-    expect(QStringLiteral("choosing Codex again"), page->press(QStringLiteral("Codex")));
-    idle();
-    expect(QStringLiteral("Codex is back"), page->agentInForce() == "codex" && agentSays(QStringLiteral("Agent: Codex, signed in")));
-
-    // A refused value is shown in place; nothing changes.
-    const QString kept = fileText(file);
-    page->chooseProgram(QStringLiteral("/nonexistent/agent"));
-    idle();
-    expect(QStringLiteral("the refusal is in the page (%1)").arg(page->notice()),
-           page->notice() == "/nonexistent/agent does not exist." && shows("/nonexistent/agent does not exist."));
-    expect(QStringLiteral("and nothing was written or changed"),
-           fileText(file) == kept && page->agentInForce() == "codex" && page->checkedAgent() == "codex");
-    save(window, "s10-refused");
-
-    // "Try it": the stand-in answers; the run is in Activity.
-    expect(QStringLiteral("Try it is offered"), page->press(QStringLiteral("Try it")));
-    expect(QStringLiteral("while it runs the button says so and cannot be pressed"),
-           shows("Asking…") && !page->press(QStringLiteral("Asking…")) && page->busy());
-    // Straight away: the stand-in answers within the time a picture takes.
-    QCoreApplication::processEvents();
-    window.grab().save(QDir(folder).filePath("s11-asking.png"));
-    idle();
-    expect(QStringLiteral("what came back is shown (%1)").arg(page->pageText().section("It answered", 1, 1).left(80)),
-           shows("It answered: I made the change. Everything checks out.") && shows("Try it"));
-    save(window, "s12-try-it-answered");
-    frame->choose(Frame::activityKey());
-    waitFor([&] { return frame->activity()->listedTitles().contains("Say hello"); }, 15);
-    frame->activity()->chooseTitle("Say hello");
-    waitFor([&] { return frame->activity()->detailText().contains("Say hello in one sentence"); }, 15);
-    expect(QStringLiteral("the run is listed in Activity under Recab (%1)").arg(frame->activity()->listedTitles().join(", ")),
-           frame->activity()->listedTitles() == QStringList({"Say hello"})
-               && frame->activity()->detailText().contains("Asked in Recab")
-               && frame->activity()->detailText().contains("Do not run any command and do not change any file."));
-    save(window, "s13-try-it-in-activity");
-
-    // Coming back to Settings reads it again, without the page being rebuilt from nothing.
-    frame->choose(Frame::settingsKey());
-    waitFor([&] { return page->loaded() && !page->busy(); });
-    expect(QStringLiteral("Settings shows again, with the last answer"), frame->settingsShown() && shows("It answered:"));
-
-    // A helper that cannot be asked: the page says so, with a way to try again.
-    qputenv("LEVITATE_ACTIVITY_AGENT", "/nonexistent/levitate-agent");
-    {
-        Window lonely;
-        lonely.show();
-        lonely.frame()->choose(Frame::settingsKey());
-        waitFor([&] { return !lonely.frame()->settings()->problem().isEmpty(); }, 10);
-        expect(QStringLiteral("a helper that does not exist is said so (%1)").arg(lonely.frame()->settings()->problem()),
-               lonely.frame()->settings()->problem().contains("levitate-agent")
-                   && lonely.frame()->settings()->pageText().contains("Settings could not be read")
-                   && lonely.frame()->settings()->pageText().contains("Try again"));
-        save(lonely, "s14-not-read");
-    }
-    qputenv("LEVITATE_ACTIVITY_AGENT", agent.toUtf8());
-
-    // The size a window had: kept when it closes, read when it opens, and
-    // neither in the picture modes.
-    {
-        const QString key = QStringLiteral("story-window");
-        QWidget first;
-        rememberWindowSize(&first, key, {1100, 700}, true);
-        expect(QStringLiteral("a window that was never closed opens at the first size"), first.size() == QSize(1100, 700));
-        first.resize(900, 600);
-        first.show();
-        first.close();
-        QSettings kept(QStringLiteral("LevitateOS"), QStringLiteral("windows"));
-        expect(QStringLiteral("closing keeps its size, under one key (%1)").arg(kept.value(key).toString()),
-               kept.value(key).toSize() == QSize(900, 600) && kept.allKeys() == QStringList({key}));
-        QWidget second;
-        rememberWindowSize(&second, key, {1100, 700}, true);
-        expect(QStringLiteral("the next one opens at the size it had"), second.size() == QSize(900, 600));
-        QWidget picture;
-        rememberWindowSize(&picture, key, {1100, 700}, false);
-        picture.resize(800, 500);
-        picture.show();
-        picture.close();
-        kept.sync();
-        expect(QStringLiteral("in picture mode nothing is read and nothing is written"),
-               picture.size() == QSize(800, 500) && kept.value(key).toSize() == QSize(900, 600));
-        QWidget third;
-        rememberWindowSize(&third, key, {1100, 700}, false);
-        expect(QStringLiteral("and the first size is used"), third.size() == QSize(1100, 700));
-    }
-
-    frame->setAgent(stand);
-    for (const QByteArray &name : names) {
-        if (before.contains(name))
-            qputenv(name.constData(), before.value(name));
-        else
-            qunsetenv(name.constData());
-    }
-    window.showMain();
-    settle(100);
-}
-
 // ---------------------------------------------------------------- Help and the first page
 //
-// The pages the frame owns after Settings: Help for Recab, and the page a
+// The pages the frame owns after the app's own: Help for Recab, and the page a
 // person sees the first time. The checks are `../kit/helpstory.*`; this says
 // which page of Recab each target is.
 
 void helpShots(Window &window, const QString &folder, const Save &save, const Expect &expect, const QString &prefix)
 {
-    const QString script = qEnvironmentVariable("RECAB_GUI_RECORDS");
-    if (script.isEmpty()) {
-        expect(QStringLiteral("Help needs RECAB_GUI_RECORDS (gui/agent/fixtures/records) to find the stand-in Codex"), false);
-        return;
-    }
+    Q_UNUSED(folder)
     helpstory::Plan plan;
     plan.app = Frame::Recab;
     plan.window = &window;
     plan.frame = window.frame();
     plan.firstEntry = QStringLiteral("overview");
     plan.idle = [&] { waitUntilIdle(window); };
-    plan.folder = folder;
-    plan.fixtures = QFileInfo(script).absolutePath();
     plan.pageShown = [&](const QString &key) {
         QWidget *page = key == QLatin1String("overview")  ? static_cast<QWidget *>(window.findChild<SystemPage *>())
                         : key == QLatin1String("next")    ? static_cast<QWidget *>(window.findChild<NextPage *>())
@@ -863,7 +384,7 @@ int takeShots(Window &window, const QString &folder)
     };
     window.show();
     // A picture run that is not told of its stand-ins refuses to start.
-    livestory::guardRefuses(expect, folder, "RECAB_GUI_RECAB");
+    helpstory::guardRefuses(expect, folder, "RECAB_GUI_RECAB");
     // Before recab has answered: what a person sees while the state is read.
     ok &= window.grab().save(QDir(folder).filePath("00-reading.png"));
     waitUntilIdle(window);
@@ -874,14 +395,13 @@ int takeShots(Window &window, const QString &folder)
     // The two pages beside Overview, with no next system.
     {
         const QString overview = overviewWords(window);
-        expect("Overview names the one thing to do, and sends to the two pages",
-               overview.contains("What to do next") && overview.contains("[Make a change…]")
+        expect("Overview names the release to see, and sends to the two pages",
+               overview.contains("What to do next") && overview.contains("A newer release is available")
                    && overview.contains("The rest is on:") && overview.contains("Getting back")
                    && !overview.contains("[Go back…]"));
         const QString next = nextWords(window);
-        expect("the next system's page says there is none, and offers to make one",
-               next.contains("There is no next system yet") && next.contains("[Make a change…]")
-                   && next.contains("[Install software…]") && window.frame()->badge("next") == 0
+        expect("the next system's page says there is none, and offers to install software",
+               next.contains("There is no next system yet") && next.contains("[Install software…]") && window.frame()->badge("next") == 0
                    && window.frame()->selected() == "next");
         save(window, "p01-next-none");
         const QString back = backWords(window);
@@ -898,29 +418,20 @@ int takeShots(Window &window, const QString &folder)
         settle(100);
     }
 
-    window.showAsk(nvidia);
-    save(window, "02-ask");
-
-    // The system from before is there, and a change would take its place:
-    // the Before page says so, and Cancel leaves it where it is.
-    expect("the system from before is there to be reused", window.status().otherRole == "previous");
-    beforeCheck(window, save, expect, "03-goes-into-the-next-system", "a change that would reuse the place of the system from before",
-                [&] { window.handOver(asked(nvidia)); },
-                {"Make this change in the next system?", "The running system is locked, so it is not changed.",
-                 "The next system starts as an exact copy of the running one.", "no longer go back to"},
-                "Prepare the next system");
-
-    // The change is stopped half way, which is also how an interruption looks.
-    qputenv("RECAB_STANDIN_STOP_AT", "change");
-    QFile::remove(QDir(qEnvironmentVariable("RECAB_STANDIN_STATE")).filePath("stopped-at-change"));
-    window.handOver(asked(nvidia), false);
-    // The stand-in says when it is half way; the picture follows what it printed up to there.
-    waitFor([&] { return QFile::exists(QDir(qEnvironmentVariable("RECAB_STANDIN_STATE")).filePath("stopped-at-change")); }, 30);
-    settle(300);
-    save(window, "04-preparing");
-    window.stopRun();
-    waitUntilIdle(window);
-    qunsetenv("RECAB_STANDIN_STOP_AT");
+    // The change is stopped half way, which is also how an interruption looks: the tool making it is ended.
+    {
+        qputenv("RECAB_STANDIN_STOP_AT", "change");
+        const QString marker = QDir(qEnvironmentVariable("RECAB_STANDIN_STATE")).filePath("stopped-at-change");
+        QFile::remove(marker);
+        QProcess tool;
+        tool.start(qEnvironmentVariable("RECAB_GUI_RECAB"), {"make-change", "nvidia"});
+        waitFor([&] { return QFile::exists(marker); }, 30);
+        tool.terminate();
+        tool.waitForFinished(10000);
+        qunsetenv("RECAB_STANDIN_STOP_AT");
+        window.refresh();
+        waitUntilIdle(window);
+    }
     expect("a stopped change is reported as interrupted", window.status().state == "interrupted");
     save(window, "05-interrupted");
     {
@@ -944,14 +455,7 @@ int takeShots(Window &window, const QString &folder)
     waitUntilIdle(window);
     expect("recovering finishes the change", window.status().changes.size() == 1);
 
-    window.handOver(asked(sshd), false);
-    // The agent asks something on the way, and waits.
-    for (int waited = 0; !window.agentAsks() && window.busy() && waited < 1800; ++waited)
-        settle(50);
-    expect("the agent asks about root logins", window.agentAsks());
-    save(window, "05b-the-agent-asks");
-    window.answerAgent(QStringLiteral("Leave it"));
-    waitUntilIdle(window);
+    makeChange(window, "ssh");
     expect("a second change joins the same next system", window.status().changes.size() == 2);
     save(window, "06-next-system");
     {
@@ -965,7 +469,7 @@ int takeShots(Window &window, const QString &folder)
                next.contains(titles.value(0)) && next.contains(titles.value(1)) && !next.contains("Made by")
                    && !next.contains("Take out") && !next.contains("Edit a file") && !next.contains(" MiB"));
         expect("it offers what recab offers",
-               next.contains("[Make a change…]") && next.contains("[Install software…]") && next.contains("[Finish…]")
+               next.contains("[Install software…]") && next.contains("[Finish…]")
                    && next.contains("[Reset to the running system…]") && next.contains("2. Choose when"));
         expect("it says what will differ, from the changes",
                next.contains("What will differ after the restart") && next.contains("Starts")
@@ -980,8 +484,7 @@ int takeShots(Window &window, const QString &folder)
         save(window, "p05-back-with-a-next-system");
         const QString overview = overviewWords(window);
         expect("Overview offers finishing as the one thing and not the rest of the next system's page",
-               overview.contains("[Finish…]") && !overview.contains("[Make a change…]")
-                   && !overview.contains("[Reset") && !window.frame()->stripShown());
+               overview.contains("[Finish…]") && !overview.contains("[Reset") && !window.frame()->stripShown());
         save(window, "p06-overview-open");
         window.showMain();
         settle(100);
@@ -1003,8 +506,6 @@ int takeShots(Window &window, const QString &folder)
                 "Discard");
     window.showMain();
     settle(100);
-    activityShots(window, folder, "a", int(window.status().changes.size()), save, expect, out);
-    settingsShots(window, folder, save, expect, out);
     helpShots(window, folder, save, expect, "h");
 
     {
@@ -1055,38 +556,8 @@ int takeShots(Window &window, const QString &folder)
         expect("keeping mine settles the clash and records whose version it is",
                window.status().clashes.isEmpty() && window.status().changeTitles().join("|").contains("your version"));
         save(window, "07c-decided-by-hand");
-        // Give the update up with the next system, and make the clash again, for the agent's way.
-        window.discard(false);
-        waitUntilIdle(window);
-        window.handOver(asked(sshd), false);
-        for (int waited = 0; !window.agentAsks() && window.busy() && waited < 1800; ++waited)
-            settle(50);
-        window.answerAgent(QStringLiteral("Leave it"));
-        waitUntilIdle(window);
-        window.addUpdate(false);
-        waitUntilIdle(window);
-        expect("the update clashes with the edited file again", !window.status().clashes.isEmpty());
-        save(window, "07d-clash-again");
     }
 
-    window.fixWithAgent(QStringLiteral("The issue:\nThe update and a local change both altered /etc/ssh/sshd_config.\n\n"
-                                       "The expected result:\nOne sshd_config that sshd accepts. Password logins stay "
-                                       "off, as I set it. The update's own changes are kept.\n"),
-                        QStringLiteral("The agent is settling the clash"));
-    waitUntilIdle(window);
-    expect("the agent leaves its result to be accepted", !window.status().proposalPath.isEmpty());
-    {
-        const QString proposed = wordsOn(window.findChild<ProposedPage *>());
-        expect("its page says what the agent did, against what was expected, and offers to accept, ask again or decide by hand",
-               window.findChild<ProposedPage *>()->isVisible() && proposed.contains("The agent resolved the clash")
-                   && proposed.contains("What it did") && proposed.contains("Against what you expected")
-                   && proposed.contains("[Accept]") && proposed.contains("[Ask again…]") && proposed.contains("[Decide by hand…]"));
-    }
-    save(window, "08-what-the-agent-did");
-
-    window.acceptProposal();
-    waitUntilIdle(window);
-    expect("accepting settles the clash", window.status().clashes.isEmpty());
     window.finish(false);
     waitUntilIdle(window);
     expect("finishing makes it ready", window.status().state == "ready");
@@ -1121,9 +592,9 @@ int takeShots(Window &window, const QString &folder)
     save(window, "10-did-not-start");
     {
         const QString next = nextWords(window);
-        expect("the next system's page says it did not start, and offers to try again or hand it to the agent",
+        expect("the next system's page says it did not start, and offers to try again or copy it for an agent",
                next.contains("The next system did not start, so the computer came back")
-                   && next.contains("[Try the same again]") && next.contains("[Hand it to the agent…]"));
+                   && next.contains("[Try the same again]") && next.contains("[Copy for agent]"));
         save(window, "p08-next-came-back");
         const QString back = backWords(window);
         expect("Getting back says the computer came back, with the time recab gave",
@@ -1131,17 +602,24 @@ int takeShots(Window &window, const QString &folder)
                    && back.contains("recab says"));
         save(window, "p09-back-came-back");
         const QString overview = overviewWords(window);
-        expect("Overview hands it to the agent and does not offer the reset",
-               overview.contains("[Let the agent fix it]") && !overview.contains("[Reset"));
+        expect("Overview copies it for an agent and does not offer the reset",
+               overview.contains("[Copy for agent]") && !overview.contains("[Reset"));
+        const QString copied = copiedFor(window.findChild<SystemPage *>());
+        expect("what is copied says what failed and what is known, in plain text",
+               copied.startsWith("The issue:\n") && copied.contains("The facts:\n- What failed:"));
         window.showMain();
         settle(100);
     }
 
-    window.fixWithAgent(QStringLiteral("The issue:\nThe next system stopped during start-up.\n\nThe expected result:\n"
-                                       "The next system starts.\n"),
-                        QStringLiteral("The agent is changing the next system"));
-    waitUntilIdle(window);
-    expect("the agent's fix opens the next system again", window.status().state == "preparing");
+    {
+        // The person's own tool fixes what failed in the next system.
+        QProcess fix;
+        fix.start(qEnvironmentVariable("RECAB_GUI_RECAB"), {"make-change", "fix-failed"});
+        fix.waitForFinished(120000);
+        window.refresh();
+        waitUntilIdle(window);
+    }
+    expect("the fix opens the next system again", window.status().state == "preparing");
     window.finish(false);
     waitUntilIdle(window);
     window.restart(false);
@@ -1176,11 +654,7 @@ int takeShots(Window &window, const QString &folder)
     expect("reading again keeps the state", window.status().state == "stable");
 
     // A change, then the reset: the next system is the running one again.
-    window.handOver(asked(sshd), false);
-    for (int waited = 0; !window.agentAsks() && window.busy() && waited < 1800; ++waited)
-        settle(50);
-    window.answerAgent(QStringLiteral("Leave it"));
-    waitUntilIdle(window);
+    makeChange(window, "ssh");
     expect("a change is there to be reset", window.status().changes.size() == 1);
     window.reset(false);
     waitUntilIdle(window);
@@ -1215,8 +689,8 @@ int takeShots(Window &window, const QString &folder)
 }
 
 // The story the real recab offers today, against the stand-in that speaks its
-// shape (`fixtures/recab-real`): two copies, a change by the agent, finishing,
-// the restart, going back, and discarding. No update, clash or proposal:
+// shape (`fixtures/recab-real`): two copies, a change by a tool, finishing,
+// the restart, going back, and discarding. No update or clash:
 // the real recab has none of those.
 int takeRealShots(Window &window, const QString &folder)
 {
@@ -1239,10 +713,10 @@ int takeRealShots(Window &window, const QString &folder)
     expect("the status is read as the real recab's", window.status().real);
     if (!window.status().real) {
         // Nothing was read: show why, and go no further. The story below
-        // hands requests to the agent, which must not happen on a system
+        // changes the system, which must not happen on a system
         // that is not the stand-in's.
         save(window, "r0-not-read");
-        out << "the system could not be read; stopped before anything was asked of the agent\n";
+        out << "the system could not be read; stopped before anything was changed\n";
         return 1;
     }
     expect("it starts with two copies of one system",
@@ -1357,22 +831,20 @@ int takeRealShots(Window &window, const QString &folder)
         settle(100);
     }
 
-    window.handOver(asked(sshd), false);
-    waitUntilIdle(window);
-    expect("the agent's change opens the next system",
+    makeChange(window, "ssh");
+    expect("the change opens the next system",
            window.status().state == "preparing" && !window.status().preparationId.isEmpty()
                && window.status().changes.size() == 1);
-    expect("the change says the agent made it", window.status().changeTitles().value(0).contains("by the agent"));
+    expect("the change is titled as recab names it, with nobody's label", !window.status().changeTitles().value(0).contains("by "));
     save(window, "r2-the-next-system-is-open");
     {
         const QString next = nextWords(window);
         expect("the next system's page shows who made the change, and when",
-               next.contains("Made by") && next.contains("The agent") && next.contains("When")
+               next.contains("Made by") && next.contains("tool") && next.contains("When")
                    && next.contains("edited: /etc/ssh/sshd_config") && window.frame()->badge("next") == 1);
         window.showMain();
         settle(100);
     }
-    activityShots(window, folder, "r2c", int(window.status().changes.size()), save, expect, out);
     helpShots(window, folder, save, expect, "rh");
     {
         // The reader the other two apps use for their strip, against the same recab.
@@ -1399,14 +871,14 @@ int takeRealShots(Window &window, const QString &folder)
         waitUntilIdle(window);
         const QString next = nextWords(window);
         expect("the badge counts both changes", window.frame()->badge("next") == 2 && window.status().changes.size() == 2);
-        expect("the page says who made each, and when: the agent, and you",
-               next.contains("The next system holds 2 changes") && next.contains("The agent") && next.contains("You")
+        expect("the page says who made each, and when: the tool, and you",
+               next.contains("The next system holds 2 changes") && next.contains("tool") && next.contains("You")
                    && next.contains("htop, installed") && next.contains("added: htop") && next.contains("edited: /etc/ssh/sshd_config")
                    && !next.contains("Take out") && !next.contains(" MiB"));
         save(window, "rp2-next-open-with-who-and-when");
         const QString overview = overviewWords(window);
         expect("Overview offers finishing as the one thing, and sends to the two pages",
-               overview.contains("[Finish…]") && !overview.contains("[Make a change…]") && !overview.contains("[Reset")
+               overview.contains("[Finish…]") && !overview.contains("[Reset")
                    && overview.contains("The rest is on:"));
         save(window, "rp3-overview-open");
         window.showMain();
@@ -1491,12 +963,12 @@ int takeRealShots(Window &window, const QString &folder)
             window.showClash();
             settle(200);
             const QString clash = wordsOn(window.findChild<ClashPage *>());
-            expect("the clash page says what recab says of it, offers the baseline with recab's label, and no agent for it",
+            expect("the clash page says what recab says of it, offers the baseline with recab's label, and no way to copy it",
                    clash.contains("What recab stopped at")
                        && clash.contains("recab has no usable record of the original release this next system began from "
                                          "(usr/lib/recab/release-baseline.json)")
                        && clash.contains("What recab offers") && clash.contains("[Adopt it…]") && clash.contains("[Later]")
-                       && !clash.contains("[Let the agent fix it]") && !clash.contains("(private)") && !clash.contains("was added"));
+                       && !clash.contains("[Copy for agent]") && !clash.contains("(private)") && !clash.contains("was added"));
             save(window, "r20b-clash-baseline");
             window.showMain();
             settle(100);
@@ -1538,20 +1010,20 @@ int takeRealShots(Window &window, const QString &folder)
             settle(200);
             auto *clashPage = window.findChild<ClashPage *>();
             const QString clash = wordsOn(clashPage);
-            const QString prompt = promptOf(clashPage);
+            const QString prompt = copiedFor(clashPage);
             expect("the clash page says what recab found of the package and offers to reproduce it; Decide by hand is off",
                    clash.contains("htop is software added to the next system through Recipe. recab found that LevitateOS 2026.12 "
                                   "changes system libraries or the kernel")
                        && clash.contains("[Reproduce…]") && clash.contains("[Decide by hand…](off)")
-                       && clash.contains("[Let the agent fix it]") && !clash.contains("(private)"));
-            expect("what the agent is given names the package, the release, and recab's own command with the open preparation",
+                       && clash.contains("[Copy for agent]") && !clash.contains("(private)"));
+            expect("what is copied names the package, the release, and recab's own command with the open preparation",
                    prompt.contains("htop (software to reproduce through Recipe)")
                        && prompt.contains("recab update reproduce --preparation " + window.status().preparationId + " --revision "
                                           + QString::number(window.status().preparationRevision) + " htop [--recipe RECIPE]")
                        && prompt.contains("The release being added is LevitateOS 2026.12; the running system's release is LevitateOS 2026.11.")
                        && !prompt.contains("(private)") && !prompt.contains("was added"));
-            expect("at 700 pixels high the clash page scrolls and the agent's panel with its button can be reached",
-                   window.height() == 700 && scrollsToAgentButton(clashPage, "Let the agent fix it"));
+            expect("at 700 pixels high the clash page scrolls and the panel with its button can be reached",
+                   window.height() == 700 && scrollsToButton(clashPage, "Copy for agent"));
             save(window, "r21b-clash-rebuild");
             QScrollArea *scrolled = clashPage->findChild<QScrollArea *>();
             if (scrolled)
@@ -1576,7 +1048,7 @@ int takeRealShots(Window &window, const QString &folder)
         waitUntilIdle(window);
         expect("taken out again, the release is only downloaded", !window.status().update.hasMerge && window.status().update.downloaded);
 
-        // Every other kind of conflict, as recab names them: the page says what recab says of each, and hands the agent the same.
+        // Every other kind of conflict, as recab names them: the page says what recab says of each, and copies the same for an agent.
         qputenv("RECAB_STANDIN_MERGE", "kinds");
         window.addUpdate(false);
         waitUntilIdle(window);
@@ -1610,11 +1082,11 @@ int takeRealShots(Window &window, const QString &folder)
                                          "file")
                        && clash.contains("software to reproduce through Recipe") && clash.contains("[Reproduce…]")
                        && !clash.contains("(private)") && !clash.contains("was added to the next system"));
-            const QString prompt = promptOf(clashPage);
+            const QString prompt = copiedFor(clashPage);
             const QString cas = " --preparation " + window.status().preparationId + " --revision "
                                 + QString::number(window.status().preparationRevision);
             keepWords(folder, "r22-prompt.txt", prompt);
-            expect("the agent is given each item with recab's sentence and the command recab offers for it",
+            expect("what is copied has each item with recab's sentence and the command recab offers for it",
                    prompt.contains("etc/ssh/sshd_config (changed on both sides): The next system and LevitateOS 2026.12 both "
                                    "changed")
                        && prompt.contains("`recab update resolve conflict1" + cas + " --choice local|release|edited [--file FILE]`")
@@ -1622,8 +1094,8 @@ int takeRealShots(Window &window, const QString &folder)
                        && prompt.contains("`recab update resolve conflict5" + cas + " --choice local [--file FILE]`")
                        && prompt.contains("`recab update reproduce" + cas + " htop [--recipe RECIPE]`")
                        && !prompt.contains("(private)") && !prompt.contains("was added"));
-            expect("with six conflicts too the page scrolls and the agent's button can be reached",
-                   scrollsToAgentButton(clashPage, "Let the agent fix it"));
+            expect("with six conflicts too the button can be reached (the page scrolls if it must)",
+                   scrollsToButton(clashPage, "Copy for agent", false));
             save(window, "r22-clash-every-kind");
             // Decided by hand: the question names what each choice does, in the words of the page.
             const Raised asked = answering(folder, "r22b-decide-by-hand", QString(), [&] { clickButton(clashPage, "Decide by hand…"); },
@@ -1693,14 +1165,13 @@ int takeRealShots(Window &window, const QString &folder)
     {
         const QString overview = overviewWords(window);
         expect("Overview says it is not an interruption, offers nothing, and says so once, off",
-               overview.contains("This is not an interruption: wait for it.") && overview.contains("[Make a change…](off)")
-                   && overview.contains("Not while this runs") && !overview.contains("[Finish…]")
+               overview.contains("This is not an interruption: wait for it.") && overview.contains("Nothing can be started while this runs") && !overview.contains("[Finish…]")
                    && window.frame()->statusText().contains("every two seconds"));
         window.showMain();
         settle(100);
         const QString next = nextWords(window);
         expect("while a command runs elsewhere the next system's page offers nothing, and says so once",
-               next.contains("The next system is being worked on") && !next.contains("[Make a change…]")
+               next.contains("The next system is being worked on")
                    && !next.contains("[Finish…]") && !next.contains("[Reset")
                    && next.count("Nothing can be started while that command runs.") == 1);
         save(window, "rp4-next-working");
@@ -1749,7 +1220,7 @@ int takeRealShots(Window &window, const QString &folder)
         const QString next = nextWords(window);
         expect("the next system's page says it is ready, and offers the restart now or later",
                next.contains("The next system is ready") && next.contains("[Restart now]")
-                   && next.contains("[Start it at the next restart]") && next.contains("The agent")
+                   && next.contains("[Start it at the next restart]") && next.contains("tool")
                    && next.contains("You"));
         save(window, "rp5-next-ready");
         window.showMain();
@@ -1857,7 +1328,7 @@ int takeRealShots(Window &window, const QString &folder)
                    && overview.contains("Not kept yet") && overview.contains("Untouched: it is what a restart returns to")
                    && overview.contains("While a system is on trial")
                    && overview.contains("Reconcile the pending trial before changing either system")
-                   && !overview.contains("What to do next") && !overview.contains("[Make a change…]"));
+                   && !overview.contains("What to do next"));
         expect("while on trial the other place is the system from before, and nothing is called next",
                window.status().otherRole == "previous" && window.frame()->badge("next") == 0 && !window.frame()->stripShown());
         save(window, "r4a-first-view-on-trial");
@@ -1922,12 +1393,7 @@ int takeRealShots(Window &window, const QString &folder)
     }
 
     expect("after going back the system from before is there to be reused", window.status().otherRole == "previous");
-    beforeCheck(window, save, expect, "br12-reuse", "a change that would reuse the place of the system from before",
-                [&] { window.handOver(asked(nvidia)); },
-                {"Make this change in the next system?", "takes the place of", "no longer go back to"},
-                "Prepare the next system");
-    window.handOver(asked(nvidia), false);
-    waitUntilIdle(window);
+    makeChange(window, "nvidia");
     expect("a second change opens a next system again",
            window.status().state == "preparing" && window.status().changes.size() == 1);
     const QString before = window.status().preparationId;
@@ -1969,7 +1435,7 @@ int takeRealShots(Window &window, const QString &folder)
         auto *page = window.findChild<SystemPage *>();
         expect("an unusable system is not called interrupted: the page says recab says it needs recovery, with recab's reason",
                overview.contains("recab says this system needs recovery") && overview.contains(reason)
-                   && !overview.contains("Preparing the next system was interrupted") && !overview.contains("[Make a change…]")
+                   && !overview.contains("Preparing the next system was interrupted")
                    && overview.contains("Nothing else is offered here while recab says this system needs recovery."));
         expect("the recovery list is shown, every step recab offers with its own verdict: all off but the restart of the computer",
                groupTitles(page).contains("Software, updates and recovery")
@@ -1984,8 +1450,7 @@ int takeRealShots(Window &window, const QString &folder)
         save(window, "r19-unusable");
         const QString next = nextWords(window);
         expect("the next system's page says the same and shows no step of its own",
-               next.contains("recab says this system needs recovery") && next.contains(reason) && !next.contains("[Finish…]")
-                   && !next.contains("[Make a change…]"));
+               next.contains("recab says this system needs recovery") && next.contains(reason) && !next.contains("[Finish…]"));
         save(window, "r19b-unusable-next");
         qunsetenv("RECAB_STANDIN_UNUSABLE");
         window.refresh();
@@ -2000,13 +1465,23 @@ int takeRealShots(Window &window, const QString &folder)
         qputenv("RECAB_STANDIN_STOP_AT", "change");
         const QString marker = QDir(qEnvironmentVariable("RECAB_STANDIN_STATE")).filePath("stopped-at-change");
         QFile::remove(marker);
-        window.handOver(asked(sshd), false);
-        waitFor([&] { return QFile::exists(marker); }, 30);
-        settle(300);
-        save(window, "r18-change-cut-off");
-        window.stopRun();
+        // The tool making the change is ended half way (the stand-in stops there and waits).
+        const QString recab = qEnvironmentVariable("RECAB_GUI_RECAB");
+        QProcess prepare;
+        prepare.start(recab, {"--json", "prepare"});
+        prepare.waitForFinished(120000);
+        window.refresh();
         waitUntilIdle(window);
+        QProcess tool;
+        tool.start(recab, {"--json", "edit", "/etc/ssh/sshd_config", "--preparation", window.status().preparationId, "--revision",
+                           QString::number(window.status().preparationRevision), "--actor", "tool"});
+        waitFor([&] { return QFile::exists(marker); }, 30);
+        tool.terminate();
+        tool.waitForFinished(10000);
         qunsetenv("RECAB_STANDIN_STOP_AT");
+        window.refresh();
+        waitUntilIdle(window);
+        save(window, "r18-change-cut-off");
         expect("a cut-off change is reported as interrupted, with recab's recover step ready and every new change refused",
                window.status().state == "interrupted" && !window.status().preparationId.isEmpty()
                    && window.status().changes.isEmpty() && window.status().operation("change_recover").ready
@@ -2039,8 +1514,7 @@ int takeRealShots(Window &window, const QString &folder)
     }
 
     // A restart that fails, and the computer comes back; then the same again, kept by recab itself.
-    window.handOver(asked(sshd), false);
-    waitUntilIdle(window);
+    makeChange(window, "ssh");
     window.finish(false);
     waitUntilIdle(window);
     qputenv("RECAB_STANDIN_TRIAL", "fail");
@@ -2054,7 +1528,7 @@ int takeRealShots(Window &window, const QString &folder)
         expect("the first view after a failed start says the computer came back, with recab's detail, and the one thing to do",
                overview.contains("The next system did not start, so the computer came back")
                    && overview.contains("startup ended with failed units: sddm.service")
-                   && overview.contains("[Let the agent fix it]") && overview.contains("[Try the same again]")
+                   && overview.contains("[Copy for agent]") && overview.contains("[Try the same again]")
                    && !overview.contains("What to do next"));
         save(window, "r13-came-back");
         QStringList rows;
@@ -2074,9 +1548,9 @@ int takeRealShots(Window &window, const QString &folder)
            window.status().state == "stable" && window.status().runningSlot == "B" && window.status().trialOutcome == "kept");
     {
         const QString overview = overviewWords(window);
-        expect("the first view after a kept restart says so, and when, and offers the next change",
+        expect("the first view after a kept restart says so, and when, and that nothing is waiting",
                overview.contains("You are on the new system") && overview.contains("Kept: it started properly on")
-                   && overview.contains("[Make a change…]") && !overview.contains("[Keep it now]"));
+                   && overview.contains("Nothing is waiting.") && !overview.contains("[Keep it now]"));
         save(window, "r14-kept-by-recab");
         window.showMain();
         settle(100);
@@ -2087,7 +1561,7 @@ int takeRealShots(Window &window, const QString &folder)
         QStringList rows;
         const QString history = historyWords(window, &rows);
         expect("the history page is read from recab and lists what happened", history.contains("History")
-                   && history.contains("[All]") && history.contains("[Restarts]") && history.contains("[By the agent]")
+                   && history.contains("[All]") && history.contains("[Restarts]") && !history.contains("[By the ")
                    && history.contains("[Save as a file…]") && rows.size() >= 20);
         auto row = [&rows](const QString &part) {
             for (const QString &one : rows)
@@ -2101,8 +1575,8 @@ int takeRealShots(Window &window, const QString &folder)
                rows.value(1).contains("A restart into the next system was set (Slot B)")
                    && rows.value(2).contains("Restart into the next system (Slot B)")
                    && rows.value(2).contains("Came back: it did not start properly"));
-        expect("a change by the agent says so, and one by the person says so",
-               row("edited").contains("The agent") && row("htop, installed").contains("You"));
+        expect("a change by a tool is labelled as the caller gave it, and one by the person says so",
+               row("edited").contains("tool") && row("htop, installed").contains("You"));
         expect("the change that went into the restart kept by hand says so",
                row("htop, installed").contains("Went into a restart that was kept"));
         expect("a change that went into restarts that ended kept says so, by the last one",
@@ -2125,13 +1599,6 @@ int takeRealShots(Window &window, const QString &folder)
         }
         expect("the Restarts view lists only restarts, their keeping and going back", onlyRestarts);
         save(window, "r15b-history-restarts");
-        clickButton(page, QStringLiteral("By the agent"));
-        settle(200);
-        tree = page->findChild<QTreeWidget *>();
-        bool onlyAgent = tree && tree->topLevelItemCount() > 0;
-        for (int i = 0; tree && i < tree->topLevelItemCount(); ++i)
-            onlyAgent &= tree->topLevelItem(i)->text(2) == QLatin1String("The agent");
-        expect("the By the agent view lists only the agent's changes", onlyAgent);
         clickButton(page, QStringLiteral("All"));
         settle(200);
         const QString path = QDir(folder).filePath("r-history.txt");
@@ -2152,8 +1619,7 @@ int takeRealShots(Window &window, const QString &folder)
 
     // A restart that fails and leaves recab no preparation record for the failed system: it offers to replace it.
     {
-        window.handOver(asked(nvidia), false);
-        waitUntilIdle(window);
+        makeChange(window, "nvidia");
         window.finish(false);
         waitUntilIdle(window);
         qputenv("RECAB_STANDIN_TRIAL", "fail-no-record");
@@ -2170,7 +1636,7 @@ int takeRealShots(Window &window, const QString &folder)
                    && window.status().operation("prepare").reason.startsWith("The failed generation has no preparation record."));
         const QString overview = overviewWords(window);
         keepWords(folder, "r23-overview.txt", overview);
-        expect("Overview offers it beside trying again and the agent, and says the next system starts nowhere meanwhile",
+        expect("Overview offers it beside trying again, and says the next system starts nowhere meanwhile",
                overview.contains("The next system did not start, so the computer came back")
                    && overview.contains("[Replace it with the running system…]") && !overview.contains("[Replace it with the running system…](off)")
                    && overview.contains("[Try the same again](off)"));

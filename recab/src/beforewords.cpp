@@ -206,24 +206,6 @@ BeforePage::Content addRelease(const RecabClient &client, const Status &s, bool 
                 happens, client, {client.commandWords({"update", "apply"})}, QObject::tr("Add it"));
 }
 
-BeforePage::Content reuse(const RecabClient &client, const Status &s)
-{
-    BeforePage::Content c;
-    c.title = QObject::tr("Make this change in the next system?");
-    c.happensTitle = QObject::tr("What happens");
-    c.happens = {QObject::tr("The running system is locked, so it is not changed. The change is made in the next "
-                             "system and takes effect when you restart."),
-                 QObject::tr("The next system starts as an exact copy of the running one. Only what differs is "
-                             "copied."),
-                 QObject::tr("It takes the place of %1. After this you can no longer go back to %1; the running "
-                             "system stays your way back.")
-                     .arg(fromBefore(s))};
-    c.tableTitle = QObject::tr("What runs");
-    c.table = {{QObject::tr("Runs"), client.agentName()}};
-    c.go = QObject::tr("Prepare the next system");
-    return c;
-}
-
 BeforePage::Content restartComputer(const RecabClient &client, const Status &s)
 {
     QStringList happens{QObject::tr("The computer restarts now, and programs that are open are closed. Once the "

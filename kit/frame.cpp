@@ -1,20 +1,12 @@
 #include "frame.h"
 
-#include "activity.h"
 #include "firstrun.h"
 #include "help.h"
 #include "look.h"
 #include "parts.h"
-#include "run.h"
-#include "settings.h"
 
 #include <QAbstractButton>
-#include <QFileInfo>
 #include <QHBoxLayout>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QCloseEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPainter>
@@ -43,8 +35,7 @@ QColor shade(const QPalette &palette, qreal by)
 // no rail entry: it is marked while the page before the app's own shows.
 bool sharedKey(const QString &key)
 {
-    return key == QLatin1String("activity") || key == QLatin1String("settings") || key == QLatin1String("help")
-        || key == QLatin1String("firstrun");
+    return key == QLatin1String("help") || key == QLatin1String("firstrun");
 }
 
 } // namespace
@@ -211,7 +202,7 @@ namespace {
 // "htop, installed" is a change's title; the strip names what changed.
 QString nameOf(QString title)
 {
-    static const QStringList tails{", by the agent", ", installed", ", updated", ", removed", ", edited"};
+    static const QStringList tails{", installed", ", updated", ", removed", ", edited"};
     bool cut = true;
     while (cut) {
         cut = false;
@@ -294,21 +285,7 @@ Frame::Frame(App app, QWidget *parent)
     own->setSpacing(2);
     railColumn->addWidget(appEntries_);
     railColumn->addStretch();
-    // The shared entries, below the gap.
-    auto *activity = new RailButton(tr("Activity"));
-    activity->setAccessibleDescription(tr("What the agent was asked, from all the apps"));
-    entries_.insert(activityKey(), activity);
-    order_ << activity;
-    railColumn->addWidget(activity);
-    connect(activity, &QAbstractButton::clicked, this, [this] { choose(activityKey()); });
-    connect(activity, &RailButton::stepped, this, [this, activity](int by) { step(activity, by); });
-    auto *settings = new RailButton(tr("Settings"));
-    settings->setAccessibleDescription(tr("The agent and the windows, the same in all the apps"));
-    entries_.insert(settingsKey(), settings);
-    order_ << settings;
-    railColumn->addWidget(settings);
-    connect(settings, &QAbstractButton::clicked, this, [this] { choose(settingsKey()); });
-    connect(settings, &RailButton::stepped, this, [this, settings](int by) { step(settings, by); });
+    // The shared entry, below the gap.
     auto *help = new RailButton(tr("Help"));
     help->setAccessibleDescription(tr("How %1 works and where to look when something is wrong").arg(tr(apps[app].name)));
     entries_.insert(helpKey(), help);
@@ -323,11 +300,7 @@ Frame::Frame(App app, QWidget *parent)
     auto *middle = new QVBoxLayout;
     middle->setSpacing(0);
     stack_ = new QStackedWidget;
-    activity_ = new ActivityPage(QString::fromLatin1(apps[app].name));
     stack_->addWidget(new QWidget); // the app's content takes this place
-    stack_->addWidget(activity_);
-    settings_ = new SettingsPage(QString::fromLatin1(apps[app].name));
-    stack_->addWidget(settings_);
     help_ = new HelpPage(app);
     stack_->addWidget(help_);
     firstRun_ = new FirstRunPage(app);
@@ -356,11 +329,9 @@ Frame::Frame(App app, QWidget *parent)
     status_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     statusExtras_ = new QHBoxLayout;
     statusExtras_->setSpacing(6);
-    agent_ = dim(new QLabel);
     status->addWidget(status_, 0);
     status->addLayout(statusExtras_);
     status->addStretch();
-    status->addWidget(agent_);
     outer->addWidget(line);
 
     flashTimer_ = new QTimer(this);
@@ -371,22 +342,12 @@ Frame::Frame(App app, QWidget *parent)
         status_->setToolTip(statusWords_);
     });
 
-    connect(activity_, &ActivityPage::counts, this, [this](int active, bool waits) {
-        setBadge(activityKey(), active, waits);
-    });
-    connect(activity_, &ActivityPage::goToRun, this, &Frame::goToRun);
-    // A change in Settings shows in the status line at once; "Try it" is a run for Activity.
-    connect(settings_, &SettingsPage::changed, this, &Frame::readAgentStatus);
-    connect(settings_, &SettingsPage::ran, activity_, &ActivityPage::read);
     connect(help_, &HelpPage::go, this, &Frame::helpGo);
     connect(help_, &HelpPage::startApp, this, &Frame::startApp);
     connect(help_, &HelpPage::firstPageAgain, this, &Frame::showFirstRun);
     // "Go on" is the person's step to the app; the rail's entries leave the page as well.
     connect(firstRun_, &FirstRunPage::goOn, this, &Frame::leaveShared);
-    connect(firstRun_, &FirstRunPage::openSettings, this, [this] { choose(settingsKey()); });
     connect(firstRun_, &FirstRunPage::openHelp, this, [this] { choose(helpKey()); });
-    // The rail's badge is true from the start, not only once Activity was opened.
-    QTimer::singleShot(0, activity_, &ActivityPage::read);
 }
 
 void Frame::setContent(QWidget *content)
@@ -403,8 +364,8 @@ void Frame::addEntry(const QString &key, const QString &title)
 {
     auto *button = new RailButton(title);
     entries_.insert(key, button);
-    // Before the shared entries (Activity, Settings, Help), which are last in the order.
-    order_.insert(order_.size() - 3, button);
+    // Before the shared entry (Help), which is last in the order.
+    order_.insert(order_.size() - 1, button);
     static_cast<QVBoxLayout *>(appEntries_->layout())->addWidget(button);
     connect(button, &QAbstractButton::clicked, this, [this, key] { choose(key); });
     connect(button, &RailButton::stepped, this, [this, button](int by) { step(button, by); });
@@ -449,7 +410,7 @@ void Frame::select(const QString &key)
 // Where a page is in the stack: the app's content first, then the frame's own.
 int Frame::indexOf(const QString &key) const
 {
-    return key == activityKey() ? 1 : key == settingsKey() ? 2 : key == helpKey() ? 3 : 0;
+    return key == helpKey() ? 1 : 0;
 }
 
 void Frame::follow(const QString &key)
@@ -459,16 +420,6 @@ void Frame::follow(const QString &key)
     followed_ = key;
     if (!sharedKey(selected_))
         mark(key);
-}
-
-bool Frame::activityShown() const
-{
-    return selected_ == activityKey();
-}
-
-bool Frame::settingsShown() const
-{
-    return selected_ == settingsKey();
 }
 
 bool Frame::helpShown() const
@@ -481,19 +432,11 @@ bool Frame::firstRunShown() const
     return selected_ == QLatin1String("firstrun");
 }
 
-void Frame::addHelpTarget(const QString &key)
-{
-    if (!helpTargets_.contains(key))
-        helpTargets_ << key;
-}
-
-// The page before the app's own: nothing in the rail is marked, and the page asks
-// the helper about the agent each time it is shown.
+// The page before the app's own: nothing in the rail is marked.
 void Frame::showFirstRun()
 {
     mark(QStringLiteral("firstrun"));
-    stack_->setCurrentIndex(4);
-    firstRun_->read();
+    stack_->setCurrentIndex(2);
     FirstRunPage::markSeen(app_);
 }
 
@@ -504,44 +447,24 @@ void Frame::leaveShared()
     stack_->setCurrentIndex(0);
 }
 
-// A link of Help: a rail entry, Activity and Settings are chosen as a click would;
-// a page the app offered is shown by the app, once Help has been left.
+// A link of Help: a rail entry, chosen as a click would.
 void Frame::helpGo(const QString &target)
 {
-    if (target == activityKey() || target == settingsKey() || entries_.contains(target)) {
+    if (entries_.contains(target))
         choose(target);
-    } else if (helpTargets_.contains(target)) {
-        leaveShared();
-        emit helpLink(target);
-    }
 }
 
 // The person chose an entry: show what it stands for and say so.
 void Frame::choose(const QString &key)
 {
-    // Away from the page of a run that works: it carries on, and Activity has it.
-    if (!ownRun_.isEmpty() && !ownNoted_ && key != activityKey()) {
-        ownNoted_ = true;
-        flash(tr("The agent carries on with its run. You can find it in Activity."));
-    }
-    if (key == activityKey()) {
-        mark(key);
-        stack_->setCurrentIndex(1);
-        activity_->read();
-    } else if (key == settingsKey()) {
-        mark(key);
-        stack_->setCurrentIndex(2);
-        settings_->read();
-        return; // the frame's own page: the app has nothing to switch to
-    } else if (key == helpKey()) {
+    if (key == helpKey()) {
         mark(key);
         // Drawn for the pages the app has now: no link leads to a page that is not there.
-        help_->draw(entries_.keys() + helpTargets_);
+        help_->draw(entries_.keys());
         stack_->setCurrentIndex(indexOf(key));
-        return; // the frame's own page as well
-    } else {
-        select(key);
+        return; // the frame's own page: the app has nothing to switch to
     }
+    select(key);
     emit chosen(key);
 }
 
@@ -658,149 +581,8 @@ QStringList Frame::entryTitles() const
     return titles;
 }
 
-void Frame::showAgent(const QString &words)
-{
-    agentName_ = words;
-    agent_->setText(agentNote_.isEmpty() ? words : agentNote_);
-}
-
-void Frame::setAgentNote(const QString &words)
-{
-    agentNote_ = words;
-    agent_->setText(words.isEmpty() ? agentName_ : words);
-}
-
-QString Frame::agentText() const
-{
-    return agent_->text();
-}
-
-void Frame::setAgent(const QString &program)
-{
-    agentProgram_ = program;
-    readAgentStatus();
-}
-
-// `levitate-agent --status`, read without holding the window up.
-void Frame::readAgentStatus()
-{
-    const QString name = QFileInfo(agentProgram_).fileName();
-    if (name != QLatin1String("levitate-agent")) {
-        // A stand-in, or an agent that needs no asking: its file name, as it always was.
-        showAgent(tr("Agent: %1").arg(name));
-        return;
-    }
-    if (asking_) {
-        askAgain_ = true; // what it reports may have changed since the question went out
-        return;
-    }
-    if (agentName_.isEmpty())
-        showAgent(tr("Agent: asking…"));
-    asking_ = new Run(agentProgram_, {"--status"}, this);
-    connect(asking_, &Run::finished, this, [this, name](bool ok) {
-        Run *run = asking_;
-        asking_ = nullptr;
-        run->deleteLater();
-        if (askAgain_) {
-            askAgain_ = false;
-            readAgentStatus();
-            return;
-        }
-        const QJsonObject answer = QJsonDocument::fromJson(run->answer()).object();
-        if (!ok || !answer.contains("agents")) {
-            showAgent(tr("Agent: %1 could not be asked").arg(name));
-            return;
-        }
-        QJsonObject chosen;
-        for (const QJsonValue &agent : answer["agents"].toArray())
-            if (agent["id"].toString() == answer["chosen"].toString())
-                chosen = agent.toObject();
-        const QString who = chosen["name"].toString(answer["chosen"].toString());
-        if (!chosen["installed"].toBool()) {
-            showAgent(tr("Agent: %1 is not installed").arg(who));
-            return;
-        }
-        const QJsonValue signedIn = chosen["signed_in"];
-        showAgent(signedIn.isBool() ? tr("Agent: %1, %2").arg(who, signedIn.toBool() ? tr("signed in") : tr("not signed in"))
-                                    : tr("Agent: %1").arg(who));
-    });
-    asking_->start();
-}
-
-// ---- Activity
-
-void Frame::setOwnRun(Run *run)
-{
-    if (!run || !run->isAgent())
-        return;
-    ownRuns_ << run;
-    if (!run->id().isEmpty())
-        setOwnRun(run->id());
-    else
-        connect(run, &Run::idKnown, this, [this, run](const QString &id) {
-            // Not for a run that ended before the helper named it.
-            if (run->exitCode() < 0)
-                setOwnRun(id);
-        });
-}
-
-void Frame::setOwnRun(const QString &id)
-{
-    if (id != ownRun_)
-        ownNoted_ = false;
-    ownRun_ = id;
-    activity_->setOwnRun(id);
-    if (id.isEmpty())
-        activity_->read();
-}
-
-// A window that closes, or the person leaving for another page: the run does
-// not end, and Activity is where it is found.
-void Frame::letGoOfRuns()
-{
-    // The runs this window follows and the ones its pages started (Settings' "Try it"),
-    // and what Activity attached to: all of them let go of, none stopped. Only a run
-    // the helper has named (so that Activity has it) is worth saying.
-    QList<Run *> all;
-    for (const QPointer<Run> &run : std::as_const(ownRuns_))
-        if (run)
-            all << run;
-    for (Run *run : findChildren<Run *>())
-        if (!all.contains(run))
-            all << run;
-    int carried = 0;
-    for (Run *run : all) {
-        if (run->released() || !run->running())
-            continue;
-        const bool said = run->isAgent() && !run->id().isEmpty();
-        if (run->isAgent() ? !run->id().isEmpty() : run->isAttach()) {
-            run->release();
-            carried += said;
-        }
-    }
-    if (carried > 0)
-        flash(tr("The agent's run carries on without this window. You can find it in Activity."));
-}
-
-void Frame::watchWindow()
-{
-    QWidget *top = window();
-    if (!top || top == this || top == watched_)
-        return;
-    top->installEventFilter(this);
-    watched_ = top;
-}
-
-bool Frame::event(QEvent *event)
-{
-    if (event->type() == QEvent::ParentChange)
-        watchWindow();
-    return QWidget::event(event);
-}
-
 void Frame::showEvent(QShowEvent *event)
 {
-    watchWindow();
     QWidget::showEvent(event);
     // The first time this person opens this app: the page before the app's own.
     // The app has been reading since it was made; nothing here waits for it.
@@ -809,37 +591,6 @@ void Frame::showEvent(QShowEvent *event)
         if (FirstRunPage::wanted(app_))
             showFirstRun();
     }
-}
-
-bool Frame::eventFilter(QObject *watched, QEvent *event)
-{
-    if (watched == watched_ && event->type() == QEvent::Close) {
-        // This filter sees the close event before the window's own handler, which may
-        // refuse ("close anyway?" in Recipe). So the runs are let go of only once the
-        // event has been dealt with and the window really is gone.
-        QPointer<QWidget> top = watched_;
-        QTimer::singleShot(0, this, [this, top] {
-            if (!top || !top->isVisible())
-                letGoOfRuns();
-        });
-    }
-    return false;
-}
-
-void Frame::closeEvent(QCloseEvent *event)
-{
-    letGoOfRuns();
-    QWidget::closeEvent(event);
-}
-
-void Frame::readAgain()
-{
-    activity_->read();
-    if (settings_->started())
-        settings_->read();
-    if (firstRunShown())
-        firstRun_->read();
-    readAgentStatus();
 }
 
 #include "frame.moc"

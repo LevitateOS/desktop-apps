@@ -48,8 +48,6 @@ static QString titleOf(const QJsonObject &change)
         title = QObject::tr("%1, edited").arg(package);
     else
         title = QObject::tr("%1 (%2)").arg(package, action);
-    if (change["actor"].toString().startsWith(QLatin1String("agent")))
-        title = QObject::tr("%1, by the agent").arg(title);
     return title;
 }
 

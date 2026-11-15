@@ -38,9 +38,6 @@ BeforePage::Content recover(const RecabClient &client, const Status &status);
 // Adding a release to the next system: from the one recab found, or from a
 // file (`fromFile`).
 BeforePage::Content addRelease(const RecabClient &client, const Status &status, bool fromFile);
-// A request handed to the agent while the place of the system from before
-// would be reused: the question that has to be answered before it starts.
-BeforePage::Content reuse(const RecabClient &client, const Status &status);
 // Restarting the computer alone (the recovery list's "Reboot").
 BeforePage::Content restartComputer(const RecabClient &client, const Status &status);
 // One of recab's operations by its own words (its label, its `destructive`

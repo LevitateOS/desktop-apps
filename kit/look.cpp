@@ -93,11 +93,9 @@ bool pictureMode()
 
 int guardPictureMode(const QString &program, const QStringList &programs, const QStringList &mayBeEmpty)
 {
-    QStringList named{"LEVITATE_ACTIVITY_AGENT", "LEVITATE_AGENT_CODEX", "LEVITATE_AGENT_CLAUDE", "HOME",
-                      "XDG_CONFIG_HOME",         "XDG_STATE_HOME",        "XDG_DATA_HOME",        "XDG_RUNTIME_DIR"};
+    QStringList named{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"};
     named << programs;
-    QStringList empty{"LEVITATE_AGENT_ROOT_HELPER"};
-    empty << mayBeEmpty;
+    const QStringList &empty = mayBeEmpty;
     QStringList missing;
     for (const QString &name : std::as_const(named))
         if (qEnvironmentVariable(name.toLatin1().constData()).isEmpty())
@@ -120,9 +118,6 @@ int guardPictureMode(const QString &program, const QStringList &programs, const 
         fprintf(stderr, "%s\n", qPrintable(sentence));
         return 2;
     }
-    // A notice on the desktop of whoever runs a check is not wanted; one that names a notifier gets it.
-    if (!qEnvironmentVariableIsSet("LEVITATE_AGENT_NOTIFIER"))
-        qputenv("LEVITATE_AGENT_NOTIFIER", "");
     inPictureMode = true;
     return 0;
 }

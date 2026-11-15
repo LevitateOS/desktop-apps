@@ -7,7 +7,6 @@
 #include "mess.h"
 #include "page.h"
 #include "scan.h"
-#include "setaside.h"
 
 #include <QColor>
 #include <QDateTime>
@@ -67,8 +66,6 @@ struct DiskInfo {
     // What could be freed
     qint64 earlierBytes = -1; // Recipe's earlier versions; -1: Recipe could not be asked
     qint64 earlierGenerations = 0;
-    bool heldRead = false;
-    SetAside held;
 
     // The partitions
     bool layoutRead = false;
@@ -81,8 +78,8 @@ struct DiskInfo {
 };
 
 // The scan split into kinds it can tell apart: files, what programs keep in
-// hidden folders, known leftovers, what the agent set aside, other folders.
-QList<Slice> composition(Node *tree, const QList<Finding> &found, const QString &home, qint64 heldBytes);
+// hidden folders, known leftovers, other folders.
+QList<Slice> composition(Node *tree, const QList<Finding> &found, const QString &home);
 
 class DiskPage : public Page {
     Q_OBJECT
@@ -96,7 +93,6 @@ public:
 signals:
     void lookAgain();
     void showMess();
-    void showHeld();
     void showBrowse();
     void showSystems();
     void openRecipe();

@@ -54,7 +54,6 @@ signals:
     void openFolder(const QString &path);
     void said(const QString &words);
     void showMess();
-    void handOver();
 
 private:
     void fill();
@@ -81,5 +80,5 @@ private:
     QTreeWidget *rows_ = nullptr;
     DiskMap *map_ = nullptr;
     QPushButton *goIn_ = nullptr, *open_ = nullptr, *copy_ = nullptr, *add_ = nullptr, *takeOff_ = nullptr,
-                *never_ = nullptr, *listButton_ = nullptr, *handButton_ = nullptr;
+                *never_ = nullptr, *listButton_ = nullptr;
 };

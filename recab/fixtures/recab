@@ -7,8 +7,9 @@ before until a change is asked for, then becomes the next system, which
 collects changes and an update, is finished, and is restarted into. Nothing on
 this machine is read or changed.
 
-`agent` and `reboot` beside this file are the same program: an agent that
-turns a prompt into changes, and the restart that judges a trial.
+`reboot` beside this file is the same program: the restart that judges a trial.
+`make-change nvidia|ssh|fix-failed` makes a change in the next system, for the
+stories (the way a person's own tool would).
 
 Environment:
   RECAB_STANDIN_STATE        folder for the state file (default: a folder in /tmp)
@@ -41,7 +42,7 @@ def fresh():
         "other": {"role": "previous", "release": "2026.09", "state": "kept", "holds": [], "changes": []},
         "update": {"release": "2026.11", "size_bytes": 3328599654 if distro == "LevitateOS" else 1503238553,
                    "applied": False},
-        "conflicts": [], "proposal": None, "last_trial": None, "interrupted": None,
+        "conflicts": [], "last_trial": None, "interrupted": None,
         "trial_pending": False, "next_boot_previous": False, "revision": 0,
         "fail_trials": int(os.environ.get("RECAB_STANDIN_FAIL_TRIALS", "0")),
     }
@@ -126,7 +127,6 @@ def status(s):
         "update": {"release": update["release"], "size_bytes": update["size_bytes"]}
                   if update and not update["applied"] else None,
         "conflicts": s["conflicts"],
-        "proposal": s["proposal"],
         "last_trial": s["last_trial"],
         "interrupted": s["interrupted"],
         "actions": actions(s),
@@ -215,11 +215,10 @@ def apply_update(s):
 
 def resolve(s, path, how):
     s["conflicts"] = [c for c in s["conflicts"] if c["path"] != path]
-    words = {"--local": "your version", "--release": "the update's version", "--proposal": "merged by the agent"}[how]
+    words = {"--local": "your version", "--release": "the update's version"}[how]
     for change in s["other"]["changes"]:
         if change.get("path") == path:
             change["title"] = "%s, %s" % (path, words)
-    s["proposal"] = None
     save(s)
     emit(event="done")
 
@@ -263,7 +262,7 @@ def discard(s):
         refuse("There is no next system.")
     # The place was already reused: discarding does not bring the older system back.
     s["other"] = {"role": "none", "release": "", "state": "empty", "holds": [], "changes": []}
-    s["conflicts"], s["proposal"], s["interrupted"], s["trial_pending"] = [], None, None, False
+    s["conflicts"], s["interrupted"], s["trial_pending"] = [], None, False
     if s["update"]:
         s["update"]["applied"] = False
     save(s)
@@ -312,58 +311,13 @@ def reboot(s):
     save(s)
 
 
-# ---------------------------------------------------------------- the agent
+# ---------------------------------------------------------------- a change, made for a story
 
-def section(prompt, title):
-    """The text under one heading of the prompt."""
-    head = title + ":"
-    if head not in prompt:
-        return ""
-    rest = prompt.split(head, 1)[1]
-    for other in ("The request:", "The issue:", "The facts:", "The expected result:"):
-        if other != head and other in rest:
-            rest = rest.split(other, 1)[0]
-    return rest.strip()
-
-
-def ask(number, text, choices):
-    """Asks the person and waits for the answer, as an agent does when the
-    request leaves something open. With nobody there, the first choice."""
-    emit(event="question", id=number, text=text, choices=choices)
-    line = sys.stdin.readline()
-    try:
-        return json.loads(line)["answer"]
-    except (ValueError, KeyError):
-        return choices[0]
-
-
-def agent(s):
-    # The prompt arrives as one JSON line; the input stays open for answers.
-    prompt = json.loads(sys.stdin.readline())["prompt"]
-    issue, request = section(prompt, "The issue"), section(prompt, "The request")
-    expected = [part.strip() for part in section(prompt, "The expected result").replace("\n", " ").split(". ") if part.strip()]
-
-    if s["conflicts"] and "both altered" in issue:
-        clash = s["conflicts"][0]
-        emit(event="plan", steps=[["read", "Read both versions"], ["write", "Write one file"], ["check", "Check it"]])
-        for name in ("read", "write", "check"):
-            step(name, "running")
-            pause(0.6)
-            step(name, "done")
-        summary = ("It wrote one %s: your setting kept (password logins off), the update's new setting added, "
-                   "and the included folder moved as the update wanted." % clash["path"])
-        s["proposal"] = {
-            "path": clash["path"], "summary": summary, "scope": "It changed that one file and nothing else.",
-            "checks": [{"expected": part.rstrip("."), "verdict": "yes",
-                        "note": "sshd checked it" if "sshd accepts" in part else ""} for part in expected]
-                      + [{"expected": "The next system starts", "verdict": "unknown", "note": "known after the restart"}],
-        }
-        save(s)
-        emit(event="agent", summary=summary)
-        emit(event="done")
-        return
-
-    if s["other"]["role"] == "next" and s["other"]["state"] == "failed":
+def make_change(s, which):
+    """Makes a change in the next system the way a person's own tool would
+    (`recab` has no command for it in this stand-in): `nvidia`, `ssh`, or
+    `fix-failed`, which settles what made the next system fail to start."""
+    if which == "fix-failed":
         emit(event="plan", steps=[["read", "Read the failure"], ["change", "Change the next system"], ["record", "Record it"]])
         step("read", "running")
         pause(0.8)
@@ -378,31 +332,17 @@ def agent(s):
         save(s)
         step("change", "done")
         step("record", "done")
-        emit(event="agent", summary="driver 580.95 does not support the update's kernel, so the next system now has 580.105")
         emit(event="done")
         return
-
-    words = (request or prompt).lower()
-    question = None
-    if "nvidia" in words:
+    if which == "nvidia":
         change = {"kind": "software", "title": "NVIDIA driver 580.95, installed"}
-        chose = "it chose the recipe nvidia-driver 580.95"
-    elif "ssh" in words or "password" in words:
-        change = {"kind": "file", "title": "%s, edited" % SSHD, "path": SSHD}
-        chose = "it turned password logins off in %s" % SSHD
-        question = ("root can still log in over ssh with a key. Leave that as it is, or turn root logins off too?",
-                    ["Leave it", "Turn it off too"])
     else:
-        change = {"kind": "other", "title": (request or "A change").splitlines()[0][:60]}
-        chose = "it made the change as asked"
+        change = {"kind": "file", "title": "%s, edited" % SSHD, "path": SSHD}
     emit(event="plan", steps=[["level", "Make it level"], ["change", "Make the change"], ["record", "Record it"]])
     if s["other"]["role"] == "next":
         step("level", "skipped")
     prepare(s)
     step("change", "running")
-    if question and ask("1", *question) != question[1][0]:
-        chose += ", and root logins too"
-    emit(event="say", text="The agent: %s." % chose)
     if change["kind"] == "software":
         # A long step: what is half done is marked, so a stop or a power cut can be recovered.
         s["interrupted"] = {"during": "adding the NVIDIA driver", "change": change}
@@ -416,7 +356,6 @@ def agent(s):
     step("record", "running")
     pause(0.3)
     step("record", "done")
-    emit(event="agent", summary=chose)
     emit(event="done")
 
 
@@ -426,8 +365,6 @@ def main(args):
     role = os.path.basename(sys.argv[0])
     words = [arg for arg in args if not arg.startswith("--")]
     s = load()
-    if role == "agent":
-        return agent(s)
     if role == "reboot":
         return reboot(s)
     command = words[0] if words else ""
@@ -440,10 +377,12 @@ def main(args):
     elif command == "update" and words[1:2] == ["apply"]:
         apply_update(s)
     elif command == "resolve" and len(words) == 2:
-        how = next((arg for arg in args if arg in ("--local", "--release", "--proposal")), None)
+        how = next((arg for arg in args if arg in ("--local", "--release")), None)
         if not how:
-            refuse("say --local, --release or --proposal")
+            refuse("say --local or --release")
         resolve(s, words[1], how)
+    elif command == "make-change" and len(words) == 2:
+        make_change(s, words[1])
     elif command == "finalize":
         finalize(s)
     elif command == "set-next":
