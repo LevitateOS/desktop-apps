@@ -1704,10 +1704,8 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
                                  Mood::Warn));
     if (!catalog.updateProblems.isEmpty())
         column->addWidget(dim(text(tr("Not looked up: %1.").arg(catalog.updateProblems.join(tr("; "))), true)));
-    auto *system = dim(text(tr("The system itself is updated in the Recab app.")));
     if (catalog.updates.isEmpty()) {
         column->addStretch();
-        column->addWidget(system);
         return;
     }
 
@@ -1743,7 +1741,6 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
     detail->column()->addLayout(inside);
     column->addWidget(detail);
     column->addStretch();
-    column->addWidget(system);
 
     auto fill = [this, inside, shared](QTreeWidgetItem *line) {
         clear(inside);
