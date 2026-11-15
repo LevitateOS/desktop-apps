@@ -18,6 +18,8 @@ qt_add_executable(recipe-gui
     ../kit/page.cpp
     ../kit/refresh.cpp
     ../kit/frame.cpp
+    ../kit/release.cpp
+    ../kit/releasepage.cpp
     ../kit/windowsize.cpp
     ../kit/help.cpp
     ../kit/firstrun.cpp

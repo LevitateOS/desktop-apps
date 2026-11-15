@@ -103,7 +103,10 @@ Window::Window(QWidget *parent)
     // F5, and coming back to the window after a while: a terminal
     // may have installed something in the meantime.
     refresher_ = new Refresher(this, 20);
-    connect(refresher_, &Refresher::asked, this, [this](bool) { refresh(); });
+    connect(refresher_, &Refresher::asked, this, [this](bool) {
+        frame_->refreshRelease(); // the page of "Check for updates", when it shows
+        refresh();
+    });
     auto *again = new QToolButton;
     again->setText(tr("Read again"));
     again->setToolTip(tr("Read the recipes and what is installed again (F5)"));

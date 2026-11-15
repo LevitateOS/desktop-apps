@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>LevitateOS</vendor>
+  <vendor_url>https://levitateos.org</vendor_url>
+  <!-- The window runs /usr/bin/recupdate through pkexec for one thing:
+       `recupdate apply --json` (install a release into this system's one root,
+       or finish one that was interrupted). The check runs as the person.
+       polkit names the program, not its arguments. -->
+  <action id="org.levitateos.updater.run">
+    <description>Install a new release of this system</description>
+    <message>The administrator password is needed to install a new release of this system</message>
+    <icon_name>org.levitateos.updater</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/recupdate</annotate>
+  </action>
+</policyconfig>

@@ -4,13 +4,14 @@
 <policyconfig>
   <vendor>LevitateOS</vendor>
   <vendor_url>https://levitateos.org</vendor_url>
-  <!-- The window runs /usr/bin/recab through pkexec for exactly three things:
+  <!-- The window runs /usr/bin/recab through pkexec for exactly four things:
        `recab status --json` (when the person cannot read the boot entries),
-       `recab copy`, and `recab boot-other [--cancel]`. polkit names the program,
-       not its arguments, so one action covers them. -->
+       `recab copy`, `recab boot-other [--cancel]` and `recab update --json`
+       (a release into the other root). polkit names the program, not its
+       arguments, so one action covers them. -->
   <action id="org.levitateos.recab.run">
-    <description>Read the two roots, copy the booted root to the other, or choose the root to start</description>
-    <message>The administrator password is needed for recab to read the two roots, make the other root a copy of the booted root, or choose the root that starts at the next boot</message>
+    <description>Read the two roots, copy the booted root to the other, install a release into it, or choose the root to start</description>
+    <message>The administrator password is needed for recab to read the two roots, make the other root a copy of the booted root, install a new release into it, or choose the root that starts at the next boot</message>
     <icon_name>system-software-update</icon_name>
     <defaults>
       <allow_any>auth_admin</allow_any>

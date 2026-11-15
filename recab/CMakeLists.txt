@@ -21,6 +21,8 @@ qt_add_executable(recab-gui
     ../kit/page.cpp
     ../kit/before.cpp
     ../kit/refresh.cpp
+    ../kit/release.cpp
+    ../kit/install.cpp
     ../kit/windowsize.cpp
 )
 target_include_directories(recab-gui PRIVATE ../kit)

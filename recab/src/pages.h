@@ -3,6 +3,7 @@
 #pragma once
 
 #include "page.h"
+#include "release.h"
 #include "status.h"
 
 class QLabel;
@@ -18,6 +19,15 @@ public:
     void show(const Status &status);
     // recab could not be read. `asAdministrator`: offer to read it as administrator.
     void showProblem(const QString &problem, bool asAdministrator);
+    // "Check for updates" on this page: the answer it shows, and what the person
+    // installed from it (`version`, said as `note`) that does not run yet.
+    void setUpdates(ReleaseCheck *check) { updates_ = check; }
+    void setUpdateInstalled(const QString &version, const QString &note)
+    {
+        doneVersion_ = version;
+        doneNote_ = note;
+    }
+    ReleaseCard *updateCard() const { return card_; }
 
     // For a check: the buttons as drawn, and the one-line reason under a disabled one.
     QPushButton *copyButton() const { return copy_; }
@@ -33,10 +43,14 @@ signals:
     void restartNow();
     void readAgain();
     void readAsAdministrator();
+    void installUpdate();
 
 private:
     QPushButton *copy_ = nullptr, *start_ = nullptr, *restart_ = nullptr;
     QLabel *reason_ = nullptr;
+    ReleaseCheck *updates_ = nullptr;
+    ReleaseCard *card_ = nullptr;
+    QString doneVersion_, doneNote_;
 };
 
 // What a command wrote while it ran, and how it ended.

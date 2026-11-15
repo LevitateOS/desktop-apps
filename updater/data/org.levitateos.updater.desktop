@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Updater
+GenericName=System updates
+Comment=Check for a newer release of this system and install it
+Exec=updater-gui
+Icon=org.levitateos.updater
+Categories=Qt;System;Settings;
+Keywords=update;release;upgrade;system;

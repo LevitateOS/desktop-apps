@@ -38,7 +38,7 @@ int main(int argc, char **argv)
 
     Window window;
     // Opens at the size it had; the picture modes always use the first size.
-    rememberWindowSize(&window, "recab", {760, 560}, !parser.isSet(shots));
+    rememberWindowSize(&window, "recab", {760, 720}, !parser.isSet(shots));
     if (parser.isSet(shots))
         return takeShots(window, parser.value(shots));
     window.show();

@@ -296,6 +296,25 @@ recipe, installs it into a test store, pictures each point and removes it again
 | `fixtures/` | the stand-in `recipe`, its catalog, `as-root`, `helper-log` |
 | `data/` | the menu entry and the polkit action |
 
+## Check for updates
+
+At the right end of the status line there is a "Check for updates" button (kit `frame.*`, `release.*`,
+`releasepage.*`). It opens a page of the frame's own, like Help, that runs `recupdate check --json`
+as the person and says: checking, up to date (with the installed release), a newer release (version,
+date, download size, a link to what is new), or the failure with "Copy for agent". What the daily
+check wrote (`/var/lib/recupdate/available.json`) is read at start, so a release it found shows
+without the network. It installs nothing: when a release is available it says where it is installed
+from and has a button that starts that app, "Open Recab" on an A/B system (`/usr/bin/recab` exists)
+and "Open Updater" on a mutable one. F5 and coming back to the window read the file again.
+
+| Setting | What | Default |
+|---|---|---|
+| `RECUPDATE_BIN` | the program that is `recupdate` | `recupdate` |
+| `RECUPDATE_STATE_DIR` | where `available.json` is | `/var/lib/recupdate` |
+| `RECUPDATE_RELEASE_FILE` | the release the system runs | `/usr/lib/levitate/release.json` |
+| `LEVITATE_AB` | `1`: an A/B system, `0`: a mutable one; unset: whether `/usr/bin/recab` exists | unset |
+| `LEVITATE_APP_SYSTEM`, `LEVITATE_APP_UPDATER` | the programs "Open Recab" and "Open Updater" start | `recab-gui`, `updater-gui` |
+
 ## Not done
 
 - Everything here ran offscreen against the stand-in. The real `recipe` was only
@@ -318,3 +337,6 @@ recipe, installs it into a test store, pictures each point and removes it again
 - Building it for each distribution against that distribution's Qt, and shipping
   it in the desktop images, are not finished: no image carrying it has been built
   and run.
+- None of "Check for updates" was run: no app was started, no story was run and no screenshot was taken; it
+  compiled and nothing more. `recupdate` (`check --json`, `fetch`, `apply --json`), `recab update` and
+  `recupdate apply` did not exist when it was written: it follows `docs/release-engineering.md` section 10 only.

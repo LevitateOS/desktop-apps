@@ -130,6 +130,7 @@ Window::Window(QWidget *parent)
     // at again when asked, since that takes a while and drops what was ticked.
     refresher_ = new Refresher(this, 20);
     connect(refresher_, &Refresher::asked, this, [this](bool byHand) {
+        frame_->refreshRelease(); // the page of "Check for updates", when it shows
         if (byHand)
             refresh();
         else if (!busy())

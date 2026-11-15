@@ -25,6 +25,10 @@ public:
     Run *copy();
     // `recab boot-other`, or with `cancel` `recab boot-other --cancel`.
     Run *bootOther(bool cancel);
+    // `recab update --json`: fetch the release, copy the booted root into the
+    // other, install the release there, start the other root once. Through the
+    // root helper; its JSON lines are on standard output (the page follows them).
+    Run *update();
     Run *reboot();
 
     // Whether changes go through a root helper (pkexec), which asks for the

@@ -8,9 +8,10 @@ This repository contains the desktop applications and shared components used by 
 |---|---|---|
 | [`recipe/`](recipe/) | `recipe-gui` | Browse software and recipes, inspect what software may use, and install, update, or remove software. |
 | [`recab/`](recab/) | `recab-gui` | Show the two roots, A and B (the booted root is locked, the other is unlocked); make the other root a copy of the booted root, start it at the next boot, restart. |
+| [`updater/`](updater/) | `updater-gui` | Mutable installs only: show the installed release, check for updates, install one into the one root and ask for a restart. |
 | [`disk/`](disk/) | `disk-gui` | Inspect disk usage, browse files and known leftovers, and, on an A/B computer, compare the two roots. |
 
-The three apps share widgets and window components in [`kit/`](kit/). Each app has its own README with further details, configuration, and checks.
+The apps share widgets and window components in [`kit/`](kit/). Each app has its own README with further details, configuration, and checks.
 
 ## Build
 
@@ -42,6 +43,12 @@ cmake --build build/recipe
 ```
 
 Refer to the corresponding application README for runtime setup and safe use of its fixture-based checks. In particular, the `--shots` modes can run programs and write state; use the documented stand-ins and scratch directories rather than an ordinary user environment.
+
+## Check for updates
+
+Every app has a "Check for updates" (`recupdate check --json`). Recipe and Recdirstat only say what is
+available and start the app that installs it: the Recab app on an A/B system, the Updater on a mutable one.
+The Updater is installed on mutable systems only (`updater/CMakeLists.txt` lists its files).
 
 ## Integration
 

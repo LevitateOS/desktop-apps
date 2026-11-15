@@ -17,6 +17,9 @@ only: no stylesheet.
 | `help.*` | the Help page, owned by the frame, and `helpText(app)`: the words of Help for each app (below) |
 | `firstrun.*` | the page before the app's own the first time, owned by the frame (below) |
 | `helpstory.*` | the checks of the stories about Help and the first page, the same in the three apps; only the picture modes use it |
+| `release.*` | `ReleaseCheck` (`recupdate check --json`, and the files the daily check and the release left) and `ReleaseCard`: checking, up to date, a newer release, or the failure; the apps' "Check for updates" |
+| `releasepage.*` | the page of "Check for updates" that the frame owns, with the button that starts the app that installs |
+| `install.*` | `InstallPage`: the steps and progress of `recab update --json` / `recupdate apply --json` as the JSON lines come, then the result |
 | `before.*` | `BeforePage`: what will happen, shown before anything starts (below) |
 
 ## The frame
@@ -123,6 +126,17 @@ connect(before_, &BeforePage::linkClicked, ...);
   once the event loop has run, so a check settles before clicking its button.
 - The Recipe app is the first user (`recipe/src/beforewords.*` has its
   words); Recab (the copy, the restart) and Recdirstat (the comparison) list `before.cpp` in their `CMakeLists.txt` to use it.
+
+## Check for updates
+
+`ReleaseCheck` runs `recupdate check --json` (`RECUPDATE_BIN`) as the person; `readFile()` reads, in a
+thread of its own, `RECUPDATE_STATE_DIR/available.json` (the daily check's answer, shown without
+network) and `RECUPDATE_RELEASE_FILE` (the installed release) and emits `fileRead()`. `ReleaseCard` shows
+the answer and takes one action button for the app that installs (`setAction("Install %1 ...")`). The
+frame has the button and the page for Recipe and Recdirstat (`Frame::showRelease`); an app's F5 handler
+calls `Frame::refreshRelease()`. `releaseInstaller()` says which app installs (`LEVITATE_AB`, else whether
+`/usr/bin/recab` exists). `InstallPage::follow(run, words)` follows a run whose events are on standard
+output (`Run::setEventsOnStdout`). The Recab app and the Updater use `release.*` and `install.*`.
 
 ## The size of a window
 

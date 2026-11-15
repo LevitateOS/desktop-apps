@@ -19,6 +19,20 @@ one-time pick if there is one, else the boot default) says "Starts at the next
 boot." or "Starts at the next boot, once."; when the boot default names neither
 root the page says "Neither root is the boot default."
 
+**Updates**, under the buttons: "Check for updates" runs `recupdate check --json` (kit `release.*`;
+what the daily check wrote is read at start) and says up to date, a newer release (version, date,
+download size, link to what is new) or the failure with "Copy for agent". When a release is
+available there is "Install <version> into the other root". It asks first (the Before page: the
+other root is overwritten with a copy of the booted root and the release is installed into it,
+nothing on the booted root changes, the other root starts at the next boot once, and if it does not
+start the booted root starts again), then runs `recab update --json` through the root helper. The page
+(kit `install.*`) shows the steps ("Step 2 of 5: ...") and the progress of the current step as the
+JSON lines come, and switches to the result the moment the command ends. On success it says the next
+start uses the updated root and offers "Restart now" (the same restart as above: `reboot` through the
+root helper, after its own Before page); the release then stays marked as already in the other root.
+On failure it shows the error, says the running system was not changed, and has "Copy for agent". There
+is nothing about fixing a failed boot.
+
 **Three buttons**, each a plain button:
 
 - **Make the other root a copy of the booted root.** It asks first (the shared
@@ -50,11 +64,13 @@ has "Copy for agent" and "Try again". The window opens at the size it had.
 | `recab status --json` | to read (schema 11: `booted`, `other`, `other_mount`, `other_bootable`, `boot_default`, `next_boot_once`); as the person, and through the root helper after "Read it as administrator" |
 | `recab copy` | the copy, through the root helper. Not `--json`: without it recab says what it is doing on standard error, which is the progress |
 | `recab boot-other [--cancel] --json` | the pick, through the root helper |
+| `recab update --json` | the install of a release, through the root helper; JSON lines on standard output (`step`, `progress`, `done`, `failed`) |
+| `recupdate check --json` | Check for updates, as the person |
 | `reboot` | Restart now, through the root helper |
 
 The root helper is `pkexec` (`RECAB_GUI_ROOT_HELPER`; empty runs the command as
-the person). `data/org.levitateos.recab.policy` has one action, for `/usr/bin/recab`:
-polkit names a program, not its arguments, so it covers the three recab commands.
+the person). `data/org.levitateos.recab.policy` has one action, `org.levitateos.recab.run`, for `/usr/bin/recab`:
+polkit names a program, not its arguments, so it covers the four recab commands (the policy text now names the update).
 
 ## Running it from a checkout
 
@@ -74,6 +90,7 @@ RECAB_STANDIN_STATE=$S/state.json RECAB_GUI_RECAB=$F/recab RECAB_GUI_REBOOT=$F/r
 | `RECAB_GUI_RECAB` | the program that is `recab` | `recab` |
 | `RECAB_GUI_ROOT_HELPER` | what runs recab and the restart as root; empty: as the person | `pkexec` |
 | `RECAB_GUI_REBOOT` | the restart | `reboot` |
+| `RECUPDATE_BIN`, `RECUPDATE_STATE_DIR`, `RECUPDATE_RELEASE_FILE` | the check for updates and the files it reads (kit `release.*`) | `recupdate`, `/var/lib/recupdate`, `/usr/lib/levitate/release.json` |
 
 ### The stand-ins (`fixtures/`)
 
@@ -126,3 +143,6 @@ no word of the old lifecycle and nothing agent-like but "Copy for agent" was eve
 - Coming back to the window after twenty seconds (the other way to read again) is not
   exercised by the story.
 - The progress of a copy is recab's own lines, with no figure for how far it is.
+- None of "Check for updates" was run: no app was started, no story was run and no screenshot was taken; it
+  compiled and nothing more. `recupdate` (`check --json`, `fetch`, `apply --json`), `recab update` and
+  `recupdate apply` did not exist when it was written: it follows `docs/release-engineering.md` section 10 only.

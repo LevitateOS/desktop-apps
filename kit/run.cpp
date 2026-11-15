@@ -9,11 +9,24 @@ Run::Run(const QString &program, const QStringList &arguments, QObject *parent)
     process_.setProgram(program);
     process_.setArguments(arguments);
     connect(&process_, &QProcess::readyReadStandardError, this, &Run::drain);
-    connect(&process_, &QProcess::readyReadStandardOutput, this,
-            [this] { answer_ += process_.readAllStandardOutput(); });
+    connect(&process_, &QProcess::readyReadStandardOutput, this, [this] {
+        if (eventsOnStdout_)
+            drainOut();
+        else
+            answer_ += process_.readAllStandardOutput();
+    });
     connect(&process_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         drain();
-        answer_ += process_.readAllStandardOutput();
+        if (eventsOnStdout_) {
+            drainOut();
+            // A last line the command ended without a newline.
+            if (!pendingOut_.isEmpty()) {
+                pendingOut_ += '\n';
+                lines(pendingOut_);
+            }
+        } else {
+            answer_ += process_.readAllStandardOutput();
+        }
         exitCode_ = status == QProcess::NormalExit ? code : -1;
         emit finished(status == QProcess::NormalExit && code == 0);
     });
@@ -62,10 +75,22 @@ void Run::stop()
 void Run::drain()
 {
     pending_ += process_.readAllStandardError();
+    lines(pending_);
+}
+
+void Run::drainOut()
+{
+    pendingOut_ += process_.readAllStandardOutput();
+    lines(pendingOut_);
+}
+
+// Every complete line in `pending` is an event or a line of output.
+void Run::lines(QByteArray &pending)
+{
     int end;
-    while ((end = pending_.indexOf('\n')) >= 0) {
-        const QByteArray line = pending_.left(end);
-        pending_.remove(0, end + 1);
+    while ((end = pending.indexOf('\n')) >= 0) {
+        const QByteArray line = pending.left(end);
+        pending.remove(0, end + 1);
         const QJsonObject object = line.startsWith('{') ? QJsonDocument::fromJson(line).object() : QJsonObject();
         if (object.isEmpty()) {
             // `recipe` colours its lines even into a pipe.

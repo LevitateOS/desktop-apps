@@ -20,6 +20,11 @@ public:
     bool running() const { return process_.state() == QProcess::Running; }
     // The exit code of the process once it has finished.
     int exitCode() const { return exitCode_; }
+    // For commands that write their JSON lines on standard output (`recupdate`,
+    // `recab update`): events are read from there, line by line, as they come, and
+    // `answer()` stays empty. Set before `start()`. The default is the events on
+    // standard error, as `recipe` and `recab copy` write them.
+    void setEventsOnStdout(bool on) { eventsOnStdout_ = on; }
     void start();
     // Asks it to end.
     void stop();
@@ -38,8 +43,11 @@ signals:
 
 private:
     void drain();
+    void drainOut();
+    void lines(QByteArray &pending);
     QProcess process_;
-    QByteArray pending_, input_, answer_;
+    QByteArray pending_, pendingOut_, input_, answer_;
+    bool eventsOnStdout_ = false;
     QJsonObject failure_;
     QStringList said_;
     int exitCode_ = -1;

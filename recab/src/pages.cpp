@@ -77,6 +77,17 @@ void RootsPage::show(const Status &s)
     restart_ = action(tr("Restart now"));
     connect(restart_, &QPushButton::clicked, this, &RootsPage::restartNow);
     column->addWidget(restart_);
+
+    card_ = nullptr;
+    if (updates_) {
+        column->addSpacing(6);
+        column->addWidget(strong(tr("Updates")));
+        card_ = new ReleaseCard(updates_);
+        card_->setAction(tr("Install %1 into the other root"));
+        card_->setInstalledNotRunning(doneVersion_, doneNote_);
+        connect(card_, &ReleaseCard::actionClicked, this, &RootsPage::installUpdate);
+        column->addWidget(card_);
+    }
     column->addStretch();
     // Buttons that read like one column are not stretched across the window.
     for (QPushButton *button : {copy_, start_, restart_})
@@ -87,6 +98,7 @@ void RootsPage::showProblem(const QString &problem, bool asAdministrator)
 {
     copy_ = start_ = restart_ = nullptr;
     reason_ = nullptr;
+    card_ = nullptr;
     QVBoxLayout *column = fresh();
     column->addWidget(heading(tr("The two roots could not be read")));
     column->addWidget(text(problem, true));

@@ -16,13 +16,17 @@ class QHBoxLayout;
 class QLabel;
 class QPushButton;
 class QStackedWidget;
+class QToolButton;
 class QTimer;
 class RailButton;
+class ReleasePage;
 
 class Frame : public QWidget {
     Q_OBJECT
 public:
-    enum App { Recipe, Recab, Recdirstat };
+    // `Updater` is only ever started from here (the program that installs a
+    // release on a mutable system): no window uses a frame as that app.
+    enum App { Recipe, Recab, Recdirstat, Updater };
 
     // `app` is the app this window is: its name heads the rail.
     explicit Frame(App app, QWidget *parent = nullptr);
@@ -66,6 +70,17 @@ public:
     FirstRunPage *firstRun() const { return firstRun_; }
     HelpPage *help() const { return help_; }
 
+    // ---- "Check for updates": a button at the right end of the status line opens
+    // the frame's own page, which asks `recupdate` whether a newer release of the
+    // system exists and says which app installs it. Nothing is installed from here.
+    // `refreshRelease` is for the app's F5 and coming back to the window: it reads the
+    // daily check's file again when the page shows.
+    void showRelease();
+    bool releaseShown() const;
+    void refreshRelease();
+    ReleasePage *release() const { return release_; }
+    static QString releaseKey() { return QStringLiteral("release"); }
+
     // ---- The status line: the app's own words.
     void setStatus(const QString &words);
     // Something shown beside the words ("Read again"), in the order added.
@@ -101,6 +116,8 @@ private:
     QStackedWidget *stack_;
     HelpPage *help_;
     FirstRunPage *firstRun_;
+    ReleasePage *release_;
+    QToolButton *releaseButton_;
     bool firstRunChecked_ = false;
     QMap<QString, RailButton *> entries_;
     QList<RailButton *> order_;

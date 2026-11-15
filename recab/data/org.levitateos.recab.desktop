@@ -2,7 +2,7 @@
 Type=Application
 Name=Recab
 GenericName=The two roots
-Comment=Copy the booted root to the other root, start the other root, restart
+Comment=Copy the booted root to the other root, start the other root, install a release, restart
 Exec=recab-gui
 Icon=org.levitateos.recab
 Categories=Qt;System;Settings;

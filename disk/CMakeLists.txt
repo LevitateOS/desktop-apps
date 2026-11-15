@@ -27,6 +27,8 @@ qt_add_executable(disk-gui
     ../kit/refresh.cpp
     ../kit/before.cpp
     ../kit/frame.cpp
+    ../kit/release.cpp
+    ../kit/releasepage.cpp
     ../kit/windowsize.cpp
     ../kit/help.cpp
     ../kit/firstrun.cpp

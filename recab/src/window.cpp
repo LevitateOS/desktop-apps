@@ -2,6 +2,7 @@
 
 #include "pages.h"
 #include "refresh.h"
+#include "words.h"
 
 #include <QLocale>
 #include <QStackedWidget>
@@ -18,7 +19,11 @@ Window::Window(QWidget *parent)
     roots_ = new RootsPage;
     output_ = new OutputPage;
     before_ = new BeforePage;
-    for (QWidget *page : {static_cast<QWidget *>(roots_), static_cast<QWidget *>(output_), static_cast<QWidget *>(before_)})
+    install_ = new InstallPage;
+    updates_ = new ReleaseCheck(this);
+    roots_->setUpdates(updates_);
+    for (QWidget *page : {static_cast<QWidget *>(roots_), static_cast<QWidget *>(output_), static_cast<QWidget *>(before_),
+                          static_cast<QWidget *>(install_)})
         stack_->addWidget(page);
     setCentralWidget(stack_);
 
@@ -32,6 +37,18 @@ Window::Window(QWidget *parent)
         reload();
     });
     connect(output_, &OutputPage::back, this, &Window::showRoots);
+    connect(roots_, &RootsPage::installUpdate, this, [this] { installUpdate(); });
+    connect(install_, &InstallPage::back, this, &Window::showRoots);
+    connect(install_, &InstallPage::restartNow, this, [this] { restart(); });
+    connect(install_, &InstallPage::ended, this, [this](bool ok, bool, const QString &version) {
+        installing_ = false;
+        if (ok) {
+            installedVersion_ = version;
+            installedNote_ = tr("Release %1 is already in root %2. The next start uses it.").arg(version, status_.other);
+            note_ = tr("Release %1 is in root %2. It starts at the next boot, once.").arg(version, status_.other);
+        }
+        reload();
+    });
 
     // The Before page: Cancel leaves everything as it was; the button does it.
     connect(before_, &BeforePage::cancelled, this, [this] {
@@ -51,6 +68,9 @@ Window::Window(QWidget *parent)
     connect(refresher_, &Refresher::asked, this, [this](bool byHand) {
         if (byHand || showingRoots())
             refresh();
+        // What the daily check found, read again with the roots.
+        if (!installing_)
+            updates_->readFile();
     });
     auto *again = new QToolButton;
     again->setText(tr("Read again"));
@@ -59,9 +79,11 @@ Window::Window(QWidget *parent)
     connect(again, &QToolButton::clicked, this, &Window::refresh);
     statusBar()->addPermanentWidget(again);
 
+    updates_->readFile();
     reload();
 }
 
+bool Window::showingInstall() const { return stack_->currentWidget() == install_; }
 bool Window::showingRoots() const { return stack_->currentWidget() == roots_; }
 bool Window::showingOutput() const { return stack_->currentWidget() == output_; }
 bool Window::showingBefore() const { return stack_->currentWidget() == before_; }
@@ -106,8 +128,10 @@ void Window::reload(std::function<void()> then)
         const QString at = tr("Read at %1").arg(QLocale().toString(QTime::currentTime(), QLocale::ShortFormat));
         statusBar()->showMessage(note_.isEmpty() ? at : tr("%1 · %2").arg(note_, at));
         // A run's output or a Before page being read is left as it is; the roots page is drawn from the status.
-        if (showingRoots())
+        if (showingRoots()) {
+            roots_->setUpdateInstalled(installedVersion_, installedNote_);
             roots_->show(status_);
+        }
         if (then)
             then();
     });
@@ -116,6 +140,7 @@ void Window::reload(std::function<void()> then)
 
 void Window::showRoots()
 {
+    roots_->setUpdateInstalled(installedVersion_, installedNote_);
     roots_->show(status_);
     stack_->setCurrentWidget(roots_);
 }
@@ -244,5 +269,52 @@ void Window::restart(bool askFirst)
     c.happens << (client_.asksPassword() ? tr("You are asked for the administrator password.")
                                          : tr("It runs as you, so no password is asked."));
     c.go = tr("Restart now");
+    askBefore(c, go);
+}
+
+void Window::installUpdate(bool askFirst)
+{
+    const ReleaseState &release = updates_->state();
+    if (busy() || !read_ || release.kind != ReleaseState::Available)
+        return;
+    const QString version = release.version, other = status_.other, booted = status_.booted;
+    auto go = [this, version, other, booted] {
+        InstallWords words;
+        words.title = tr("Installing release %1 into root %2").arg(version, other);
+        words.subtitle = tr("Root %1 is overwritten and updated. Root %2 is not changed.").arg(other, booted);
+        words.doneTitle = tr("Release %1 is installed in root %2").arg(version, other);
+        words.doneText = tr("The next start uses the updated root %1, once. If it does not start, the computer starts root %2 again.")
+                             .arg(other, booted);
+        words.restartButton = tr("Restart now");
+        words.failedTitle = tr("The update stopped");
+        words.failedNote = tr("The running system was not changed, and the next start still uses it. "
+                              "Root %1 may be half changed; the next try overwrites it.")
+                               .arg(other);
+        installing_ = true;
+        install_->follow(client_.update(), words);
+        stack_->setCurrentWidget(install_);
+    };
+    if (!askFirst) {
+        go();
+        return;
+    }
+    BeforePage::Content c;
+    c.title = tr("Install release %1 into the other root?").arg(version);
+    c.happensTitle = tr("What happens");
+    if (release.downloadBytes > 0)
+        c.happens << tr("Release %1 is downloaded (%2) and checked.").arg(version, bytesText(release.downloadBytes));
+    else
+        c.happens << tr("Release %1 is downloaded and checked.").arg(version);
+    c.happens << tr("Root %1 is overwritten with a fresh copy of root %2, and release %3 is installed into it. Everything on root %1 "
+                    "is lost, including software Recipe installed there.")
+                     .arg(other, booted, version);
+    c.happens << tr("Root %1 is not changed.").arg(booted);
+    c.happens << tr("At the end root %1 is picked for the next start, once. If it does not start, the computer starts root %2 again.")
+                     .arg(other, booted);
+    c.happens << (client_.asksPassword() ? tr("You are asked for the administrator password.")
+                                         : tr("It runs as you, so no password is asked."));
+    c.tableTitle = tr("The command that runs");
+    c.table = {{tr("Command"), client_.commandWords({"update"})}};
+    c.go = tr("Install release %1").arg(version);
     askBefore(c, go);
 }

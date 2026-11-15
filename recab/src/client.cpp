@@ -52,6 +52,11 @@ Run *RecabClient::bootOther(bool cancel)
     return asRoot(program_, arguments + QStringList{"--json"});
 }
 
+Run *RecabClient::update()
+{
+    return asRoot(program_, {"update", "--json"});
+}
+
 Run *RecabClient::reboot()
 {
     return asRoot(reboot_, {});

@@ -3,6 +3,8 @@
 
 #include "before.h"
 #include "client.h"
+#include "install.h"
+#include "release.h"
 #include "status.h"
 
 #include <QMainWindow>
@@ -23,6 +25,9 @@ public:
     // `askFirst = false` does it at once (the checks' direct calls).
     void copyOther(bool askFirst = true);
     void restart(bool askFirst = true);
+    // "Install <version> into the other root": `recab update`, with its steps and
+    // progress shown as they come; it asks first (the Before page).
+    void installUpdate(bool askFirst = true);
     // Starts the other root at the next boot, once; and takes that back.
     void startOther();
     void doNotStartOther();
@@ -35,10 +40,13 @@ public:
     RootsPage *rootsPage() const { return roots_; }
     OutputPage *outputPage() const { return output_; }
     BeforePage *beforePage() const { return before_; }
+    InstallPage *installPage() const { return install_; }
+    ReleaseCheck *releaseCheck() const { return updates_; }
+    bool showingInstall() const;
     bool showingRoots() const;
     bool showingOutput() const;
     bool showingBefore() const;
-    bool busy() const { return run_ != nullptr || reading_ != nullptr; }
+    bool busy() const { return run_ != nullptr || reading_ != nullptr || installing_; }
     // The status line, as read.
     QString statusLine() const;
 
@@ -58,10 +66,14 @@ private:
     bool asRoot_ = false;  // reading needs the administrator's rights here
     QString note_;         // what the last action did, said in the status line until the next read by hand
     Refresher *refresher_;
+    ReleaseCheck *updates_;
+    bool installing_ = false;
+    QString installedVersion_, installedNote_; // a release put into the other root, not running yet
 
     QStackedWidget *stack_;
     RootsPage *roots_;
     OutputPage *output_;
     BeforePage *before_;
+    InstallPage *install_;
     std::function<void()> go_;
 };

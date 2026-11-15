@@ -4,6 +4,7 @@
 #include "help.h"
 #include "look.h"
 #include "parts.h"
+#include "releasepage.h"
 
 #include <QAbstractButton>
 #include <QHBoxLayout>
@@ -16,6 +17,7 @@
 #include <QStyle>
 #include <QStyleOptionFocusRect>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
@@ -35,7 +37,7 @@ QColor shade(const QPalette &palette, qreal by)
 // no rail entry: it is marked while the page before the app's own shows.
 bool sharedKey(const QString &key)
 {
-    return key == QLatin1String("help") || key == QLatin1String("firstrun");
+    return key == QLatin1String("help") || key == QLatin1String("firstrun") || key == QLatin1String("release");
 }
 
 } // namespace
@@ -166,7 +168,8 @@ struct AppInfo {
 };
 const AppInfo apps[] = {{"Recipe", "recipe-gui", "LEVITATE_APP_RECIPE"},
                         {"Recab", "recab-gui", "LEVITATE_APP_SYSTEM"},
-                        {"Recdirstat", "disk-gui", "LEVITATE_APP_DISK"}};
+                        {"Recdirstat", "disk-gui", "LEVITATE_APP_DISK"},
+                        {"Updater", "updater-gui", "LEVITATE_APP_UPDATER"}};
 
 QWidget *rail(QWidget *parent)
 {
@@ -237,6 +240,8 @@ Frame::Frame(App app, QWidget *parent)
     stack_->addWidget(help_);
     firstRun_ = new FirstRunPage(app);
     stack_->addWidget(firstRun_);
+    release_ = new ReleasePage;
+    stack_->addWidget(release_);
     middle->addWidget(stack_, 1);
     shell->addLayout(middle, 1);
     outer->addLayout(shell, 1);
@@ -260,6 +265,14 @@ Frame::Frame(App app, QWidget *parent)
     status->addWidget(status_, 0);
     status->addLayout(statusExtras_);
     status->addStretch();
+    // The app-level action, at the right end: the release of the whole system.
+    releaseButton_ = new QToolButton;
+    releaseButton_->setText(tr("Check for updates"));
+    releaseButton_->setAutoRaise(true);
+    releaseButton_->setToolTip(tr("Ask whether a newer release of the whole system exists. "
+                                  "The updates of single programs are on the Updates page of Recipe."));
+    connect(releaseButton_, &QToolButton::clicked, this, &Frame::showRelease);
+    status->addWidget(releaseButton_);
     outer->addWidget(line);
 
     flashTimer_ = new QTimer(this);
@@ -270,6 +283,8 @@ Frame::Frame(App app, QWidget *parent)
         status_->setToolTip(statusWords_);
     });
 
+    connect(release_, &ReleasePage::back, this, &Frame::leaveShared);
+    connect(release_, &ReleasePage::startApp, this, &Frame::startApp);
     connect(help_, &HelpPage::go, this, &Frame::helpGo);
     connect(help_, &HelpPage::startApp, this, &Frame::startApp);
     connect(help_, &HelpPage::firstPageAgain, this, &Frame::showFirstRun);
@@ -338,7 +353,7 @@ void Frame::select(const QString &key)
 // Where a page is in the stack: the app's content first, then the frame's own.
 int Frame::indexOf(const QString &key) const
 {
-    return key == helpKey() ? 1 : 0;
+    return key == helpKey() ? 1 : 0; // the first page (2) and the release page (3) are shown by their own calls
 }
 
 void Frame::follow(const QString &key)
@@ -366,6 +381,25 @@ void Frame::showFirstRun()
     mark(QStringLiteral("firstrun"));
     stack_->setCurrentIndex(2);
     FirstRunPage::markSeen(app_);
+}
+
+// "Check for updates": the release page, then the check itself. The rail marks nothing.
+void Frame::showRelease()
+{
+    mark(releaseKey());
+    stack_->setCurrentWidget(release_);
+    release_->open();
+}
+
+bool Frame::releaseShown() const
+{
+    return selected_ == releaseKey();
+}
+
+void Frame::refreshRelease()
+{
+    if (releaseShown())
+        release_->refresh();
 }
 
 // Back to the app's own page, the one it is on: from Help, from the first page.
