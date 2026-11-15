@@ -1,6 +1,6 @@
-# gui/kit
+# kit
 
-What `gui/recipe`, `gui/recab` and `gui/disk` share (Recab uses the page base, the Before page, the run, the refresher and the window size; the frame, Help and the first page are for Recipe and Recdirstat). Each app lists the kit
+What `recipe/`, `recab/` and `disk/` share (Recab uses the page base, the Before page, the run, the refresher and the window size; the frame, Help and the first page are for Recipe and Recdirstat). Each app lists the kit
 sources it uses in its own `CMakeLists.txt` (`../kit/frame.cpp` and so on) and
 adds `../kit` to its include path. Colours come from the desktop's palette
 only: no stylesheet.
@@ -121,7 +121,7 @@ connect(before_, &BeforePage::linkClicked, ...);
 - For a check: `pageText()` (every label and button of the current page),
   `choiceNames()`, `chosen()`, `choose(key)`. A page drawn just now is shown
   once the event loop has run, so a check settles before clicking its button.
-- The Recipe app is the first user (`gui/recipe/src/beforewords.*` has its
+- The Recipe app is the first user (`recipe/src/beforewords.*` has its
   words); Recab (the copy, the restart) and Recdirstat (the comparison) list `before.cpp` in their `CMakeLists.txt` to use it.
 
 ## The size of a window

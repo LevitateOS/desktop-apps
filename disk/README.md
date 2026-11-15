@@ -1,7 +1,7 @@
 # disk-gui
 
 The third desktop app, titled "Recdirstat". It sits in the shared window frame
-(`gui/kit/frame.*`, see its README): the rail with the app name, Recdirstat's entries
+(`../kit/frame.*`, see its README): the rail with the app name, Recdirstat's entries
 and Help; the pages; the status line.
 It does these things, each its own rail entry (it opens on the first):
 
@@ -18,7 +18,7 @@ It does these things, each its own rail entry (it opens on the first):
 
 The window only reads and shows; it deletes and moves nothing. Whoever clears
 the mess does it outside this window; "Copy for agent" hands them the list. Qt 6 Widgets, C++20, CMake.
-Shared widgets are in `gui/kit`.
+Shared widgets are in `../kit`.
 
 ## State
 
@@ -143,7 +143,7 @@ The fourth entry, only on a computer with two roots:
 
 ## Help and the first page
 
-Both are the frame's (`gui/kit/README.md`, "Help" and "The first time"); the window
+Both are the frame's (`../kit/README.md`, "Help" and "The first time"); the window
 adds nothing for them: every link of Help goes to a rail entry (The disk, Browse, Mess,
 and The two roots where there is one). Help for Recdirstat has the idea of mess and what it
 can do (see how full the disk is, find what takes the room, use "Copy for agent" on the mess, and on a
@@ -175,22 +175,22 @@ counts the room a file takes on disk, not its length.
 ## Running it from a checkout
 
 ```sh
-cmake -S gui/disk -B .artifacts/disk-gui/build -G Ninja
-cmake --build .artifacts/disk-gui/build
+cmake -S disk -B build/disk -G Ninja
+cmake --build build/disk
 ```
 
 On a sample home folder, with the stand-ins:
 
 ```sh
-A=$PWD/.artifacts/disk-gui; F=$PWD/gui/disk/fixtures
+A=$PWD/build; F=$PWD/disk/fixtures
 $F/make-sample $A/sample
 DISK_GUI_ROOTS=$A/sample DISK_GUI_HOME=$A/sample DISK_GUI_APPARENT=1 \
   DISK_GUI_LSBLK=$F/lsblk DISK_GUI_RECIPE=$F/recipe DISK_GUI_RECAB=$F/recab \
-  $A/build/disk-gui --look levitate
+  $A/disk/disk-gui --look levitate
 ```
 
 Window 1100 x 700 the first time, then the size it had when it closed
-(`rememberWindowSize` in `gui/kit`; the picture modes always use 1100 x 700).
+(`rememberWindowSize` in `../kit`; the picture modes always use 1100 x 700).
 
 ### The story
 
@@ -255,7 +255,7 @@ The story writes the "never suggest" list of the person (and puts it back at the
 end), so run it with `HOME` and the `XDG_*` folders in scratch space.
 
 ```sh
-A=$PWD/.artifacts/disk-gui; F=$PWD/gui/disk/fixtures
+A=$PWD/build; F=$PWD/disk/fixtures
 S=/tmp/disk-shots   # all state of the check lives here
 mkdir -p $S/home; $F/make-sample $S/sample
 printf '#!/bin/sh\ntouch "$DISK_STANDIN_SYSTEM_MARK"\n' > $S/system-app; chmod +x $S/system-app
@@ -272,7 +272,7 @@ QT_QPA_PLATFORM=offscreen DISK_GUI_ROOTS=$S/sample DISK_GUI_HOME=$S/sample DISK_
   DISK_STANDIN_LSBLK_HOME_SIZE=$(df -B1 --output=size $S/sample | tail -1 | tr -d ' ') \
   DISK_GUI_RECIPE=$F/recipe LEVITATE_APP_RECIPE=$S/recipe-app DISK_STANDIN_RECIPE_MARK=$S/recipe-app-started \
   DISK_GUI_FILES=$S/files-app DISK_STANDIN_FILES_MARK=$S/files-app-asked \
-  $A/build/disk-gui --look levitate --shots $S/pics
+  $A/disk/disk-gui --look levitate --shots $S/pics
 ```
 
 `$F/cmdline-ab` is a kernel command line with `recab.immutable` (two roots); a second run
@@ -389,7 +389,7 @@ both and set side by side.
   them (`recipe cleanup NAME` is for one recipe's build files, `recipe storage
   --clear-earlier` for earlier versions). When it has one, Recdirstat can offer to clear them through
   Recipe. The real `recipe storage --json` was not run here: the shape (`earlier_bytes`,
-  `earlier_generations`) was read from `tools/recipe` and `gui/recipe`.
+  `earlier_generations`) was read from `tools/recipe` and `recipe/README.md`.
 - Mess inside the roots. The map reads only the home folder and
   `/var/lib/recipe`; the two roots are compared with each other, not searched
   for leftovers.

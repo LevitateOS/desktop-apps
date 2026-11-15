@@ -2,7 +2,7 @@
 
 The desktop window for recab, titled "Recab". One window, one page. It shows
 the two roots of an A/B computer and has three actions. Qt 6 Widgets, C++20,
-CMake; the shared widgets are in `gui/kit`. The rules it follows are the settled
+CMake; the shared widgets are in `../kit`. The rules it follows are the settled
 design in `docs/product-handoff.md` (sections 2.2 and 2.8): the booted root is
 locked, the other root is unlocked and is where changes are made, and the
 product GUI has no agent inside, only "Copy for agent" on failure and output
@@ -58,13 +58,15 @@ polkit names a program, not its arguments, so it covers the three recab commands
 
 ## Running it from a checkout
 
+From this repository's root:
+
 ```sh
-cmake -S gui/recab -B .artifacts/recab-gui/build -G Ninja
-cmake --build .artifacts/recab-gui/build
-S=/tmp/recab-shots; mkdir -p $S/home $S/run; chmod 700 $S/run; F=$PWD/gui/recab/fixtures
+cmake -S recab -B build/recab -G Ninja
+cmake --build build/recab
+S=/tmp/recab-shots; mkdir -p $S/home $S/run; chmod 700 $S/run; F=$PWD/recab/fixtures
 RECAB_STANDIN_STATE=$S/state.json RECAB_GUI_RECAB=$F/recab RECAB_GUI_REBOOT=$F/reboot \
   RECAB_GUI_ROOT_HELPER= RECAB_STANDIN_REBOOT_MARK=$S/rebooted \
-  .artifacts/recab-gui/build/recab-gui --look levitate
+  build/recab/recab-gui --look levitate
 ```
 
 | Setting | What | Default |
