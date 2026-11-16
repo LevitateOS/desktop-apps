@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+# The stories (--shots and what goes with it) are for developers working from a
+# checkout. The OS builder configures with -DLEVITATE_STORIES=OFF: the story
+# sources are then not compiled and the options do not exist in the program.
+option(LEVITATE_STORIES "Compile the screenshot/story mode (--shots)" ON)
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Svg)
 
 qt_add_executable(recab-gui
@@ -13,7 +18,6 @@ qt_add_executable(recab-gui
     src/client.cpp
     src/pages.cpp
     src/window.cpp
-    src/shots.cpp
     ../kit/parts.cpp
     ../kit/look.cpp
     ../kit/run.cpp
@@ -25,6 +29,13 @@ qt_add_executable(recab-gui
     ../kit/install.cpp
     ../kit/windowsize.cpp
 )
+if(LEVITATE_STORIES)
+    target_sources(recab-gui PRIVATE
+        src/shots.cpp
+    )
+else()
+    target_compile_definitions(recab-gui PRIVATE LEVITATE_NO_STORIES)
+endif()
 target_include_directories(recab-gui PRIVATE ../kit)
 target_compile_options(recab-gui PRIVATE -Wall -Wextra)
 target_link_libraries(recab-gui PRIVATE Qt6::Widgets Qt6::Svg)

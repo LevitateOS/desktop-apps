@@ -35,6 +35,8 @@ To install, optionally choose an installation prefix:
 cmake --install build --prefix /usr/local
 ```
 
+The option `LEVITATE_STORIES` (default ON) compiles each app's picture/story mode (`--shots`, and for Recipe `--try`, `--keep`, `--read-only`) for developers working from a checkout. The OS build configures with `-DLEVITATE_STORIES=OFF`: the story sources are then not compiled and the options do not exist in the programs. The Updater has no story code. Each app's own folder accepts the same option.
+
 Each application can also be configured and built from its own directory. For example:
 
 ```sh

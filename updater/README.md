@@ -51,6 +51,8 @@ action, **`org.levitateos.updater.run`**, for `/usr/bin/recupdate`.
 
 ## Build
 
+The Updater has no story mode; `-DLEVITATE_STORIES=OFF` (what the OS build passes to every app) is accepted and changes nothing here.
+
 ```sh
 cmake -S updater -B build/updater -G Ninja
 cmake --build build/updater

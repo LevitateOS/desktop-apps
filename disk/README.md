@@ -171,6 +171,8 @@ counts the room a file takes on disk, not its length.
 
 ## Running it from a checkout
 
+Developers get the story mode (`--shots`) by default (`LEVITATE_STORIES=ON`); the OS build configures with `-DLEVITATE_STORIES=OFF`, which compiles it out (`src/shots.cpp` and `../kit/helpstory.cpp`) and removes the option.
+
 ```sh
 cmake -S disk -B build/disk -G Ninja
 cmake --build build/disk

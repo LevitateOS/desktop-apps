@@ -4,6 +4,10 @@
 cmake_minimum_required(VERSION 3.21)
 project(levitate-desktop-apps VERSION 0.1 LANGUAGES CXX)
 
+# Stories (--shots and what goes with it): ON for developers, OFF for the image.
+# Each app's folder declares the same option, so it also works configured alone.
+option(LEVITATE_STORIES "Compile the screenshot/story mode (--shots)" ON)
+
 add_subdirectory(recipe)
 add_subdirectory(recab)
 add_subdirectory(disk)

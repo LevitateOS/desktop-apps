@@ -344,6 +344,8 @@ person and asks for nothing.
 
 ## Build and run from a checkout
 
+Developers get the story mode (`--shots`, `--try`, `--keep`, `--read-only`) by default (`LEVITATE_STORIES=ON`); the OS build configures with `-DLEVITATE_STORIES=OFF`, which compiles it out (`src/shots.cpp` and `../kit/helpstory.cpp`) and removes these options.
+
 From this repository's root:
 
 ```sh

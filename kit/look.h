@@ -32,9 +32,14 @@ bool waitFor(const std::function<bool()> &holds, int seconds = 20);
 // says on standard error what is missing, in one sentence, and returns 2: the
 // program's exit code. Also marks the process as a picture run (`pictureMode`).
 // Call it before the window is made: the window starts reading at once.
+#ifndef LEVITATE_NO_STORIES
 int guardPictureMode(const QString &program, const QStringList &programs, const QStringList &mayBeEmpty);
+#endif
+// False unless guardPictureMode marked the run (never in a build without stories).
 bool pictureMode();
 
 // A story's check of the guard: a bare `--shots` of this program refuses to start (exit code 2)
 // and says `mustName`, and starts nothing.
+#ifndef LEVITATE_NO_STORIES
 void guardRefuses(const std::function<void(const QString &, bool)> &expect, const QString &folder, const QString &mustName);
+#endif

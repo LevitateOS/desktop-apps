@@ -16,7 +16,7 @@ only: no stylesheet.
 | `windowsize.*` | `rememberWindowSize`: a window opens at the size it had |
 | `help.*` | the Help page, owned by the frame, and `helpText(app)`: the words of Help for each app (below) |
 | `firstrun.*` | the page before the app's own the first time, owned by the frame (below) |
-| `helpstory.*` | the checks of the stories about Help and the first page, the same in the three apps; only the picture modes use it |
+| `helpstory.*` | the checks of the stories about Help and the first page, the same in the three apps; only the picture modes use it; not compiled with `-DLEVITATE_STORIES=OFF` (as are `guardPictureMode` and `guardRefuses` in `look.*`) |
 | `release.*` | `ReleaseCheck` (`recupdate check --json`, and the files the daily check and the release left) and `ReleaseCard`: checking, up to date, a newer release, or the failure; the apps' "Check for updates" |
 | `releasepage.*` | the page of "Check for updates" that the frame owns, with the button that starts the app that installs |
 | `install.*` | `InstallPage`: the steps and progress of `recab update --json` / `recupdate apply --json` as the JSON lines come, then the result |

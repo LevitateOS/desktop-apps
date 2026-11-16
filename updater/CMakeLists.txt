@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+# The updater has no story code, so this changes nothing here; it is accepted so the
+# top level can pass one option to every app. The stories (--shots and what goes with it) are for developers working from a
+# checkout. The OS builder configures with -DLEVITATE_STORIES=OFF: the story
+# sources are then not compiled and the options do not exist in the program.
+option(LEVITATE_STORIES "Compile the screenshot/story mode (--shots)" ON)
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Svg)
 
 qt_add_executable(updater-gui

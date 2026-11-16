@@ -86,7 +86,7 @@ bool waitFor(const std::function<bool()> &holds, int seconds)
 }
 
 namespace {
-bool inPictureMode = false;
+bool inPictureMode = false; // set by guardPictureMode (stories only)
 }
 
 bool pictureMode()
@@ -94,6 +94,7 @@ bool pictureMode()
     return inPictureMode;
 }
 
+#ifndef LEVITATE_NO_STORIES
 int guardPictureMode(const QString &program, const QStringList &programs, const QStringList &mayBeEmpty)
 {
     QStringList named{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"};
@@ -144,3 +145,4 @@ void guardRefuses(const std::function<void(const QString &, bool)> &expect, cons
            said.contains(QStringLiteral("would reach this computer for real")) && said.contains(mustName));
     expect(QStringLiteral("guard: and it started nothing (no folder for pictures)"), !QDir(pictures).exists());
 }
+#endif

@@ -74,6 +74,8 @@ polkit names a program, not its arguments, so it covers the four recab commands 
 
 ## Running it from a checkout
 
+Developers get the story mode (`--shots`) by default (`LEVITATE_STORIES=ON`); the OS build configures with `-DLEVITATE_STORIES=OFF`, which compiles it out (`src/shots.cpp`) and removes the option.
+
 From this repository's root:
 
 ```sh
