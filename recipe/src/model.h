@@ -119,9 +119,6 @@ struct InstalledItem {
     // What it adds: the programs (in the profile's `bin`) and menu entries, taken from its recipe's
     // ABOUT.adds (`installed --json` lists no files). Empty when its recipe is gone.
     QStringList programs, menu;
-    // Not in `installed --json` any more: always empty. F2: the page that lists a receipt's files
-    // drops that list.
-    QStringList files;
     // What the receipt says besides: the source its recipe was fetched from and the commit (both
     // only when recorded), and the recipe file it was installed from.
     QString source, commit, receiptRecipe;

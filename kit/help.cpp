@@ -99,12 +99,13 @@ HelpText recipeText()
                      "recipe is gone shows its receipt instead, with what still works without a recipe."),
          QStringLiteral("installed"), QObject::tr("Installed")},
         {QObject::tr("Update"),
-         QObject::tr("Updates lists the installed programs that a newer recipe would change, and what the newer recipe may "
-                     "use that is different. “Check for updates” fetches the lists of recipes first. Each update shows the "
-                     "page that says what will happen."),
-         QStringLiteral("updates"), QObject::tr("Updates")},
+         QObject::tr("Installed marks a program “Update” when its recipe names a newer version than the one installed; "
+                     "“Update” installs it. “Check for updates” asks upstream whether a program has a newer version than its "
+                     "recipe names (“Newer upstream”); there is nothing to press for that: the recipe has to be updated first."),
+         QStringLiteral("installed"), QObject::tr("Installed")},
         {QObject::tr("See what takes room"),
-         QObject::tr("Storage shows what is installed takes, and what was done to the "
+         QObject::tr("Storage shows what Recipe holds: installed programs, downloads, builds, what is kept, unfinished "
+                     "runs, the build image and logs, each with its size and a way to remove it, and what was done to the "
                      "stores."),
          QStringLiteral("storage"), QObject::tr("Storage")},
         {QObject::tr("See where recipes come from"),

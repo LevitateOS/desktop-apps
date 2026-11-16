@@ -8,6 +8,7 @@
 #include "sourceview.h"
 
 #include <QMainWindow>
+#include <QMap>
 #include <QMessageBox>
 #include <QPointer>
 
@@ -25,7 +26,6 @@ class Refresher;
 class RunPage;
 class SourcesPage;
 class StoragePage;
-class UpdatesPage;
 
 class Window : public QMainWindow {
     Q_OBJECT
@@ -35,7 +35,6 @@ public:
     void showBrowse(const QString &category = QString());
     void showRecipe(const QString &name);
     void showInstalled(const QString &selected = QString(), int place = -1);
-    void showUpdates(const QString &selected = QString(), int place = -1);
     // The Before step: what will happen, shown before anything starts. An
     // install asks where; an update acts where the software is. The page's
     // button goes on to `startInstall`.
@@ -45,6 +44,17 @@ public:
     // the person has just agreed to, and for "Try again".
     void startInstall(const QString &name, Place place = Place::Computer);
     void askRemove(const QString &name, Place place = Place::Computer);
+    // "One step at a time": one single step (download, build or install) of one program, with its own run page.
+    void runStep(const QString &name, Place place, const QString &step);
+    // Deletes a program's downloads and build material, or one of them; an empty name: every program's.
+    void cleanupNow(const QString &name, Place place, Cleanup what);
+    void cleanupLogsNow(Place place);
+    void removeBuildImageNow(Place place);
+    // Removes only the installed program; its downloads and build material stay.
+    void removeOnlyProgram(const QString &name, Place place);
+    // "Check for updates": asks upstream for the newest version of these programs (none named: every
+    // installed one). Only when the person presses it; it never runs by itself.
+    void checkUpstream(const QStringList &names);
     void stopRun();
     void showSources();
     void showStorage();
@@ -62,12 +72,11 @@ public:
     BrowsePage *browsePage() const { return browse_; }
     BeforePage *beforePage() const { return before_; }
     Places places() const { return client_.places(); }
-    bool busy() const { return run_ != nullptr || changeRun_ != nullptr || client_.loading(); }
+    bool busy() const { return run_ != nullptr || changeRun_ != nullptr || client_.loading() || checking_; }
     // From a checkout: remove without the question.
     void removeNow(const QString &name, Place place = Place::Computer);
     StoragePage *storagePage() const { return storage_; }
     InstalledPage *installedPage() const { return installed_; }
-    UpdatesPage *updatesPage() const { return updates_; }
     RecipePage *recipePage() const { return recipe_; }
     RunPage *runPage() const { return runPage_; }
     ChangePage *changePage() const { return change_; }
@@ -115,6 +124,8 @@ private:
     ChangePage::Words removeWords(const QString &name, Place place) const;
     QString lastDesktopWords(const QString &name, const InstalledItem &item) const;
     QString shownName(const QString &name) const;
+    // The keep option as set on the program's page: left as remembered until the person changes it.
+    Keep keepFor(const QString &name) const;
 
     RecipeClient client_;
     Catalog catalog_;
@@ -126,6 +137,11 @@ private:
     // What the install or update that runs is, for the question when the window closes.
     QString runName_;
     bool runUpdate_ = false;
+    // A single step runs (not an install or update): said when it ended, and how to run it again.
+    QString runDone_;
+    std::function<void()> stepAgain_;
+    QMap<QString, bool> keepChoice_;
+    bool checking_ = false;
     QPointer<QMessageBox> closeBox_;
     QPointer<RemoveDialog> removeBox_;
     QPointer<SourceViewer> viewer_;
@@ -138,8 +154,8 @@ private:
     Ask ask_;           // what the Before page is about
     Place runPlace_ = Place::Computer; // where the running (or last) run acts
     std::function<void()> again_;
-    QString installedChoice_, updateChoice_;
-    int installedPlace_ = -1, updatePlace_ = -1;
+    QString installedChoice_;
+    int installedPlace_ = -1;
     QString origin_;    // the source chosen on the Browse page; empty: all
     QString category_;  // the category last browsed
     bool read_ = false; // the catalog was read at least once
@@ -154,7 +170,6 @@ private:
     RunPage *runPage_;
     ChangePage *change_;
     InstalledPage *installed_;
-    UpdatesPage *updates_;
     SourcesPage *sources_;
     StoragePage *storage_;
 };

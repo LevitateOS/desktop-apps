@@ -270,7 +270,7 @@ Frame::Frame(App app, QWidget *parent)
     releaseButton_->setText(tr("Check for updates"));
     releaseButton_->setAutoRaise(true);
     releaseButton_->setToolTip(tr("Ask whether a newer release of the whole system exists. "
-                                  "The updates of single programs are on the Updates page of Recipe."));
+                                  "The updates of single programs are marked on Installed in Recipe."));
     connect(releaseButton_, &QToolButton::clicked, this, &Frame::showRelease);
     status->addWidget(releaseButton_);
     outer->addWidget(line);

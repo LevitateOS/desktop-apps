@@ -143,21 +143,69 @@ QString refusedAddressWords(const QString &endpoint)
                           : QObject::tr("the address %1, port %2").arg(address, port);
 }
 
-// One numbered step: what the front end can say from enforced facts, then the
-// author's own note, marked as such.
-QHBoxLayout *stepRow(int number, const QString &title, const QString &sentence, const QString &note)
+// What a program holds on disk beside its installed files: from its receipt line when it is installed, else
+// from the kinds of `recipe storage` that name it (downloaded, built, unfinished).
+OnDisk onDiskOf(const Catalog &catalog, const QString &name, Place place)
 {
+    if (const InstalledItem *item = catalog.installedItem(name, place); item && item->inStore)
+        return item->onDisk;
+    OnDisk disk;
+    if (place == Place::Other)
+        return disk;
+    const StorageInfo &storage = catalog.stores[int(place)].storage;
+    auto of = [&](const char *kind) {
+        qint64 bytes = 0;
+        if (const StorageKind *found = storage.kind(QLatin1String(kind)))
+            for (const auto &program : found->programs)
+                if (program.first == name)
+                    bytes += program.second;
+        return bytes;
+    };
+    disk.downloads = of("downloaded");
+    disk.build = of("built");
+    disk.unfinished = of("unfinished");
+    return disk;
+}
+
+// "Newer upstream", never mixed up with "Update": the recipe does not name this version yet. Nothing to
+// press; Recipe never changes a recipe. The facts can be copied, like those of a failed run.
+void addUpstreamMark(QVBoxLayout *into, const Catalog &catalog, const QString &name)
+{
+    const UpstreamItem *found = catalog.upstreamOf(name);
+    if (!found)
+        return;
+    if (!found->error.isEmpty()) {
+        into->addWidget(dim(text(QObject::tr("Upstream could not be asked about this one: %1").arg(found->error), true)));
+        return;
+    }
+    if (!found->newer)
+        return;
+    const UpstreamItem up = *found;
+    const InstalledItem *installed = catalog.installedItem(name);
+    const Recipe *recipe = catalog.recipe(name);
+    const QString recipeVersion = up.recipeVersion.isEmpty() && recipe ? recipe->version : up.recipeVersion;
+    into->addWidget(tinted(strong(QObject::tr("Newer upstream: upstream has %1, this recipe installs %2")
+                                      .arg(up.latest, recipeVersion)),
+                           Mood::Warn));
+    into->addWidget(dim(text(QObject::tr("Nothing to press here. Recipe never changes a recipe: the recipe has to be updated "
+                                         "by hand, or by your own agent in your own window."),
+                             true)));
+    const QString issue = QObject::tr("The recipe for %1 installs %2, but upstream has %3.").arg(name, recipeVersion, up.latest);
+    QStringList facts;
+    facts << QObject::tr("The recipe installs version %1.").arg(recipeVersion);
+    facts << QObject::tr("Upstream has version %1.").arg(up.latest);
+    if (installed)
+        facts << QObject::tr("Installed here: %1.").arg(installed->version);
+    if (!up.how.isEmpty())
+        facts << QObject::tr("How Recipe asked upstream: %1.").arg(up.how);
+    if (recipe && !recipe->path.isEmpty())
+        facts << QObject::tr("The recipe file: %1").arg(recipe->path);
+    facts << QObject::tr("Recipe pins one version and its checksum; changing the version means changing the pin and the checksum.");
+    const QString copied = QObject::tr("The issue:\n%1\n\nThe facts:\n- %2\n").arg(issue, facts.join(QStringLiteral("\n- ")));
     auto *row = new QHBoxLayout;
-    row->setSpacing(12);
-    row->addWidget(new StepMark(number), 0, Qt::AlignTop);
-    auto *words = new QVBoxLayout;
-    words->setSpacing(1);
-    words->addWidget(strong(title));
-    words->addWidget(text(sentence, true));
-    if (!note.isEmpty())
-        words->addWidget(dim(text(QObject::tr("The author's note: %1").arg(note), true)));
-    row->addLayout(words, 1);
-    return row;
+    row->addWidget(copyForAgentButton([copied] { return copied; }));
+    row->addStretch();
+    into->addLayout(row);
 }
 
 QTreeWidget *table(const QStringList &columns)
@@ -474,7 +522,7 @@ struct Rows {
 
 } // namespace
 
-void RecipePage::show(const Catalog &catalog, const QString &name)
+void RecipePage::show(const Catalog &catalog, const QString &name, bool keep)
 {
     QVBoxLayout *column = fresh();
     const Recipe *found = catalog.recipe(name);
@@ -572,7 +620,9 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
             continue;
         anyUpdate = true;
         const Place place = item->place;
-        auto *go = primary(named(tr("Update to %1").arg(update->to), place));
+        auto *go = primary(named(tr("Update"), place));
+        go->setToolTip(update->sameVersion ? tr("The recipe has changed for the installed version %1").arg(update->from)
+                                           : tr("Installs %1, which the recipe now names").arg(update->to));
         connect(go, &QPushButton::clicked, this, [this, name, place] { emit this->update(name, place); });
         buttons->addWidget(go);
     }
@@ -581,6 +631,26 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
         auto *go = held.isEmpty() ? primary(tr("Install")) : new QPushButton(tr("Install %1").arg(where(free.first())));
         connect(go, &QPushButton::clicked, this, [this, name] { emit install(name); });
         buttons->addWidget(go);
+    }
+    // Remove: the program and whatever is left of its download and build (the second main button).
+    const Place stepPlace = !held.isEmpty() ? held.first()->place : free.isEmpty() ? Place::Computer : free.first();
+    for (const InstalledItem *item : held) {
+        if (item->base)
+            continue;
+        // What else in the root the change goes into needs it: it stays while they are installed.
+        if (!item->inStore && !catalog.neededBy(name, catalog.systemTarget()).isEmpty())
+            continue;
+        const Place place = item->place;
+        auto *remove = new QPushButton(named(tr("Remove"), place));
+        remove->setToolTip(tr("Removes the program and whatever is left of its download and build"));
+        connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
+        buttons->addWidget(remove);
+    }
+    if (held.isEmpty() && recipe.state != State::None) {
+        auto *remove = new QPushButton(tr("Remove"));
+        remove->setToolTip(tr("Deletes what is left of its download and build"));
+        connect(remove, &QPushButton::clicked, this, [this, name, stepPlace] { emit this->cleanup(name, stepPlace, Cleanup::Everything); });
+        buttons->addWidget(remove);
     }
     QString note = tr("You see what will happen before anything starts");
     if (!free.isEmpty() && !unavailable.isEmpty() && held.isEmpty())
@@ -603,9 +673,67 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
     if (!recipe.details.isEmpty())
         body->addWidget(text(recipe.details, true));
 
-    whereItIs(body, catalog, name);
+    // The state of the program here and the two marks, never mixed up.
+    const OnDisk disk = onDiskOf(catalog, name, stepPlace);
+    {
+        auto *statePanel = new Panel;
+        statePanel->column()->addWidget(strong(tr("State")));
+        QString now;
+        switch (recipe.state) {
+        case State::None:
+            now = disk.total() > 0 ? tr("Nothing is installed. Part of its downloads or an unfinished run is here.") : tr("Nothing of it is here.");
+            break;
+        case State::Downloaded:
+            now = tr("Downloaded. Not built or installed.");
+            break;
+        case State::Built:
+            now = tr("Built. Not installed.");
+            break;
+        case State::Installed:
+            now = recipe.installedVersion.isEmpty() ? tr("Installed.") : tr("Installed, version %1.").arg(recipe.installedVersion);
+            break;
+        }
+        statePanel->column()->addWidget(text(now, true));
+        if (disk.total() > 0) {
+            QStringList parts;
+            if (disk.downloads)
+                parts << tr("downloads %1").arg(bytesText(disk.downloads));
+            if (disk.build)
+                parts << tr("build %1").arg(bytesText(disk.build));
+            if (disk.unfinished)
+                parts << tr("unfinished run %1").arg(bytesText(disk.unfinished));
+            statePanel->column()->addWidget(dim(text(tr("On disk beside the installed files: %1.").arg(parts.join(tr(", "))), true)));
+        }
+        for (const InstalledItem *item : held) {
+            const UpdateItem *update = catalog.update(name, item->place);
+            if (update && item->place != Place::Other)
+                statePanel->column()->addWidget(strong(update->sameVersion
+                                                           ? tr("Update: the recipe has changed for the installed version %1.").arg(item->version)
+                                                           : tr("Update: the recipe installs %1, the installed version is %2.").arg(update->to, item->version)));
+            const QStringList needed = !item->inStore && !item->base ? catalog.neededBy(name, catalog.systemTarget()) : QStringList();
+            if (!needed.isEmpty())
+                statePanel->column()->addWidget(dim(text(tr("Needed by %1, so it cannot be removed while they are installed. Remove those first.")
+                                                              .arg(catalog.shownNames(needed).join(tr(", "))), true)));
+        }
+        addUpstreamMark(statePanel->column(), catalog, name);
+        const UpstreamItem *up = catalog.upstreamOf(name);
+        if (recipe.upstream.declared()) {
+            auto *row = new QHBoxLayout;
+            auto *check = new QPushButton(tr("Check for updates"));
+            check->setToolTip(tr("Asks upstream, over the network, for the newest version. Nothing is installed or changed."));
+            connect(check, &QPushButton::clicked, this, [this, name] { emit checkUpstream({name}); });
+            row->addWidget(check);
+            if (up && up->error.isEmpty() && !up->newer)
+                row->addWidget(dim(text(tr("Upstream has nothing newer than %1.").arg(up->recipeVersion.isEmpty() ? recipe.version : up->recipeVersion))));
+            row->addStretch();
+            statePanel->column()->addLayout(row);
+        } else {
+            statePanel->column()->addWidget(dim(text(tr("This recipe does not say where its newest version is, so Recipe cannot look for one."), true)));
+        }
+        body->addWidget(statePanel);
+    }
 
-    actionRows(body, catalog, name, held);
+    whereItIs(body, catalog, name);
 
     // What the recipe may use, and what comes with it.
     auto *pair = new QHBoxLayout;
@@ -701,11 +829,57 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
         recipeHead->addWidget(read);
     }
     recipePanel->column()->addLayout(recipeHead);
-    // F2: the page shows state and two buttons; the steps (download, build, install, cleanup) with their disk use go behind "One step at a time".
-    recipePanel->column()->addLayout(stepRow(1, tr("Fetch"), fetchSentence(recipe), recipe.notes.value("download")));
-    recipePanel->column()->addLayout(stepRow(2, tr("Build"), buildSentence(recipe), recipe.notes.value("build")));
-    recipePanel->column()->addLayout(stepRow(3, tr("Install"), installSentence(recipe), recipe.notes.value("install")));
+    // The single steps are hidden behind a link.
+    auto *stepsLink = linkLabel(tr("One step at a time ›"));
+    recipePanel->column()->addWidget(stepsLink, 0, Qt::AlignLeft);
     body->addWidget(recipePanel);
+
+    Rows steps;
+    auto authorNote = [&recipe](const char *step) {
+        const QString written = recipe.notes.value(QLatin1String(step));
+        return written.isEmpty() ? QString() : tr(" The author's note: %1").arg(written);
+    };
+    auto button = [this](const QString &words, std::function<void()> then, bool enabled = true) {
+        auto *each = new QPushButton(words);
+        each->setEnabled(enabled);
+        connect(each, &QPushButton::clicked, this, [then] { then(); });
+        return each;
+    };
+    if (recipe.hasStep(QStringLiteral("download")))
+        steps.add(tr("Download"),
+                  tr("%1 Holds %2 on disk.%3").arg(fetchSentence(recipe), bytesText(disk.downloads), authorNote("download")),
+                  {button(tr("Download"), [this, name, stepPlace] { emit runStep(name, stepPlace, QStringLiteral("download")); }),
+                   button(tr("Remove the download"), [this, name, stepPlace] { emit cleanup(name, stepPlace, Cleanup::Downloads); },
+                          disk.downloads > 0)});
+    if (recipe.compiles())
+        steps.add(tr("Build"),
+                  tr("%1 Holds %2 on disk.%3").arg(buildSentence(recipe), bytesText(disk.build + disk.unfinished), authorNote("build")),
+                  {button(tr("Build"), [this, name, stepPlace] { emit runStep(name, stepPlace, QStringLiteral("build")); }),
+                   button(tr("Remove the build"), [this, name, stepPlace] { emit cleanup(name, stepPlace, Cleanup::Build); },
+                          disk.build + disk.unfinished > 0)});
+    const InstalledItem *firstHeld = held.isEmpty() ? nullptr : held.first();
+    const bool removable = firstHeld && !firstHeld->base
+                           && (firstHeld->inStore || catalog.neededBy(name, catalog.systemTarget()).isEmpty());
+    steps.add(tr("Install"),
+              tr("%1%2%3").arg(installSentence(recipe), firstHeld ? tr(" Holds %1 on disk.").arg(bytesText(firstHeld->sizeBytes)) : QString(),
+                               authorNote("install")),
+              {button(tr("Install"), [this, name, stepPlace] { emit runStep(name, stepPlace, QStringLiteral("install")); }),
+               button(tr("Remove only the program"),
+                      [this, name, firstHeld] { emit removeProgramOnly(name, firstHeld->place); }, removable)});
+    steps.add(tr("Clean up"),
+              tr("Deletes its downloads and build material. The installed program stays. Holds %1 on disk.").arg(bytesText(disk.total())),
+              {button(tr("Clean up"), [this, name, stepPlace] { emit cleanup(name, stepPlace, Cleanup::Everything); }, disk.total() > 0)});
+    auto *keepBox = new QCheckBox(tr("Keep downloads and build after installing"));
+    keepBox->setChecked(keep);
+    keepBox->setToolTip(tr("Off: an install deletes them when it is done. On: they stay, and Storage lists them as kept."));
+    connect(keepBox, &QCheckBox::toggled, this, [this, name](bool on) { emit keepChanged(name, on); });
+    steps.panel->column()->addWidget(keepBox);
+    steps.panel->setVisible(false);
+    body->addWidget(steps.panel);
+    connect(stepsLink, &ClickLabel::clicked, this, [stepsLink, panel = steps.panel] {
+        panel->setVisible(!panel->isVisibleTo(panel->parentWidget()));
+        stepsLink->setText(panel->isVisibleTo(panel->parentWidget()) ? tr("One step at a time ‹") : tr("One step at a time ›"));
+    });
 
     body->addStretch();
 
@@ -892,15 +1066,6 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
                                                  : tr("The file is not there any more."),
                                              true)));
         }
-        // F2: `item->files` is always empty now; drop the receipt's file list from this page.
-        QStringList shown = item->files.mid(0, 14);
-        QString fileWords = shown.join(QLatin1Char('\n'));
-        if (item->files.size() > shown.size())
-            fileWords += tr("\n… and %1 more").arg(item->files.size() - shown.size());
-        QLabel *files = text(item->files.isEmpty() ? tr("The receipt lists none.") : fileWords, true);
-        if (!item->files.isEmpty())
-            files->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-        form->addRow(dim(text(counted(item->files.size(), tr("%1 file"), tr("%1 files")))), files);
         panel->column()->addLayout(form);
         body->addWidget(panel);
     }
@@ -918,7 +1083,8 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
 
 // ---------------------------------------------------------------- A run
 
-void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place, bool system)
+void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place, bool system, const QString &doing,
+                    const QString &done)
 {
     catalog_ = catalog;
     name_ = name;
@@ -929,16 +1095,21 @@ void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place
     marks_.clear();
     lines_.clear();
     log_.clear();
+    doneWords_ = done;
+    doingWords_ = doing;
     stepsTotal_ = stepsStarted_ = 0;
     const Recipe *found = catalog_.recipe(name);
     const Recipe recipe = found ? *found : Recipe{};
     const InstalledItem *installed = catalog_.installedItem(name, place);
-    updatingFrom_ = installed ? installed->version : QString();
+    updatingFrom_ = installed && doing.isEmpty() ? installed->version : QString();
     place_ = place;
 
     column_ = fresh();
     QHBoxLayout *header = recipeHeader(
-        recipe, updatingFrom_.isEmpty() ? tr("Installing %1").arg(recipe.shown()) : tr("Updating %1").arg(recipe.shown()),
+        recipe,
+        !doing.isEmpty()              ? doing
+        : updatingFrom_.isEmpty() ? tr("Installing %1").arg(recipe.shown())
+                                  : tr("Updating %1").arg(recipe.shown()),
         &title_);
     auto *actions = new QVBoxLayout;
     actions->setSpacing(6);
@@ -1177,7 +1348,9 @@ void RunPage::onFinished(bool ok)
         bar_->hide();
         stop_->hide();
         stopNote_->hide();
-        title_->setText(updatingFrom_.isEmpty() ? tr("Installed %1").arg(shown) : tr("Updated %1").arg(shown));
+        title_->setText(!doneWords_.isEmpty()      ? doneWords_
+                        : updatingFrom_.isEmpty() ? tr("Installed %1").arg(shown)
+                                                  : tr("Updated %1").arg(shown));
         const bool nothingWritten = system_ && answer_["packages"].toArray().isEmpty();
         if (answer_.contains("other_root"))
             state_->setText(nothingWritten
@@ -1229,6 +1402,8 @@ void RunPage::onFinished(bool ok)
     QString what;
     if (stoppedByUser)
         what = tr("You stopped it");
+    else if (!doingWords_.isEmpty())
+        what = tr("%1 was stopped").arg(doingWords_);
     else if (updatingFrom_.isEmpty())
         what = tr("Installing %1 was stopped").arg(shown);
     else
@@ -1261,8 +1436,9 @@ void RunPage::onFinished(bool ok)
     // on the clipboard with the whole output.
     const QJsonObject refused = failure["refused"].toObject();
     const QString step = failure["step"].toString();
-    const QString doing = updatingFrom_.isEmpty() ? tr("Installing %1 %2").arg(shown, version)
-                                                   : tr("Updating %1 from %2 to %3").arg(shown, updatingFrom_, version);
+    const QString doing = !doingWords_.isEmpty() ? doingWords_
+                          : updatingFrom_.isEmpty() ? tr("Installing %1 %2").arg(shown, version)
+                                                    : tr("Updating %1 from %2 to %3").arg(shown, updatingFrom_, version);
     QString issue;
     QStringList facts;
     if (!refused.isEmpty()) {
@@ -1612,12 +1788,18 @@ void addNotDone(QVBoxLayout *into, const Catalog &catalog)
     }
 }
 
-// What a row says about a newer version.
-QString newerCell(const UpdateItem *update)
+// What a row says about the two marks, each in its own column.
+QString updateCell(const UpdateItem *update)
 {
     if (!update)
         return QString();
-    return update->fromCollection ? QObject::tr("recipe has %1").arg(update->to) : QObject::tr("%1 is ready").arg(update->to);
+    return update->sameVersion ? QObject::tr("Update, another recipe") : QObject::tr("Update to %1").arg(update->to);
+}
+
+QString upstreamCell(const Catalog &catalog, const QString &name)
+{
+    const UpstreamItem *up = catalog.newerUpstream(name);
+    return up ? QObject::tr("upstream has %1").arg(up->latest) : QString();
 }
 
 } // namespace
@@ -1627,10 +1809,11 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
     QVBoxLayout *column = fresh();
     // What Recipe says the stores take; summed from the list for a store it
     // could not measure.
-    qint64 size = catalog.installedBytes(); // F2: one total from `storage` kinds, not `active_bytes`
+    qint64 size = catalog.installedBytes();
     if (!size)
         for (const InstalledItem &item : catalog.installed)
             size += item.sizeBytes;
+    auto *headerRow = new QHBoxLayout;
     auto *top = new QVBoxLayout;
     top->setSpacing(1);
     top->addWidget(heading(tr("Installed")));
@@ -1658,7 +1841,24 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
     top->addWidget(dim(text(summary, true)));
     if (!catalog.computerProblem.isEmpty())
         top->addWidget(dim(text(tr("This computer's own software could not be read: %1").arg(catalog.computerProblem), true)));
-    column->addLayout(top);
+    if (!catalog.updates.isEmpty())
+        top->addWidget(dim(text(tr("%1 can be updated now: the recipes name a newer version.")
+                                    .arg(counted(int(catalog.updates.size()), tr("%1 program"), tr("%1 programs"))), true)));
+    if (catalog.upstreamChecked) {
+        int newer = 0;
+        for (const UpstreamItem &each : catalog.upstream)
+            newer += each.newer;
+        top->addWidget(dim(text(newer ? tr("Upstream has a newer version than the recipe installs for %1. Nothing to press for those: the recipe has to be updated first.")
+                                            .arg(counted(newer, tr("%1 program"), tr("%1 programs")))
+                                      : tr("Upstream has nothing newer than the recipes install."),
+                                true)));
+    }
+    headerRow->addLayout(top, 1);
+    auto *check = new QPushButton(tr("Check for updates"));
+    check->setToolTip(tr("Asks upstream, over the network, for each program's newest version. Nothing is installed."));
+    connect(check, &QPushButton::clicked, this, &InstalledPage::checkUpstream);
+    headerRow->addWidget(check, 0, Qt::AlignBottom);
+    column->addLayout(headerRow);
     if (catalog.installed.isEmpty()) {
         addNotDone(column, catalog);
         column->addStretch();
@@ -1699,10 +1899,10 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                 programs += !each->base;
             title += tr(" · %1").arg(counted(programs, tr("%1 program"), tr("%1 programs")));
             if (catalog.stores[int(place)].has && place != Place::Other)
-                title += tr(", %1").arg(bytesText(catalog.stores[int(place)].installedBytes()) /* F2: sizes per kind */);
+                title += tr(", %1").arg(bytesText(catalog.stores[int(place)].installedBytes()));
             groups->addWidget(strong(title));
         }
-        QTreeWidget *tree = table({tr("Name"), tr("Version"), tr("Newer"), tr("Installed"), tr("Size")});
+        QTreeWidget *tree = table({tr("Name"), tr("Version"), tr("Update"), tr("Newer upstream"), tr("Installed"), tr("Size")});
         for (const InstalledItem *item : here) {
             const Recipe *recipe = catalog.recipe(item->name);
             const UpdateItem *update = catalog.update(item->name, item->place);
@@ -1716,9 +1916,12 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                 if (!with.isEmpty())
                     shownName = tr("%1 · comes with %2").arg(shownName, catalog.shownNames(with).join(tr(", ")));
             }
-            auto *line = new QTreeWidgetItem(tree, {shownName, item->base ? QString() : item->version, newerCell(update),
-                                                    QLocale().toString(item->installedOn, "d MMM yyyy"),
-                                                    item->sizeBytes ? bytesText(item->sizeBytes) : QString()});
+            QString sizeCell = item->sizeBytes ? bytesText(item->sizeBytes) : QString();
+            if (item->onDisk.total() > 0)
+                sizeCell += tr(" + %1").arg(bytesText(item->onDisk.total()));
+            auto *line = new QTreeWidgetItem(tree, {shownName, item->base ? QString() : item->version, updateCell(update),
+                                                    item->base ? QString() : upstreamCell(catalog, item->name),
+                                                    QLocale().toString(item->installedOn, "d MMM yyyy"), sizeCell});
             line->setData(0, Qt::UserRole, item->name);
             line->setData(1, Qt::UserRole, int(item->place));
             line->setSizeHint(0, QSize(0, 32));
@@ -1728,8 +1931,8 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                 chosenLine = line;
         }
         // A receipt written before Recipe recorded it has no date; recab's list has none of these.
-        tree->setColumnHidden(3, !anyDate);
-        tree->setColumnHidden(4, !anySize);
+        tree->setColumnHidden(4, !anyDate);
+        tree->setColumnHidden(5, !anySize);
         tree->setMaximumHeight(tree->header()->sizeHint().height() + 6 + tree->sizeHintForRow(0) * int(here.size()));
         groups->addWidget(tree);
         trees->append(tree);
@@ -1779,7 +1982,6 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         if (!recipe) {
             // The recipe is gone from the collection and the sources: only the receipt speaks.
             about = tr("Its recipe is gone: no recipe for it is in the collection or the sources any more.");
-            about += tr(" Its receipt lists %1.").arg(counted(item->files.size(), tr("%1 file"), tr("%1 files")));
             if (!item->source.isEmpty())
                 about += tr(" It came from the source %1%2.")
                              .arg(item->source, shared->origin(item->source) ? QString() : tr(", which is not among the sources any more"));
@@ -1804,7 +2006,15 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                               blockers.size() == 1 ? tr("it") : tr("them"));
         if (item->menu.isEmpty() && !item->programs.isEmpty())
             about += tr(" Run it in a terminal as %1.").arg(item->programs.join(tr(", ")));
+        if (item->onDisk.total() > 0)
+            about += tr(" It also holds %1 of downloads and build material (the size column adds it after a plus).")
+                         .arg(bytesText(item->onDisk.total()));
         words->addWidget(dim(text(about, true)));
+        if (update && place != Place::Other)
+            words->addWidget(strong(update->sameVersion ? tr("Update: the recipe has changed for the installed version %1.").arg(item->version)
+                                                        : tr("Update: the recipe installs %1.").arg(update->to)));
+        if (!item->base)
+            addUpstreamMark(words, *shared, name);
         row->addLayout(words, 1);
         if (!recipe) {
             auto *receipt = new QPushButton(tr("Its receipt"));
@@ -1824,7 +2034,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             row->addWidget(remove);
         }
         if (update && place != Place::Other) {
-            auto *newer = primary(tr("Update to %1").arg(update->to));
+            auto *newer = primary(tr("Update"));
             connect(newer, &QPushButton::clicked, this, [this, name, place] { emit this->update(name, place); });
             row->addWidget(newer);
         }
@@ -1847,200 +2057,6 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         start->treeWidget()->setCurrentItem(start);
 }
 
-// ---------------------------------------------------------------- Updates
-
-void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int selectedPlace)
-{
-    QVBoxLayout *column = fresh();
-    auto *header = new QHBoxLayout;
-    auto *top = new QVBoxLayout;
-    top->setSpacing(1);
-    const int counted_ = int(catalog.updates.size());
-    top->addWidget(heading(counted_ ? counted(counted_, tr("%1 update"), tr("%1 updates")) : tr("Updates")));
-    // What the updates ask for, in the three ways `recipe updates` can say it.
-    int more = 0, same = 0, unknown = 0;
-    for (const UpdateItem &item : catalog.updates) {
-        (!item.changesKnown ? unknown : item.asksMore() ? more : same)++;
-    }
-    QStringList parts;
-    if (same)
-        parts << tr("%1 ask for nothing more than before").arg(same);
-    if (more)
-        parts << tr("%1 ask for more").arg(more);
-    if (unknown)
-        parts << tr("%1 cannot be compared").arg(unknown);
-    QString summary;
-    if (catalog.updates.isEmpty())
-        summary = tr("Everything installed is at the newest version of its recipe.");
-    else
-        summary = tr("%1.").arg(parts.join(tr("; ")));
-    qint64 fetched = 0;
-    for (const Origin &origin : catalog.origins)
-        fetched = qMax(fetched, origin.remote() ? origin.checked : 0);
-    if (fetched > 0) {
-        const QDateTime when = QDateTime::fromSecsSinceEpoch(fetched);
-        const QString time = QLocale().toString(when.time(), QLocale::ShortFormat);
-        summary += when.date() == QDate::currentDate() ? tr(" The sources' lists were last fetched today at %1.").arg(time)
-                                                       : tr(" The sources' lists were last fetched on %1.").arg(QLocale().toString(when.date(), QLocale::ShortFormat));
-    }
-    top->addWidget(dim(text(summary, true)));
-    header->addLayout(top, 1);
-    auto *check = new QPushButton(tr("Check for updates"));
-    check->setToolTip(tr("Fetches every source's list again"));
-    connect(check, &QPushButton::clicked, this, &UpdatesPage::check);
-    header->addWidget(check, 0, Qt::AlignBottom);
-    column->addLayout(header);
-    if (!catalog.updateProblems.isEmpty())
-        column->addWidget(dim(text(tr("Not looked up: %1.").arg(catalog.updateProblems.join(tr("; "))), true)));
-    if (catalog.updates.isEmpty()) {
-        column->addStretch();
-        return;
-    }
-
-    QTreeWidget *tree = table({tr("Name"), tr("Where"), tr("Version"), tr("What the newer recipe asks for")});
-    auto shared = std::make_shared<Catalog>(catalog);
-    for (const UpdateItem &item : catalog.updates) {
-        const Recipe *recipe = catalog.recipe(item.name);
-        const QString asks = !item.changesKnown ? tr("Not compared")
-                             : item.asksMore() ? tr("More: %1").arg(item.asksMoreWords()) : tr("Nothing more");
-        auto *line = new QTreeWidgetItem(tree, {recipe ? recipe->shown() : item.name, placeTitle(item.place, catalog.otherRoot),
-                                                item.sameVersion ? tr("%1, another recipe").arg(item.from)
-                                                                 : tr("%1 → %2").arg(item.from, item.to),
-                                                asks});
-        if (item.changesKnown && item.asksMore())
-            line->setForeground(3, moodColour(tree->palette(), Mood::Warn));
-        line->setData(0, Qt::UserRole, item.name);
-        line->setData(1, Qt::UserRole, int(item.place));
-        line->setSizeHint(0, QSize(0, 32));
-        if (item.name == selectedName && (selectedPlace < 0 || int(item.place) == selectedPlace) && !tree->currentItem())
-            tree->setCurrentItem(line);
-    }
-    if (!tree->currentItem())
-        tree->setCurrentItem(tree->topLevelItem(0));
-    tree->setColumnHidden(1, !catalog.twoPlaces);
-    tree->setMaximumHeight(tree->header()->sizeHint().height() + 6
-                           + tree->sizeHintForRow(0) * int(qMax<qsizetype>(catalog.updates.size(), 3)));
-    column->addWidget(tree);
-
-    auto *detail = new Panel;
-    auto *inside = new QVBoxLayout;
-    inside->setSpacing(10);
-    detail->column()->addLayout(inside);
-    column->addWidget(detail);
-    column->addStretch();
-
-    auto fill = [this, inside, shared](QTreeWidgetItem *line) {
-        clear(inside);
-        if (!line)
-            return;
-        const QString name = line->data(0, Qt::UserRole).toString();
-        const Place place = Place(line->data(1, Qt::UserRole).toInt());
-        const UpdateItem *item = shared->update(name, place);
-        const Recipe *recipe = shared->recipe(name);
-        if (!item)
-            return;
-        const QString shown = recipe ? recipe->shown() : name;
-        auto buttons = [&] {
-            auto *row = new QHBoxLayout;
-            auto *go = new QPushButton(tr("Update %1").arg(shown));
-            connect(go, &QPushButton::clicked, this, [this, name, place] { emit update(name, place); });
-            row->addWidget(go);
-            row->addStretch();
-            return row;
-        };
-        auto *title = new QVBoxLayout;
-        title->setSpacing(0);
-        auto *form = new QFormLayout;
-        form->setHorizontalSpacing(16);
-        form->setVerticalSpacing(7);
-        form->addRow(dim(text(tr("Version"))),
-                     text(item->sameVersion ? tr("%1 still; its source publishes another recipe for it").arg(item->from)
-                                            : tr("%1 → %2").arg(item->from, item->to)));
-        if (!item->changesKnown) {
-            title->addWidget(strong(tr("What the newer recipe of %1 may use").arg(shown)));
-            title->addWidget(dim(text(item->fromCollection
-                                          ? tr("What version %1 was allowed to use is not known here, so the two cannot be "
-                                               "compared.").arg(item->from)
-                                          : tr("Version %1 was installed before Recipe recorded what a recipe may use, so the "
-                                               "two cannot be compared. From the next update on they can.")
-                                                .arg(item->from), true)));
-            inside->addLayout(title);
-            if (recipe) {
-                form->addRow(dim(text(tr("Network"))),
-                             text(recipe->needs.network.isEmpty() ? tr("none") : endpointsText(recipe->needs.network), true));
-                if (recipe->needs.networkMaxBytes)
-                    form->addRow(dim(text(tr("Download"))), text(tr("up to %1").arg(bytesText(recipe->needs.networkMaxBytes))));
-                if (recipe->needs.memoryMib)
-                    form->addRow(dim(text(tr("Memory"))), text(tr("up to %1").arg(bytesText(recipe->needs.memoryMib * 1048576))));
-            }
-            inside->addLayout(form);
-            inside->addLayout(buttons());
-            emit selected(name, place);
-            return;
-        }
-        title->addWidget(strong(item->asksMore() ? tr("%1 %2 asks for more than %3").arg(shown, item->to, item->from)
-                                                 : tr("What changed in %1's recipe").arg(shown)));
-        title->addWidget(dim(text(tr("Compared with the recipe version %1 was installed from.").arg(item->from))));
-        inside->addLayout(title);
-        // Only what differs is named: the installed version's limit beside the newer recipe's.
-        auto *grid = new QGridLayout;
-        grid->setHorizontalSpacing(24);
-        grid->setVerticalSpacing(7);
-        grid->setColumnStretch(1, 1);
-        grid->setColumnStretch(2, 1);
-        QList<QLabel *> warn;
-        grid->addWidget(dim(text(tr("%1, installed").arg(item->from))), 0, 1);
-        grid->addWidget(dim(text(item->sameVersion ? tr("%1, the other recipe").arg(item->to) : item->to)), 0, 2);
-        int at = 1;
-        for (const Change &change : item->changes) {
-            grid->addWidget(dim(text(change.title())), at, 0, Qt::AlignTop);
-            const bool more = change.kind == QLatin1String("added") || change.kind == QLatin1String("raised");
-            if (!change.isList()) {
-                grid->addWidget(text(Change::amount(change.before)), at, 1, Qt::AlignTop);
-                QLabel *after = more ? strong(Change::amount(change.after)) : text(Change::amount(change.after));
-                grid->addWidget(after, at, 2, Qt::AlignTop);
-                if (more)
-                    warn << after;
-            } else {
-                // A list: what is new is in bold, what is gone is said.
-                const bool network = change.field == QLatin1String("network");
-                auto shownList = [network](const QStringList &names) {
-                    QStringList each;
-                    for (const QString &name : names)
-                        each << (network ? endpointText(name) : name);
-                    return each;
-                };
-                grid->addWidget(text(change.before == QLatin1String("none") ? tr("none") : shownList(change.stays() + change.removed()).join(tr(", ")), true),
-                                at, 1, Qt::AlignTop);
-                QStringList after;
-                for (const QString &each : shownList(change.stays()))
-                    after << each.toHtmlEscaped();
-                for (const QString &each : shownList(change.added()))
-                    after << QStringLiteral("<b>%1</b>").arg(each.toHtmlEscaped());
-                QString words = after.isEmpty() ? tr("none") : after.join(tr(", "));
-                if (!change.removed().isEmpty())
-                    words += tr(" (no longer: %1)").arg(shownList(change.removed()).join(tr(", ")).toHtmlEscaped());
-                auto *label = new QLabel(words);
-                label->setTextFormat(Qt::RichText);
-                label->setWordWrap(true);
-                grid->addWidget(label, at, 2, Qt::AlignTop);
-                if (!change.added().isEmpty())
-                    warn << label;
-            }
-            ++at;
-        }
-        grid->addWidget(dim(text(item->changes.isEmpty() ? tr("What it may use") : tr("Everything else"))), at, 0);
-        grid->addWidget(dim(text(item->changes.isEmpty() ? tr("the same as before: it asks for nothing new") : tr("as before"), true)), at, 1, 1, 2);
-        inside->addLayout(grid);
-        for (QLabel *label : warn)
-            tinted(label, Mood::Warn);
-        inside->addLayout(buttons());
-        emit selected(name, place);
-    };
-    connect(tree, &QTreeWidget::currentItemChanged, this, [fill](QTreeWidgetItem *line) { fill(line); });
-    fill(tree->currentItem());
-}
-
 // ---------------------------------------------------------------- Remove
 
 RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, const QString &takenOut, const QString &lastDesktop,
@@ -2061,11 +2077,11 @@ RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, cons
         // On an A/B system the change goes into the other root.
         words = takenOut;
     } else {
-        // F2: `installed --json` lists no files any more; the menu entries are the recipe's (ABOUT.adds).
         words = recipe.menu.isEmpty()
                     ? tr("It is no longer installed.")
                     : tr("%1 leaves the applications menu and is no longer installed.").arg(recipe.shown());
     }
+    words += tr(" Whatever is left of its downloads and build is removed with it.");
     words += recipe.keeps.isEmpty()
                  ? tr(" What it wrote in your home folder stays.")
                  : tr(" What it wrote in your home folder stays: %1.").arg(recipe.keeps.join(tr(", ")));

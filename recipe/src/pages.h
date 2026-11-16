@@ -2,6 +2,7 @@
 // it asks for actions with signals and never runs `recipe` itself.
 #pragma once
 
+#include "client.h"
 #include "model.h"
 #include "page.h"
 
@@ -57,7 +58,8 @@ class RecipePage : public Page {
     Q_OBJECT
 public:
     using Page::Page;
-    void show(const Catalog &catalog, const QString &name);
+    // `keep`: the state of the keep option on this page (the window remembers it for the page).
+    void show(const Catalog &catalog, const QString &name, bool keep);
 signals:
     void back();
     // From the page of software whose recipe is gone: back to what is installed.
@@ -68,10 +70,20 @@ signals:
     void open(const QString &name, Place place);
     // Open the recipe's file.
     void readRecipe(const QString &name);
+    // "One step at a time": one step alone (download, build or install), where it is made.
+    void runStep(const QString &name, Place place, const QString &step);
+    // Deletes a program's downloads and build material, or one of them; the installed program stays.
+    void cleanup(const QString &name, Place place, Cleanup what);
+    // Removes only the installed program and keeps its downloads and build material.
+    void removeProgramOnly(const QString &name, Place place);
+    // The keep option ("Keep downloads and build after installing") was changed on this page.
+    void keepChanged(const QString &name, bool keep);
+    // "Check for updates": asks upstream for these programs' newest version (only when pressed).
+    void checkUpstream(const QStringList &names);
 private:
     // Where the software is, in each place that holds it.
     void whereItIs(QVBoxLayout *body, const Catalog &catalog, const QString &name);
-    // What can be done to what is installed: remove. Nothing here needs a recipe.
+    // What can be done to what is installed: remove (the receipt page). Nothing here needs a recipe.
     void actionRows(QVBoxLayout *body, const Catalog &catalog, const QString &name,
                     const QList<const InstalledItem *> &held);
     // Installed software whose recipe is gone: what its receipt says, and what still works.
@@ -86,7 +98,10 @@ public:
     // other root of an A/B computer, or into the running root of one with a single root, after the
     // recipe has run, and the root's caches are rebuilt after that: the recipe's own `done` is not the
     // end of it, the command's exit is.
-    void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer, bool system = false);
+    // `doing` and `done`: the title while one single step runs ("Downloading X") and when it ended
+    // ("Downloaded X"); empty for an install or update.
+    void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer, bool system = false,
+               const QString &doing = QString(), const QString &done = QString());
     // What the command printed on its standard output when it ended (`recipe --system install`
     // says which root it wrote into); empty before.
     QJsonObject answer() const { return answer_; }
@@ -116,7 +131,7 @@ private:
     void addPlanRow(const QString &recipe, const QStringList &steps);
 
     Catalog catalog_;
-    QString name_, updatingFrom_;
+    QString name_, updatingFrom_, doneWords_, doingWords_;
     Place place_ = Place::Computer;
     Run *run_ = nullptr;
     QVBoxLayout *column_ = nullptr;
@@ -185,18 +200,8 @@ signals:
     void openPage(const QString &name);
     // The row of the base system: the frame's page that says whether a newer release exists.
     void openRelease();
-};
-
-class UpdatesPage : public Page {
-    Q_OBJECT
-public:
-    using Page::Page;
-    void show(const Catalog &catalog, const QString &selected, int selectedPlace = -1);
-signals:
-    void update(const QString &name, Place place);
-    void selected(const QString &name, Place place);
-    // Fetch every source's list again, to see whether anything is newer.
-    void check();
+    // "Check for updates": asks upstream for every installed program's newest version.
+    void checkUpstream();
 };
 
 class RemoveDialog : public QDialog {

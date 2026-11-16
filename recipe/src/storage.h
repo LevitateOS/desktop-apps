@@ -16,6 +16,12 @@ public:
     QStringList historyLines() const { return lines_; }
 signals:
     void openInstalled();
+    // Deletes one program's downloads or build material (`cleanup NAME --downloads|--build`, or both).
+    void cleanup(const QString &name, Place place, Cleanup what);
+    // `recipe cleanup`: every program's downloads and build material.
+    void cleanupAll(Place place);
+    void cleanupLogs(Place place);
+    void removeBuildImage(Place place);
 private:
     QStringList lines_;
 };

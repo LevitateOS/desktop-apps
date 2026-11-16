@@ -41,13 +41,12 @@ Window::Window(QWidget *parent)
     before_ = new BeforePage;
     runPage_ = new RunPage;
     installed_ = new InstalledPage;
-    updates_ = new UpdatesPage;
     sources_ = new SourcesPage;
     storage_ = new StoragePage;
     change_ = new ChangePage;
     for (QWidget *page : {static_cast<QWidget *>(browse_), static_cast<QWidget *>(recipe_), static_cast<QWidget *>(before_),
                           static_cast<QWidget *>(runPage_), static_cast<QWidget *>(installed_),
-                          static_cast<QWidget *>(updates_), static_cast<QWidget *>(sources_), static_cast<QWidget *>(storage_),
+                          static_cast<QWidget *>(sources_), static_cast<QWidget *>(storage_),
                           static_cast<QWidget *>(change_)})
         stack_->addWidget(page);
 
@@ -56,7 +55,6 @@ Window::Window(QWidget *parent)
     frame_->setContent(stack_);
     frame_->addEntry(QStringLiteral("browse"), tr("Browse"));
     frame_->addEntry(QStringLiteral("installed"), tr("Installed"));
-    frame_->addEntry(QStringLiteral("updates"), tr("Updates"));
     frame_->addEntry(QStringLiteral("sources"), tr("Sources"));
     frame_->addEntry(QStringLiteral("storage"), tr("Storage"));
     frame_->select(QStringLiteral("browse"));
@@ -68,8 +66,6 @@ Window::Window(QWidget *parent)
             showBrowse(category_);
         else if (key == QLatin1String("installed"))
             showInstalled(installedChoice_, installedPlace_);
-        else if (key == QLatin1String("updates"))
-            showUpdates(updateChoice_, updatePlace_);
         else if (key == QLatin1String("sources"))
             showSources();
         else if (key == QLatin1String("storage"))
@@ -86,7 +82,6 @@ Window::Window(QWidget *parent)
     connect(browse_, &BrowsePage::install, this, [this](const QString &name) { askInstall(name); });
     connect(browse_, &BrowsePage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
     connect(browse_, &BrowsePage::retry, this, [this] { reload([this] { showBrowse(); }); });
-    connect(updates_, &UpdatesPage::check, this, [this] { fetchSources(); });
     connect(sources_, &SourcesPage::refresh, this, &Window::fetchSources);
     connect(sources_, &SourcesPage::add, this, &Window::addSource);
     connect(sources_, &SourcesPage::viewFile, this, [this](const QString &path) { viewFile(path, QString()); });
@@ -119,6 +114,16 @@ Window::Window(QWidget *parent)
     connect(recipe_, &RecipePage::remove, this, &Window::askRemove);
     connect(recipe_, &RecipePage::open, this, &Window::open);
     connect(recipe_, &RecipePage::readRecipe, this, &Window::viewSource);
+    connect(recipe_, &RecipePage::runStep, this, &Window::runStep);
+    connect(recipe_, &RecipePage::cleanup, this, &Window::cleanupNow);
+    connect(recipe_, &RecipePage::removeProgramOnly, this, &Window::removeOnlyProgram);
+    connect(recipe_, &RecipePage::keepChanged, this, [this](const QString &name, bool keep) { keepChoice_.insert(name, keep); });
+    connect(recipe_, &RecipePage::checkUpstream, this, &Window::checkUpstream);
+    connect(installed_, &InstalledPage::checkUpstream, this, [this] { checkUpstream({}); });
+    connect(storage_, &StoragePage::cleanup, this, &Window::cleanupNow);
+    connect(storage_, &StoragePage::cleanupAll, this, [this](Place place) { cleanupNow(QString(), place, Cleanup::Everything); });
+    connect(storage_, &StoragePage::cleanupLogs, this, &Window::cleanupLogsNow);
+    connect(storage_, &StoragePage::removeBuildImage, this, &Window::removeBuildImageNow);
 
     // The Before step: what will happen, then Cancel or go on.
     connect(before_, &BeforePage::cancelled, this, [this] {
@@ -136,7 +141,12 @@ Window::Window(QWidget *parent)
     });
     connect(before_, &BeforePage::linkClicked, this, [this] { viewSource(ask_.name); });
     connect(runPage_, &RunPage::back, this, [this] { showBrowse(); });
-    connect(runPage_, &RunPage::retry, this, [this](const QString &name) { startInstall(name, runPlace_); });
+    connect(runPage_, &RunPage::retry, this, [this](const QString &name) {
+        if (const auto again = stepAgain_)
+            again();
+        else
+            startInstall(name, runPlace_);
+    });
     connect(runPage_, &RunPage::succeeded, this, [this](const QString &name) { runEnded(name, true); });
     // Installed, but the system's caches could not be rebuilt: the page stays to say so.
     connect(runPage_, &RunPage::succeededWithoutCaches, this, [this](const QString &name) { runEnded(name, true, true); });
@@ -156,11 +166,6 @@ Window::Window(QWidget *parent)
     connect(installed_, &InstalledPage::selected, this, [this](const QString &name, Place place) {
         installedChoice_ = name;
         installedPlace_ = int(place);
-    });
-    connect(updates_, &UpdatesPage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
-    connect(updates_, &UpdatesPage::selected, this, [this](const QString &name, Place place) {
-        updateChoice_ = name;
-        updatePlace_ = int(place);
     });
 
     reload([this] { showBrowse(); });
@@ -214,7 +219,11 @@ void Window::reload(std::function<void()> then)
             stack_->setCurrentWidget(browse_);
             return;
         }
-        catalog_ = catalog;
+        // "Newer upstream" is known only from the person's last "Check for updates": it stays across reads.
+        Catalog read = catalog;
+        read.upstream = catalog_.upstream;
+        read.upstreamChecked = catalog_.upstreamChecked;
+        catalog_ = read;
         read_ = true;
         refresher_->fresh();
         readWords_ = tr("%1, read at %2")
@@ -285,7 +294,8 @@ void Window::fillCategories()
 
 void Window::fillRail()
 {
-    frame_->setBadge(QStringLiteral("updates"), int(catalog_.updates.size()));
+    // Installed carries the number of programs with an "Update" mark.
+    frame_->setBadge(QStringLiteral("installed"), int(catalog_.updates.size()));
 }
 
 void Window::showBrowse(const QString &category)
@@ -305,7 +315,8 @@ void Window::showBrowse(const QString &category)
 void Window::showRecipe(const QString &name)
 {
     again_ = [this, name] { showRecipe(name); };
-    recipe_->show(catalog_, name);
+    const Recipe *recipe = catalog_.recipe(name);
+    recipe_->show(catalog_, name, keepChoice_.value(name, recipe && recipe->keep));
     stack_->setCurrentWidget(recipe_);
 }
 
@@ -315,14 +326,6 @@ void Window::showInstalled(const QString &selected, int place)
     frame_->follow(QStringLiteral("installed"));
     installed_->show(catalog_, selected, place);
     stack_->setCurrentWidget(installed_);
-}
-
-void Window::showUpdates(const QString &selected, int place)
-{
-    again_ = [this] { showUpdates(updateChoice_, updatePlace_); };
-    frame_->follow(QStringLiteral("updates"));
-    updates_->show(catalog_, selected, place);
-    stack_->setCurrentWidget(updates_);
 }
 
 // What will happen, before it does. An install is asked where; the places
@@ -372,12 +375,61 @@ void Window::startInstall(const QString &name, Place place)
     runPlace_ = place;
     runName_ = name;
     runUpdate_ = installed;
-    run_ = installed ? client_.update(named, place) : client_.install(named, place);
+    runDone_.clear();
+    stepAgain_ = nullptr;
+    run_ = installed ? client_.update(named, place, keepFor(name)) : client_.install(named, place, keepFor(name));
     // "For everyone" is a system change on both kinds of computer: written into the other root (A/B) or
     // the running root after the recipe has run, then the root's caches are rebuilt. The recipe's own
     // `done` is not the end of that run, the command's exit is.
     const bool system = !client_.places().one && place != Place::Me;
     runPage_->begin(catalog_, name, run_, place, system);
+    stack_->setCurrentWidget(runPage_);
+    run_->start();
+}
+
+Keep Window::keepFor(const QString &name) const
+{
+    const auto found = keepChoice_.constFind(name);
+    if (found == keepChoice_.constEnd())
+        return Keep::Default;
+    return found.value() ? Keep::Keep : Keep::NoKeep;
+}
+
+// One single step of one program ("One step at a time"): it has the run page, with its own title.
+void Window::runStep(const QString &name, Place place, const QString &step)
+{
+    if (run_ || changeRun_) {
+        frame_->flash(tr("One thing at a time: wait for the running one, or stop it."));
+        stack_->setCurrentWidget(run_ ? static_cast<QWidget *>(runPage_) : change_);
+        return;
+    }
+    if (const QString why = catalog_.unavailable(name); !why.isEmpty()) {
+        frame_->flash(tr("%1 is not available on this system. %2").arg(shownName(name), catalog_.unavailableLine(name)));
+        return;
+    }
+    const QString named = catalog_.qualified(name);
+    const QString shown = shownName(name);
+    runPlace_ = place;
+    runName_ = name;
+    runUpdate_ = false;
+    stepAgain_ = [this, name, place, step] { runStep(name, place, step); };
+    QString doing, done;
+    if (step == QLatin1String("download")) {
+        run_ = client_.download(named, place);
+        doing = tr("Downloading %1").arg(shown);
+        done = tr("Downloaded %1").arg(shown);
+    } else if (step == QLatin1String("build")) {
+        run_ = client_.build(named, place, keepFor(name));
+        doing = tr("Building %1").arg(shown);
+        done = tr("Built %1").arg(shown);
+    } else {
+        run_ = client_.install(named, place, keepFor(name));
+        doing = tr("Installing %1").arg(shown);
+        done = tr("Installed %1").arg(shown);
+    }
+    runDone_ = done;
+    const bool system = step == QLatin1String("install") && !client_.places().one && place != Place::Me;
+    runPage_->begin(catalog_, name, run_, place, system, doing, done);
     stack_->setCurrentWidget(runPage_);
     run_->start();
 }
@@ -403,7 +455,9 @@ void Window::runEnded(const QString &name, bool ok, bool stay)
         const QJsonObject answer = runPage_->answer();
         const QString other = answer["other_root"].toString();
         const bool system = !client_.places().one && runPlace_ != Place::Me;
-        if (stay)
+        if (!runDone_.isEmpty())
+            frame_->flash(runDone_);
+        else if (stay)
             frame_->flash(tr("%1 is installed, but the system's caches could not be rebuilt. The page says more.").arg(shown));
         else if (!answer.isEmpty() && answer.contains("other_root"))
             frame_->flash(tr("%1 was written into the other root (%2). It becomes active when root %2 is started.").arg(shown, other));
@@ -609,6 +663,115 @@ ChangePage::Words Window::removeWords(const QString &name, Place place) const
                                 : tr("Removed %1 from %2. It stays in %3 until the other root is started.")
                                       .arg(shown, catalog_.otherWords(), catalog_.bootedWords());
     return words;
+}
+
+void Window::removeOnlyProgram(const QString &name, Place place)
+{
+    ChangePage::Words words = removeWords(name, place);
+    words.subtitle = tr("Only the program is removed. Its downloads and build material stay: Storage lists them.");
+    change(words, [this, name, place] { return client_.remove(name, place, true); });
+}
+
+void Window::cleanupNow(const QString &name, Place place, Cleanup what)
+{
+    const QString shown = name.isEmpty() ? QString() : shownName(name);
+    const QString part = what == Cleanup::Downloads ? tr("downloads") : what == Cleanup::Build ? tr("build material")
+                                                                                              : tr("downloads and build material");
+    ChangePage::Words words;
+    if (name.isEmpty()) {
+        words.title = tr("Cleaning up everything not installed");
+        words.subtitle = tr("Deletes every program's downloads and build material. Installed programs stay.");
+        words.done = tr("Deleted every program's downloads and build material");
+    } else {
+        words.title = tr("Deleting the %1 of %2").arg(part, shown);
+        words.subtitle = tr("The installed program, if there is one, stays.");
+        words.done = tr("Deleted the %1 of %2").arg(part, shown);
+    }
+    words.doing = tr("Asking Recipe to delete…");
+    words.stopNote = tr("Stopping it leaves what is not deleted yet. Storage shows what is still there.");
+    words.failed = tr("Deleting did not finish");
+    words.left = tr("Storage shows what Recipe still holds.");
+    change(words, [this, name, place, what] { return client_.cleanup(name.isEmpty() ? QString() : catalog_.qualified(name), place, what); });
+}
+
+void Window::cleanupLogsNow(Place place)
+{
+    ChangePage::Words words;
+    words.title = tr("Deleting the logs");
+    words.subtitle = tr("The diagnostic logs of earlier runs are deleted. Nothing installed is changed.");
+    words.doing = tr("Asking Recipe to delete the logs…");
+    words.stopNote = tr("Stopping it leaves the logs that are not deleted yet.");
+    words.failed = tr("Deleting the logs did not finish");
+    words.left = tr("Storage shows what Recipe still holds.");
+    words.done = tr("Deleted the logs");
+    change(words, [this, place] { return client_.cleanupLogs(place); });
+}
+
+void Window::removeBuildImageNow(Place place)
+{
+    ChangePage::Words words;
+    words.title = tr("Deleting the build image");
+    words.subtitle = tr("The cached compiler image is deleted. Recipe fetches it again when a recipe needs it.");
+    words.doing = tr("Asking Recipe to delete the build image…");
+    words.stopNote = tr("Stopping it leaves what is not deleted yet.");
+    words.failed = tr("Deleting the build image did not finish");
+    words.left = tr("Storage shows what Recipe still holds.");
+    words.done = tr("Deleted the build image");
+    change(words, [this, place] { return client_.removeBuildImage(place); });
+}
+
+// "Check for updates": only when asked. Upstream is asked once for each place that holds software.
+void Window::checkUpstream(const QStringList &names)
+{
+    if (checking_ || client_.loading() || run_ || changeRun_) {
+        frame_->flash(tr("One thing at a time: wait for the running one, or stop it."));
+        return;
+    }
+    checking_ = true;
+    frame_->flash(tr("Asking upstream for the newest versions…"));
+    QList<Place> places;
+    if (catalog_.twoPlaces)
+        places << Place::Me;
+    places << Place::Computer;
+    QStringList qualified;
+    for (const QString &name : names)
+        qualified << catalog_.qualified(name);
+    auto found = std::make_shared<QList<UpstreamItem>>();
+    auto problems = std::make_shared<QStringList>();
+    auto next = std::make_shared<std::function<void(int)>>();
+    *next = [this, places, qualified, names, found, problems, next](int index) {
+        if (index >= places.size()) {
+            checking_ = false;
+            if (found->isEmpty() && !problems->isEmpty()) {
+                frame_->flash(tr("Upstream could not be asked: %1").arg(problems->first()));
+                return;
+            }
+            QList<UpstreamItem> merged = names.isEmpty() ? QList<UpstreamItem>() : catalog_.upstream;
+            for (const UpstreamItem &item : *found) {
+                merged.removeIf([&item](const UpstreamItem &old) { return old.name == item.name; });
+                merged << item;
+            }
+            catalog_.upstream = merged;
+            catalog_.upstreamChecked = true;
+            int newer = 0;
+            for (const UpstreamItem &item : *found)
+                newer += item.newer;
+            frame_->flash(newer ? tr("Upstream has a newer version for %1.").arg(counted(newer, tr("%1 program"), tr("%1 programs")))
+                                : tr("Upstream has nothing newer than the recipes install."));
+            QWidget *shown = stack_->currentWidget();
+            if (const auto draw = again_; draw && shown != runPage_ && shown != before_ && shown != change_)
+                draw();
+            return;
+        }
+        client_.checkUpstream(qualified, places[index], [found, problems, next, index](bool ok, const QList<UpstreamItem> &list, const QString &problem) {
+            if (ok)
+                *found += list;
+            else
+                *problems << problem;
+            (*next)(index + 1);
+        });
+    };
+    (*next)(0);
 }
 
 void Window::removeNow(const QString &name, Place place)

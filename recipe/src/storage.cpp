@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <optional>
 
 namespace {
 
@@ -71,6 +72,16 @@ void StoragePage::show(const Catalog &catalog, const Places &places)
         if (catalog.stores[int(place)].has)
             stores << place;
 
+    Q_UNUSED(places);
+    qint64 total = 0;
+    for (Place place : stores) {
+        const StorageInfo &info = catalog.stores[int(place)].storage;
+        qint64 summed = 0;
+        for (const StorageKind &kind : info.kinds)
+            summed += kind.bytes;
+        total += info.totalBytes ? info.totalBytes : summed;
+    }
+
     auto *header = new QHBoxLayout;
     auto *top = new QVBoxLayout;
     top->setSpacing(1);
@@ -78,8 +89,8 @@ void StoragePage::show(const Catalog &catalog, const Places &places)
         top->addWidget(heading(tr("Recipe could not say what it keeps")));
         top->addWidget(dim(text(tr("`recipe storage` gave no answer for any place."), true)));
     } else {
-        // F2: this page shows one total and one line per kind (`Store::storage.kinds`), each removable.
-        top->addWidget(heading(tr("Installed software takes %1").arg(bytesText(catalog.installedBytes()))));
+        top->addWidget(heading(tr("Recipe holds %1 on this computer").arg(bytesText(total))));
+        top->addWidget(dim(text(tr("One line for each kind of what it keeps, with a way to remove it."), true)));
     }
     header->addLayout(top, 1);
     column->addLayout(header);
@@ -89,46 +100,123 @@ void StoragePage::show(const Catalog &catalog, const Places &places)
     body->setContentsMargins(0, 0, 2, 0);
     body->setSpacing(14);
 
-    // Installed programs, by place: the numbers `recipe storage` gives for each store.
-    auto *rooms = new Panel;
-    rooms->column()->addWidget(strong(tr("What is installed takes")));
-    auto *grid = new QGridLayout;
-    grid->setHorizontalSpacing(16);
-    grid->setVerticalSpacing(6);
-    grid->setColumnStretch(1, 1);
-    int row = 0;
-    auto line = [&](const QString &place, const QString &words) {
-        grid->addWidget(dim(text(place)), row, 0, Qt::AlignTop);
-        grid->addWidget(text(words, true), row, 1);
-        ++row;
-    };
-    for (Place place : {Place::Computer, Place::Me}) {
-        const Store &store = catalog.stores[int(place)];
-        if (store.has) {
-            const QString where = !catalog.twoPlaces ? tr("in %1").arg(places.systemRoot.isEmpty() ? tr("the store recipe uses") : places.systemRoot)
-                                  : place == Place::Me ? tr("in your own folder")
-                                                       : tr("in %1").arg(places.systemRoot);
-            line(catalog.twoPlaces ? placeTitle(place) : tr("This store"), tr("%1, %2").arg(bytesText(store.installedBytes()), where));
-        } else if (place == Place::Computer && catalog.twoPlaces) {
-            // An A/B system: Recipe answers with names and versions, no store stands behind them.
-            line(placeTitle(place), catalog.ab ? tr("In %1. Recipe reports no size for it.").arg(catalog.bootedWords())
-                                                : tr("Recipe reports no size for it."));
+    // One panel for each store: a line for each kind `recipe storage` names.
+    auto addStore = [&](Place place) {
+        const StorageInfo &info = catalog.stores[int(place)].storage;
+        auto *panel = new Panel;
+        auto *head = new QHBoxLayout;
+        QString title = catalog.twoPlaces ? placeTitle(place) : tr("What Recipe keeps");
+        head->addWidget(strong(title));
+        head->addStretch();
+        qint64 notInstalled = 0;
+        for (const char *kind : {"downloaded", "built", "kept", "unfinished"})
+            notInstalled += info.bytesOf(QLatin1String(kind));
+        auto *all = new QPushButton(tr("Clean up everything not installed"));
+        all->setToolTip(tr("Deletes every program's downloads and build material. Installed programs stay."));
+        all->setEnabled(notInstalled > 0);
+        connect(all, &QPushButton::clicked, this, [this, place] { emit cleanupAll(place); });
+        head->addWidget(all);
+        panel->column()->addLayout(head);
+
+        auto *grid = new QGridLayout;
+        grid->setHorizontalSpacing(14);
+        grid->setVerticalSpacing(6);
+        grid->setColumnStretch(0, 1);
+        panel->column()->addLayout(grid);
+        int row = 0;
+        for (const StorageKind &kind : info.kinds) {
+            QString name, words;
+            std::optional<Cleanup> programs; // removes one program's part of this kind
+            if (kind.kind == QLatin1String("installed")) {
+                name = tr("Installed programs");
+                words = tr("The files of what is installed. A program is removed from Installed.");
+            } else if (kind.kind == QLatin1String("downloaded")) {
+                name = tr("Downloaded");
+                words = tr("Downloads of programs that are not installed.");
+                programs = Cleanup::Downloads;
+            } else if (kind.kind == QLatin1String("built")) {
+                name = tr("Built");
+                words = tr("Build material and results of programs that are not installed.");
+                programs = Cleanup::Build;
+            } else if (kind.kind == QLatin1String("kept")) {
+                name = tr("Kept by choice");
+                words = tr("Downloads and build material of installed programs that have the keep option.");
+                programs = Cleanup::Everything;
+            } else if (kind.kind == QLatin1String("unfinished")) {
+                name = tr("Unfinished runs");
+                words = tr("What a run that was interrupted left behind.");
+                programs = Cleanup::Build;
+            } else if (kind.kind == QLatin1String("build_image")) {
+                name = tr("Build image");
+                words = tr("The cached compiler image. It is fetched again when a recipe needs it.");
+            } else if (kind.kind == QLatin1String("logs")) {
+                name = tr("Logs");
+                words = tr("Diagnostic logs of runs.");
+            } else {
+                name = kind.kind;
+            }
+            if (!kind.path.isEmpty())
+                words += tr(" In %1.").arg(kind.path);
+            if (row)
+                grid->addWidget(rule(), row++, 0, 1, 3);
+            auto *label = new QVBoxLayout;
+            label->setSpacing(1);
+            label->addWidget(strong(name));
+            if (!words.isEmpty())
+                label->addWidget(dim(text(words, true)));
+            grid->addLayout(label, row, 0);
+            grid->addWidget(text(bytesText(kind.bytes)), row, 1, Qt::AlignRight | Qt::AlignTop);
+            QPushButton *remove = nullptr;
+            if (kind.kind == QLatin1String("installed")) {
+                remove = new QPushButton(tr("Show what is installed"));
+                connect(remove, &QPushButton::clicked, this, &StoragePage::openInstalled);
+            } else if (kind.kind == QLatin1String("build_image")) {
+                remove = new QPushButton(tr("Remove"));
+                remove->setEnabled(kind.removable && kind.bytes > 0);
+                if (!kind.removable)
+                    remove->setToolTip(tr("This image was installed with the system"));
+                connect(remove, &QPushButton::clicked, this, [this, place] { emit removeBuildImage(place); });
+            } else if (kind.kind == QLatin1String("logs")) {
+                remove = new QPushButton(tr("Remove"));
+                remove->setEnabled(kind.removable && kind.bytes > 0);
+                connect(remove, &QPushButton::clicked, this, [this, place] { emit cleanupLogs(place); });
+            }
+            if (remove)
+                grid->addWidget(remove, row, 2, Qt::AlignRight | Qt::AlignTop);
+            ++row;
+            if (programs) {
+                const Cleanup what = *programs;
+                for (const auto &program : kind.programs) {
+                    const QString programName = program.first;
+                    grid->addWidget(dim(text(tr("    %1").arg(shownName(catalog, programName)))), row, 0);
+                    grid->addWidget(dim(text(bytesText(program.second))), row, 1, Qt::AlignRight);
+                    auto *each = new QPushButton(tr("Remove"));
+                    each->setEnabled(kind.removable);
+                    connect(each, &QPushButton::clicked, this, [this, programName, place, what] { emit cleanup(programName, place, what); });
+                    grid->addWidget(each, row, 2, Qt::AlignRight);
+                    ++row;
+                }
+            }
         }
+        body->addWidget(panel);
+    };
+    for (Place place : stores)
+        addStore(place);
+    if (stores.isEmpty()) {
+        // Nothing to list; the heading says why.
     }
     int other = 0;
     for (const InstalledItem &item : catalog.installed)
         other += item.place == Place::Other;
-    if (other)
-        line(placeTitle(Place::Other, catalog.otherRoot),
-             tr("%1 only there, active when it is started. Recipe reports no size for it.").arg(counted(other, tr("%1 program"), tr("%1 programs"))));
-    rooms->column()->addLayout(grid);
-    rooms->column()->addWidget(dim(text(tr("Only what `recipe storage` reports: what is installed. Recipe "
-                                           "reports no sizes for downloads or builds, so none are shown."),
-                                        true)));
-    auto *list = new QPushButton(tr("Show what is installed"));
-    connect(list, &QPushButton::clicked, this, &StoragePage::openInstalled);
-    rooms->column()->addWidget(list, 0, Qt::AlignLeft);
-    body->addWidget(rooms);
+    if (other || (!stores.isEmpty() && !catalog.stores[int(Place::Computer)].has && catalog.twoPlaces)) {
+        auto *rooms = new Panel;
+        rooms->column()->addWidget(strong(tr("Software of the system")));
+        rooms->column()->addWidget(dim(text(other ? tr("%1 only in %2, active when it is started. Recipe reports no size for the system's own software.")
+                                                          .arg(counted(other, tr("%1 program"), tr("%1 programs")), catalog.otherWords())
+                                                  : tr("Recipe reports no size for the system's own software."),
+                                              true)));
+        body->addWidget(rooms);
+    }
 
     // What was done, newest first across the stores.
     struct Line {

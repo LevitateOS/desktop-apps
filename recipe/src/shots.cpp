@@ -276,7 +276,7 @@ void frameShots(Window &window, const Save &save, const Expect &expect)
     expect(QStringLiteral("Installed is marked in the rail"), frame->selected() == "installed");
     save(window, "f2-installed");
 
-    window.showUpdates("element");
+    window.showInstalled("element");
     expect(QStringLiteral("Updates is marked in the rail"), frame->selected() == "updates");
     expect(QStringLiteral("the Updates badge is the number of updates (%1)").arg(window.catalog().updates.size()),
            window.catalog().updates.size() > 0 && frame->badge("updates") == window.catalog().updates.size()
@@ -311,7 +311,6 @@ void helpShots(Window &window, const Save &save, const Expect &expect)
     plan.pageShown = [&](const QString &key) {
         QWidget *page = key == QLatin1String("browse")      ? static_cast<QWidget *>(window.findChild<BrowsePage *>())
                         : key == QLatin1String("installed") ? static_cast<QWidget *>(window.findChild<InstalledPage *>())
-                        : key == QLatin1String("updates")   ? static_cast<QWidget *>(window.findChild<UpdatesPage *>())
                         : key == QLatin1String("sources")   ? static_cast<QWidget *>(window.findChild<SourcesPage *>())
                         : key == QLatin1String("storage")   ? static_cast<QWidget *>(window.findChild<StoragePage *>())
                                                             : nullptr;
@@ -501,7 +500,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         before = changesAsked().size();
 
         // Update where the software is: no choice, only the statement.
-        window.showUpdates("gimp", int(Place::Computer));
+        window.showInstalled("gimp", int(Place::Computer));
         window.askUpdate("gimp", Place::Computer);
         expect(QStringLiteral("an update has no choice, only the statement of where it is"),
                page->choiceNames() == QStringList({"For everyone"}) && page->pageText().contains("Where it is")
@@ -611,7 +610,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             clickButton(system, "Cancel");
             settle(100);
         }
-        window.showUpdates();
+        window.showInstalled();
         save(window, "p5-updates-both-roots");
         expect(QStringLiteral("what the other root holds already is not offered as an update again (%1)").arg(window.catalog().updates.size()),
                !window.catalog().update("gimp", Place::Computer) && window.catalog().update("element", Place::Computer));
@@ -752,7 +751,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             if (QLatin1String(shown) == "installed")
                 window.showInstalled("htop", int(Place::Computer));
             else if (QLatin1String(shown) == "updates")
-                window.showUpdates();
+                window.showInstalled();
             else if (QLatin1String(shown) == "storage")
                 window.showStorage();
             else
@@ -1162,9 +1161,9 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
 
     // A failed change that is not a package's: the lists could not be fetched.
     qputenv("RECIPE_STANDIN_FAIL", "refresh");
-    window.showUpdates();
+    window.showInstalled();
     settle(100);
-    clickButton(window.updatesPage(), "Check for updates");
+    clickButton(window.installedPage(), "Check for updates");
     waitUntilIdle(window, 30);
     words = wordsOn(window);
     expect(QStringLiteral("fetching that did not finish says so, with recipe's own words (%1)").arg(words.left(60)),
@@ -1175,7 +1174,7 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
     qunsetenv("RECIPE_STANDIN_FAIL");
     clickButton(window.changePage(), "Back");
     waitUntilIdle(window, 30);
-    expect(QStringLiteral("Back returns to the page the person was on"), window.updatesPage()->isVisible());
+    expect(QStringLiteral("Back returns to the page the person was on"), window.installedPage()->isVisible());
 
     // ---- Closing the window while something runs: asked first, with what is true.
     {
@@ -1549,7 +1548,7 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
             out << "not looked up: " << problem << "\n";
         out << "installed takes " << window.catalog().installedBytes() << " bytes\n";
         if (!window.catalog().updates.isEmpty()) {
-            window.showUpdates(name);
+            window.showInstalled(name);
             ok &= save(window, "real-7-updates");
         }
         // Storage and the history, against what `recipe storage --json` and `recipe history --json`
@@ -1742,7 +1741,7 @@ int takeShots(Window &window, const QString &folder)
         dialog.close();
     }
 
-    window.showUpdates("element");
+    window.showInstalled("element");
     ok &= save(window, "7-updates");
     {
         QTextStream said(stdout);
