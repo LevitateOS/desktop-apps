@@ -15,6 +15,7 @@
 #include <QAbstractButton>
 #include <QClipboard>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
 #include <QElapsedTimer>
@@ -81,7 +82,7 @@ void goOn(Window &window, const QString &button)
 
 // What `recipe` was asked to change, each as the arguments it got, from the
 // stand-in's log (RECIPE_STANDIN_LOG, else invocations.log in its state
-// folder). Reads (list, installed, updates, storage) are left out.
+// folder). Reads (list, installed, updates, storage, state) are left out.
 struct Asked {
     QString route; // "system", "store" or "me", as the stand-in told them apart
     QStringList arguments;
@@ -104,7 +105,8 @@ QList<Asked> changesAsked()
         for (const QString &argument : asked.arguments) {
             if (argument.startsWith("--"))
                 continue;
-            if (argument == "install" || argument == "update" || argument == "remove")
+            if (argument == "install" || argument == "update" || argument == "remove" || argument == "download"
+                || argument == "build" || argument == "cleanup")
                 found << asked;
             break;
         }
@@ -222,10 +224,12 @@ private:
 void frameShots(Window &window, const Save &save, const Expect &expect)
 {
     Frame *frame = window.frame();
-    for (const char *title : {"Browse", "Installed", "Updates", "Sources", "Storage", "Help"})
+    for (const char *title : {"Browse", "Installed", "Sources", "Storage", "Help"})
         expect(QStringLiteral("the rail has %1").arg(title), frame->entryTitles().contains(QString::fromLatin1(title)));
+    expect(QStringLiteral("there is no Updates page: the updates are marks on Installed"), !frame->entryTitles().contains("Updates"));
+    expect(QStringLiteral("the rail has five entries (%1)").arg(frame->entryTitles().join(", ")), frame->entryTitles().size() == 5);
     expect(QStringLiteral("Storage follows Sources in the rail"),
-           frame->entryTitles().mid(0, 5) == QStringList({"Browse", "Installed", "Updates", "Sources", "Storage"}));
+           frame->entryTitles().mid(0, 4) == QStringList({"Browse", "Installed", "Sources", "Storage"}));
     expect(QStringLiteral("Help is the last entry, the frame's own"), frame->entryTitles().last() == "Help");
     expect(QStringLiteral("the window is 1100 by 700"), window.size() == QSize(1100, 700));
 
@@ -277,11 +281,11 @@ void frameShots(Window &window, const Save &save, const Expect &expect)
     save(window, "f2-installed");
 
     window.showInstalled("element");
-    expect(QStringLiteral("Updates is marked in the rail"), frame->selected() == "updates");
-    expect(QStringLiteral("the Updates badge is the number of updates (%1)").arg(window.catalog().updates.size()),
-           window.catalog().updates.size() > 0 && frame->badge("updates") == window.catalog().updates.size()
-               && !frame->badgeWarns("updates"));
-    save(window, "f3-updates");
+    expect(QStringLiteral("Installed is marked in the rail, and nothing else is"), frame->selected() == "installed");
+    expect(QStringLiteral("the badge on Installed is the number of programs with an Update mark (%1)").arg(window.catalog().updates.size()),
+           window.catalog().updates.size() > 0 && frame->badge("installed") == window.catalog().updates.size()
+               && !frame->badgeWarns("installed"));
+    save(window, "f3-installed-badge-update-marks");
 
     window.showSources();
     expect(QStringLiteral("Sources is marked in the rail"), frame->selected() == "sources");
@@ -611,7 +615,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             settle(100);
         }
         window.showInstalled();
-        save(window, "p5-updates-both-roots");
+        save(window, "p5-installed-update-marks-both-roots");
         expect(QStringLiteral("what the other root holds already is not offered as an update again (%1)").arg(window.catalog().updates.size()),
                !window.catalog().update("gimp", Place::Computer) && window.catalog().update("element", Place::Computer));
         window.showBrowse();
@@ -747,11 +751,9 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                    && !window.catalog().installedItem("htop", Place::Other)
                    && window.frame()->statusText().contains("htop was written into the system. It is active at once")
                    && abWords(window.frame()->statusText()).isEmpty());
-        for (const char *shown : {"installed", "updates", "storage", "recipe"}) {
+        for (const char *shown : {"installed", "storage", "recipe"}) {
             if (QLatin1String(shown) == "installed")
                 window.showInstalled("htop", int(Place::Computer));
-            else if (QLatin1String(shown) == "updates")
-                window.showInstalled();
             else if (QLatin1String(shown) == "storage")
                 window.showStorage();
             else
@@ -1003,7 +1005,8 @@ void programPages(Window &window, const Save &save, const Expect &expect)
     buttons = buttonsOn(window);
     expect(QStringLiteral("installed: its version, Open and Remove; nothing to install again (%1)").arg(buttons.join("|")),
            mail && words.contains("Version " + mail->version) && buttons.contains("Open")
-               && buttons.contains("Remove…") && !buttons.contains("Install") && words.contains("Where it is"));
+               && buttons.contains("Remove") && !buttons.contains("Install") && words.contains("Where it is")
+               && words.contains("State") && words.contains("Installed, version " + mail->version + "."));
     save(window, "15b-program-installed");
 
     // Installed with an update.
@@ -1014,24 +1017,33 @@ void programPages(Window &window, const Save &save, const Expect &expect)
     settle(100);
     words = wordsOn(window);
     buttons = buttonsOn(window);
-    expect(QStringLiteral("installed with an update: Update to the new version and Remove (%1)").arg(buttons.join("|")),
-           gimp && newer && buttons.contains("Update to " + newer->to) && buttons.contains("Remove…")
-               && words.contains(newer->to + " is ready."));
-    save(window, "15c-program-installed-with-update");
+    expect(QStringLiteral("installed with an update: Update and Remove, and the State panel names the Update mark (%1)").arg(buttons.join("|")),
+           gimp && newer && buttons.contains("Update") && buttons.contains("Remove")
+               && words.contains(newer->to + " is ready.")
+               && words.contains(QStringLiteral("Update: the recipe installs %1, the installed version is %2.").arg(newer->to, gimp->version)));
+    save(window, "15c-program-installed-with-update-mark");
 }
 
 // Storage: what the stand-in says, and what was done so far.
 void storageBefore(Window &window, const Save &save, const Expect &expect)
 {
     const QJsonObject said = answerOf({"storage", "--json"});
-    const qint64 active = said["active_bytes"].toInteger();
+    const qint64 total = said["total_bytes"].toInteger();
+    QStringList kinds;
+    for (const QJsonValue &kind : said["kinds"].toArray())
+        kinds << kind.toObject()["kind"].toString();
+    expect(QStringLiteral("recipe storage names all seven kinds, in order (%1)").arg(kinds.join(",")),
+           kinds == QStringList({"installed", "downloaded", "built", "kept", "unfinished", "build_image", "logs"}));
     window.showStorage();
     settle(100);
     const QString words = wordsOn(window);
     expect(QStringLiteral("Storage is marked in the rail"), window.frame()->selected() == "storage");
-    expect(QStringLiteral("Storage says what is installed takes, as recipe reports it (%1)").arg(bytesText(active)),
-           words.contains(QStringLiteral("Installed software takes %1").arg(bytesText(active))));
-    expect(QStringLiteral("and says what recipe does not report"), words.contains("Recipe reports no sizes for downloads or builds"));
+    expect(QStringLiteral("Storage says what Recipe holds in all, as recipe reports it (%1)").arg(bytesText(total)),
+           words.contains(QStringLiteral("Recipe holds %1 on this computer").arg(bytesText(total))));
+    expect(QStringLiteral("and has a line for each kind"),
+           words.contains("Installed programs") && words.contains("Downloaded") && words.contains("Built")
+               && words.contains("Kept by choice") && words.contains("Unfinished runs") && words.contains("Build image")
+               && words.contains("Logs") && words.contains("Clean up everything not installed"));
     // The history: what the story did to this store so far, newest first.
     const QJsonArray history = answerOf({"history", "--json"})["history"].toArray();
     expect(QStringLiteral("recipe's history has the story's changes (%1)").arg(history.size()), history.size() >= 3);
@@ -1159,22 +1171,27 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
     settle(100);
     expect(QStringLiteral("and the history has it, on top"), window.storagePage()->historyLines().value(0) == "Removed fd 10.2.0");
 
-    // A failed change that is not a package's: the lists could not be fetched.
-    qputenv("RECIPE_STANDIN_FAIL", "refresh");
+    // "Check for updates" asks upstream, over the network, and only then. It is not a change: no page of its
+    // own, nothing is installed, and when upstream cannot be asked the window says so and stays where it was.
+    qputenv("RECIPE_STANDIN_FAIL", "upstream");
     window.showInstalled();
     settle(100);
+    const int asks = timesAsked({"updates", "--upstream"});
     clickButton(window.installedPage(), "Check for updates");
     waitUntilIdle(window, 30);
     words = wordsOn(window);
-    expect(QStringLiteral("fetching that did not finish says so, with recipe's own words (%1)").arg(words.left(60)),
-           window.changePage()->isVisible() && words.contains("Fetching the lists did not finish")
-               && words.contains("could not fetch the list of levitate: connection timed out")
-               && words.contains("The recipes are as they were when they were last read."));
-    save(window, "17e-fetch-failed");
+    expect(QStringLiteral("asking upstream was done once, and it did not finish: said in the status line (%1)").arg(window.frame()->statusText().left(60)),
+           timesAsked({"updates", "--upstream"}) == asks + 1 && window.frame()->statusText().contains("Upstream could not be asked")
+               && !window.catalog().upstreamChecked);
+    expect(QStringLiteral("it is no run and no change: Installed stays, there is no run page and no change page"),
+           window.installedPage()->isVisible() && !window.runPage()->isVisible() && !window.changePage()->isVisible());
+    save(window, "17e-upstream-check-failed");
     qunsetenv("RECIPE_STANDIN_FAIL");
-    clickButton(window.changePage(), "Back");
+    clickButton(window.installedPage(), "Check for updates");
     waitUntilIdle(window, 30);
-    expect(QStringLiteral("Back returns to the page the person was on"), window.installedPage()->isVisible());
+    expect(QStringLiteral("asked again it worked: upstream's answer is kept apart from the Update mark (element has none, upstream has a newer one)"),
+           window.catalog().upstreamChecked && window.catalog().newerUpstream("element") && !window.catalog().update("element")
+               && window.installedPage()->isVisible());
 
     // ---- Closing the window while something runs: asked first, with what is true.
     {
@@ -1289,7 +1306,7 @@ void lagShots(Window &window, const Save &save, const Expect &expect)
     waitUntilIdle(window, 60);
     expect(QStringLiteral("then the lists were read, and the program's page shows it installed"),
            window.catalog().installedItem("claude-code") && window.recipePage()->isVisible()
-               && buttonTexts(window).contains("Remove…"));
+               && buttonTexts(window).contains("Remove"));
     save(window, "l2-installed-after-reading");
     waitFor([] { return !processesRunning(QStringLiteral("install levitate:claude-code")); }, 20);
 
@@ -1303,6 +1320,411 @@ void lagShots(Window &window, const Save &save, const Expect &expect)
     save(window, "l3-failed-command-lingering");
     waitUntilIdle(window, 60);
     waitFor([] { return !processesRunning(QStringLiteral("install levitate:onlyoffice")); }, 20);
+    window.showBrowse();
+    settle(100);
+}
+
+// The link with these words on a page, pressed as a click would.
+void clickLink(QWidget *inside, const QString &words)
+{
+    for (ClickLabel *label : inside->findChildren<ClickLabel *>())
+        if (label->text() == words && label->isVisible())
+            emit label->clicked();
+}
+
+// Opens "One step at a time" on the program page, if it is closed.
+void openSteps(Window &window)
+{
+    settle(100);
+    clickLink(window.recipePage(), QStringLiteral("One step at a time ›"));
+    settle(100);
+}
+
+// A button with these words that is shown, and whether a person can press it.
+bool isShown(QWidget &inside, const QString &words)
+{
+    for (const QPushButton *button : inside.findChildren<QPushButton *>())
+        if (button->isVisible() && QString(button->text()).remove(QLatin1Char('&')) == words)
+            return true;
+    return false;
+}
+
+bool pressable(QWidget &inside, const QString &words)
+{
+    for (const QPushButton *button : inside.findChildren<QPushButton *>())
+        if (button->isVisible() && button->isEnabled() && QString(button->text()).remove(QLatin1Char('&')) == words)
+            return true;
+    return false;
+}
+
+// The last of the buttons with these words: on the program page the main buttons come first, the single
+// steps below them, so this is the step's own button.
+void clickLast(QWidget *inside, const QString &words)
+{
+    QPushButton *last = nullptr;
+    for (QPushButton *button : inside->findChildren<QPushButton *>())
+        if (button->isVisible() && QString(button->text()).remove(QLatin1Char('&')) == words)
+            last = button;
+    if (last)
+        last->click();
+}
+
+// "Keep downloads and build after installing" on the program page.
+QCheckBox *keepBoxOf(QWidget &page)
+{
+    for (QCheckBox *box : page.findChildren<QCheckBox *>())
+        if (box->text() == QStringLiteral("Keep downloads and build after installing"))
+            return box;
+    return nullptr;
+}
+
+// One field of `on_disk` in what `recipe state --json` says.
+qint64 onDiskOf(const QJsonObject &state, const char *field)
+{
+    return state["on_disk"].toObject()[QLatin1String(field)].toInteger();
+}
+
+// What the stand-in says one program holds on disk and its state, asked as the window asks.
+QJsonObject stateOf(const QString &name)
+{
+    return answerOf({"state", name, "--json"});
+}
+
+// The program page's State panel, "One step at a time", Remove with what is left, the two marks and the
+// check upstream, and the Storage page with every kind. A store and a stand-in of their own, so what the
+// story downloads, builds and installs does not touch the other passes. Pictures `st*` (a program's steps),
+// `m*` (the marks) and `sg*` (Storage).
+void stepShots(const QString &folder, const Save &save, const Expect &expect)
+{
+    if (qEnvironmentVariable("RECIPE_GUI_RECIPE").isEmpty()) {
+        expect(QStringLiteral("the single steps need RECIPE_GUI_RECIPE, see README.md"), false);
+        return;
+    }
+    const QString scratch = QDir(folder).filePath("steps");
+    QDir(scratch).removeRecursively();
+    QDir().mkpath(scratch);
+    Environment env;
+    env.set("RECIPE_GUI_PACKAGE_ROOT", scratch + "/root");
+    env.set("RECIPE_STANDIN_STATE", scratch + "/state");
+    env.set("RECIPE_STANDIN_SPEED", "0");
+    for (const char *name : {"RECIPE_STANDIN_LOG", "RECIPE_STANDIN_FAIL", "RECIPE_STANDIN_STOP_AT", "RECIPE_STANDIN_AB",
+                             "RECIPE_STANDIN_LINGER", "RECIPE_STANDIN_SLOW_READS", "RECIPE_STANDIN_REFUSE_NEW",
+                             "RECIPE_STANDIN_FIXED", "RECIPE_STANDIN_HOST_LIBC", "RECIPE_STANDIN_HOST_OS"})
+        env.unset(name);
+    auto lastChange = [] {
+        const QList<Asked> all = changesAsked();
+        return all.isEmpty() ? QStringList() : all.last().arguments;
+    };
+
+    Window window;
+    window.resize(1100, 700);
+    window.show();
+    waitUntilIdle(window, 30);
+    RecipePage *page = window.recipePage();
+
+    // ---- The State panel of a program with nothing of it here, and "One step at a time" closed.
+    window.showRecipe("onlyoffice");
+    settle(100);
+    QString words = wordsOn(window);
+    expect(QStringLiteral("a program with nothing of it here says so in its State panel, offers Install and no Remove (%1)").arg(buttonTexts(window).join("|")),
+           words.contains("State") && words.contains("Nothing of it is here.") && pressable(*page, "Install") && !isShown(*page, "Remove"));
+    expect(QStringLiteral("its recipe says where its newest version is, so checking upstream is offered"),
+           pressable(*page, "Check for updates") && !words.contains("This recipe does not say where its newest version is"));
+    expect(QStringLiteral("the single steps are behind a link, and not shown yet"),
+           words.contains("One step at a time ›") && !isShown(*page, "Download") && !keepBoxOf(*page)->isVisible());
+    save(window, "st1-state-nothing-here");
+
+    // ---- "One step at a time": each step with its button, what it holds, and the keep choice.
+    openSteps(window);
+    words = wordsOn(window);
+    expect(QStringLiteral("it shows download, install and clean up with their buttons: onlyoffice compiles nothing, so no build step (%1)").arg(buttonTexts(window).join("|")),
+           words.contains("One step at a time ‹") && pressable(*page, "Download") && isShown(*page, "Remove the download")
+               && !isShown(*page, "Build") && isShown(*page, "Remove only the program") && isShown(*page, "Clean up"));
+    expect(QStringLiteral("with nothing held, what removes something cannot be pressed"),
+           !pressable(*page, "Remove the download") && !pressable(*page, "Remove only the program") && !pressable(*page, "Clean up")
+               && words.contains(QStringLiteral("Holds %1 on disk.").arg(bytesText(0))));
+    QCheckBox *keep = keepBoxOf(*page);
+    expect(QStringLiteral("the keep choice is there, off: an install deletes the material when it is done"),
+           keep && keep->isVisible() && !keep->isChecked());
+    save(window, "st2-one-step-at-a-time");
+
+    // ---- Download alone: nothing is installed, the program is "downloaded", and holds what it fetched.
+    const qsizetype before = changesAsked().size();
+    clickLast(page, "Download");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("Download asks recipe for the download step only: `download NAME`, no install (%1)").arg(lastChange().join(' ')),
+           changesAsked().size() == before + 1 && lastChange().mid(0, 3) == QStringList({"download", "levitate:onlyoffice", "--machine-events"})
+               && !timesAsked({"install", "levitate:onlyoffice"}));
+    const QJsonObject downloaded = stateOf("onlyoffice");
+    const qint64 fetched = onDiskOf(downloaded, "downloads");
+    expect(QStringLiteral("it is downloaded, holds %1, and nothing is installed").arg(bytesText(fetched)),
+           downloaded["state"].toString() == "downloaded" && fetched > 0 && !window.catalog().installedItem("onlyoffice")
+               && window.catalog().recipe("onlyoffice")->state == State::Downloaded);
+    settle(100);
+    words = wordsOn(window);
+    expect(QStringLiteral("the page is drawn again: its State says downloaded and what it holds on disk (%1)").arg(bytesText(fetched)),
+           page->isVisible() && words.contains("Downloaded. Not built or installed.")
+               && words.contains(QStringLiteral("On disk beside the installed files: downloads %1.").arg(bytesText(fetched))));
+    save(window, "st3-state-downloaded");
+
+    // ---- Remove the download: only the download is deleted.
+    openSteps(window);
+    expect(QStringLiteral("with a download held, Remove the download and Clean up can be pressed"),
+           pressable(*page, "Remove the download") && pressable(*page, "Clean up"));
+    clickButton(page, "Remove the download");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("it asks `cleanup NAME --downloads` and nothing else (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 4) == QStringList({"cleanup", "levitate:onlyoffice", "--machine-events", "--downloads"})
+               && stateOf("onlyoffice")["state"].toString() == "none" && onDiskOf(stateOf("onlyoffice"), "downloads") == 0);
+
+    // ---- Build alone, with the keep choice on: a result kept, not installed; the choice reaches the command.
+    window.showRecipe("mpv");
+    openSteps(window);
+    keep = keepBoxOf(*page);
+    expect(QStringLiteral("mpv compiles, so it has a build step too"), pressable(*page, "Build") && pressable(*page, "Download"));
+    if (keep)
+        keep->setChecked(true);
+    settle(100);
+    clickLast(page, "Build");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("Build asks `build NAME --keep`: it downloads what is missing, builds, does not install (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 4) == QStringList({"build", "levitate:mpv", "--machine-events", "--keep"}));
+    const QJsonObject built = stateOf("mpv");
+    const qint64 builtBytes = onDiskOf(built, "build");
+    expect(QStringLiteral("it is built, not installed, keeps the choice, and holds the download and the build (%1)").arg(bytesText(builtBytes)),
+           built["state"].toString() == "built" && built["keep"].toBool() && builtBytes > 0 && onDiskOf(built, "downloads") > 0
+               && !window.catalog().installedItem("mpv") && window.catalog().recipe("mpv")->state == State::Built
+               && window.catalog().recipe("mpv")->keep);
+    settle(100);
+    words = wordsOn(window);
+    expect(QStringLiteral("its State says built and not installed, with what it holds"),
+           words.contains("Built. Not installed.") && words.contains("On disk beside the installed files: downloads")
+               && words.contains(QStringLiteral("build %1").arg(bytesText(builtBytes))));
+    save(window, "st4-state-built-kept");
+
+    // ---- Install: the steps still missing; the kept material stays, and the page says the program holds it.
+    openSteps(window);
+    expect(QStringLiteral("the keep choice is still on, as remembered"), keepBoxOf(*page) && keepBoxOf(*page)->isChecked());
+    clickLast(page, "Install");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("Install asks `install NAME --keep` (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 4) == QStringList({"install", "levitate:mpv", "--machine-events", "--keep"}));
+    const QJsonObject installed = stateOf("mpv");
+    expect(QStringLiteral("it is installed and, with the keep option on, still holds its material"),
+           installed["state"].toString() == "installed" && installed["installed_version"].toString() == "0.40.0"
+               && onDiskOf(installed, "build") > 0 && window.catalog().installedItem("mpv")
+               && window.catalog().installedItem("mpv")->keep && window.catalog().installedItem("mpv")->onDisk.total() > 0);
+    settle(100);
+    save(window, "st5-installed-kept-material");
+
+    // ---- Remove only the program: its downloads and build material stay.
+    openSteps(window);
+    expect(QStringLiteral("an installed program can be removed alone"), pressable(*page, "Remove only the program"));
+    clickButton(page, "Remove only the program");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("it asks `remove NAME --keep`; the program is gone, the material stays and the state is built (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 4) == QStringList({"remove", "levitate:mpv", "--machine-events", "--keep"})
+               && !window.catalog().installedItem("mpv") && stateOf("mpv")["state"].toString() == "built"
+               && onDiskOf(stateOf("mpv"), "build") > 0);
+
+    // ---- Remove, with what is left of it: the question says so, and `remove NAME` takes the material too.
+    window.runStep("mpv", Place::Computer, "install");
+    waitUntilIdle(window, 30);
+    window.showRecipe("mpv");
+    settle(100);
+    expect(QStringLiteral("installed again: Remove is offered beside Open (%1)").arg(buttonTexts(window).join("|")),
+           pressable(*page, "Remove") && window.catalog().installedItem("mpv") && window.catalog().installedItem("mpv")->onDisk.total() > 0);
+    clickButton(page, "Remove");
+    settle(200);
+    QPointer<RemoveDialog> question = window.removeQuestion();
+    expect(QStringLiteral("Remove asks first, and says what is left of its downloads and build goes too"),
+           question && question->isVisible() && wordsOn(*question).contains("Remove mpv 0.40.0?")
+               && wordsOn(*question).contains("Whatever is left of its downloads and build is removed with it."));
+    if (question) {
+        save(*question, "st6-remove-with-leftovers-question");
+        clickButton(question, "Remove");
+    }
+    waitUntilIdle(window, 30);
+    const QJsonObject gone = stateOf("mpv");
+    expect(QStringLiteral("it asks `remove NAME` without --keep; nothing of it is left, and the keep choice is forgotten (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 3) == QStringList({"remove", "levitate:mpv", "--machine-events"}) && !lastChange().contains("--keep")
+               && !window.catalog().installedItem("mpv") && gone["state"].toString() == "none" && onDiskOf(gone, "build") == 0
+               && onDiskOf(gone, "downloads") == 0 && !gone["keep"].toBool());
+    save(window, "st7-removed-with-leftovers");
+
+    // ---- A download that did not finish: it says what is true of a download, not "nothing was changed".
+    env.set("RECIPE_STANDIN_FAIL", "download:onlyoffice");
+    window.showRecipe("onlyoffice");
+    openSteps(window);
+    clickLast(page, "Download");
+    waitUntilIdle(window, 30);
+    words = wordsOn(window);
+    expect(QStringLiteral("a stopped download says nothing was installed and that what was downloaded stays (%1)").arg(words.left(80).replace('\n', '|')),
+           window.runPage()->isVisible() && words.contains("was stopped") && words.contains("Nothing was installed.")
+               && words.contains("What was already downloaded stays")
+               && !words.contains("Nothing on this computer was changed.") && words.contains("Copy for agent")
+               && words.contains("Try again"));
+    save(window, "st8-download-failed");
+    clickButton(window.runPage(), "Back");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("part of the download is here, and the program is not downloaded: the State panel says so"),
+           stateOf("onlyoffice")["state"].toString() == "none" && onDiskOf(stateOf("onlyoffice"), "downloads") > 0);
+    env.unset("RECIPE_STANDIN_FAIL");
+    window.showRecipe("onlyoffice");
+    settle(100);
+    expect(QStringLiteral("its State panel says part of the downloads is here, and nothing is installed"),
+           wordsOn(window).contains("Nothing is installed. Part of its downloads or an unfinished run is here."));
+    openSteps(window);
+    clickLast(page, "Clean up");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("Clean up deletes what is left: `cleanup NAME` with no kind (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 3) == QStringList({"cleanup", "levitate:onlyoffice", "--machine-events"}) && !lastChange().contains("--downloads")
+               && onDiskOf(stateOf("onlyoffice"), "downloads") == 0);
+
+    // ---- A build that did not finish: an unfinished run is left, and the page says what a build leaves.
+    env.set("RECIPE_STANDIN_FAIL", "build:krita");
+    window.showRecipe("krita");
+    openSteps(window);
+    clickLast(page, "Build");
+    waitUntilIdle(window, 30);
+    words = wordsOn(window);
+    expect(QStringLiteral("a stopped build says nothing was installed and that what was downloaded or built stays (%1)").arg(words.left(80).replace('\n', '|')),
+           window.runPage()->isVisible() && words.contains("Nothing was installed.") && words.contains("What was already downloaded or built stays")
+               && !words.contains("Nothing on this computer was changed."));
+    save(window, "st9-build-failed");
+    env.unset("RECIPE_STANDIN_FAIL");
+    clickButton(window.runPage(), "Back");
+    waitUntilIdle(window, 30);
+    window.showRecipe("krita");
+    settle(100);
+    words = wordsOn(window);
+    expect(QStringLiteral("what a stopped build left is an unfinished run, named in the State panel"),
+           onDiskOf(stateOf("krita"), "unfinished") > 0 && words.contains("unfinished run"));
+    save(window, "st10-state-unfinished-run");
+
+    // ---- The two marks on Installed: "Update" (the recipe names another version) and "Newer upstream" (only
+    // after the person asks upstream); apart, never mixed.
+    window.showInstalled("element");
+    settle(100);
+    words = wordsOn(window);
+    expect(QStringLiteral("Installed marks programs whose recipe names another version, and the rail's badge counts them (%1)").arg(window.catalog().updates.size()),
+           window.catalog().update("element") && window.catalog().update("gimp") && window.frame()->badge("installed") == window.catalog().updates.size()
+               && words.contains("Update to 1.12.4") && words.contains("can be updated now"));
+    expect(QStringLiteral("nothing is said about upstream until it is asked, and asking is a button"),
+           !window.catalog().upstreamChecked && !words.contains("upstream has") && pressable(*window.installedPage(), "Check for updates")
+               && !timesAsked({"updates", "--upstream"}));
+    save(window, "m1-installed-update-marks");
+    clickButton(window.installedPage(), "Check for updates");
+    waitUntilIdle(window, 30);
+    words = wordsOn(window);
+    expect(QStringLiteral("asking upstream is one read, with no run page and no change: only now are the upstream marks known"),
+           timesAsked({"updates", "--upstream"}) == 1 && window.installedPage()->isVisible() && !window.runPage()->isVisible()
+               && !window.changePage()->isVisible() && window.catalog().upstreamChecked);
+    expect(QStringLiteral("element has both marks, in their own columns: Update to 1.12.4 and upstream has 1.12.5"),
+           window.catalog().update("element") && window.catalog().update("element")->to == "1.12.4" && window.catalog().newerUpstream("element")
+               && window.catalog().newerUpstream("element")->latest == "1.12.5" && words.contains("Update to 1.12.4")
+               && words.contains("upstream has 1.12.5"));
+    expect(QStringLiteral("a program whose recipe is current has no upstream mark; one that names nowhere says why it could not be asked"),
+           !window.catalog().newerUpstream("thunderbird") && window.catalog().upstreamOf("gimp") && !window.catalog().upstreamOf("gimp")->error.isEmpty()
+               && !window.catalog().newerUpstream("gimp"));
+    save(window, "m2-installed-both-marks");
+    window.showRecipe("element");
+    settle(100);
+    words = wordsOn(window);
+    expect(QStringLiteral("the program page keeps them apart too: Update installs the recipe's version, Newer upstream has nothing to press"),
+           words.contains("Update: the recipe installs 1.12.4, the installed version is 1.12.3.")
+               && words.contains("Newer upstream: upstream has 1.12.5, this recipe installs 1.12.4")
+               && words.contains("Nothing to press here. Recipe never changes a recipe") && pressable(*page, "Update")
+               && !pressable(*page, "Update to 1.12.5"));
+    save(window, "m3-program-both-marks");
+    window.showRecipe("gimp");
+    settle(100);
+    words = wordsOn(window);
+    expect(QStringLiteral("a recipe that says nowhere where its newest version is says that, and offers no check"),
+           words.contains("This recipe does not say where its newest version is, so Recipe cannot look for one.")
+               && !isShown(*page, "Check for updates"));
+    save(window, "m4-program-no-upstream");
+    env.set("RECIPE_STANDIN_FAIL", "upstream");
+    window.showRecipe("element");
+    settle(100);
+    clickButton(page, "Check for updates");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("when upstream cannot be asked the status line says so, the page stays and the earlier answer stands (%1)").arg(window.frame()->statusText().left(60)),
+           window.frame()->statusText().contains("Upstream could not be asked") && page->isVisible() && !window.runPage()->isVisible()
+               && window.catalog().newerUpstream("element"));
+    save(window, "m5-upstream-check-failed");
+    env.unset("RECIPE_STANDIN_FAIL");
+
+    // ---- Storage: one total and every kind. First give the store something of each: a download, a build, a
+    // kept program (the unfinished run of Krita is there already).
+    window.runStep("onlyoffice", Place::Computer, "download");
+    waitUntilIdle(window, 30);
+    window.runStep("htop", Place::Computer, "build");
+    waitUntilIdle(window, 30);
+    window.showRecipe("mpv");
+    openSteps(window);
+    if (QCheckBox *box = keepBoxOf(*page))
+        box->setChecked(true);
+    settle(100);
+    window.runStep("mpv", Place::Computer, "install");
+    waitUntilIdle(window, 30);
+    const QJsonObject all = answerOf({"storage", "--json"});
+    auto kindBytes = [&all](const char *kind) {
+        for (const QJsonValue &each : all["kinds"].toArray())
+            if (each.toObject()["kind"] == QLatin1String(kind))
+                return each.toObject()["bytes"].toInteger();
+        return qint64(-1);
+    };
+    window.showStorage();
+    settle(150);
+    words = wordsOn(window);
+    expect(QStringLiteral("Storage says one total, what Recipe holds in all (%1)").arg(bytesText(all["total_bytes"].toInteger())),
+           window.frame()->selected() == "storage" && words.contains(QStringLiteral("Recipe holds %1 on this computer").arg(bytesText(all["total_bytes"].toInteger()))));
+    expect(QStringLiteral("and a line for each of the seven kinds, with its size"),
+           words.contains("Installed programs") && words.contains("Downloaded") && words.contains("Built") && words.contains("Kept by choice")
+               && words.contains("Unfinished runs") && words.contains("Build image") && words.contains("Logs")
+               && kindBytes("downloaded") > 0 && kindBytes("built") > 0 && kindBytes("kept") > 0 && kindBytes("unfinished") > 0
+               && words.contains(bytesText(kindBytes("downloaded"))) && words.contains(bytesText(kindBytes("kept"))));
+    expect(QStringLiteral("each program under its kind is named, with a Remove of its own"),
+           words.contains("OnlyOffice") && words.contains("mpv") && (words.contains("Krita") || words.contains("krita")));
+    expect(QStringLiteral("the build image that came with the system cannot be removed, the logs can, and everything not installed can be cleaned up"),
+           pressable(*window.storagePage(), "Clean up everything not installed") && pressable(*window.storagePage(), "Show what is installed")
+               && !all["kinds"].toArray()[5].toObject()["removable"].toBool() && all["kinds"].toArray()[6].toObject()["removable"].toBool());
+    save(window, "sg1-storage-every-kind");
+
+    // ---- "Clean up everything not installed": every program's downloads and build material, the installed stay.
+    const qint64 installedBefore = kindBytes("installed");
+    clickButton(window.storagePage(), "Clean up everything not installed");
+    waitUntilIdle(window, 30);
+    const QJsonObject after = answerOf({"storage", "--json"});
+    auto afterBytes = [&after](const char *kind) {
+        for (const QJsonValue &each : after["kinds"].toArray())
+            if (each.toObject()["kind"] == QLatin1String(kind))
+                return each.toObject()["bytes"].toInteger();
+        return qint64(-1);
+    };
+    expect(QStringLiteral("it asks `cleanup`, for no program and no kind in particular (%1)").arg(lastChange().join(' ')),
+           lastChange().mid(0, 2) == QStringList({"cleanup", "--machine-events"}) && !lastChange().contains("--downloads") && !lastChange().contains("--build"));
+    expect(QStringLiteral("downloads, builds, kept material and unfinished runs are gone; what is installed is not touched"),
+           afterBytes("downloaded") == 0 && afterBytes("built") == 0 && afterBytes("kept") == 0 && afterBytes("unfinished") == 0
+               && afterBytes("installed") == installedBefore && window.catalog().installedItem("mpv"));
+    expect(QStringLiteral("the keep option of mpv stays on: the next install keeps again"), stateOf("mpv")["keep"].toBool());
+    window.showStorage();
+    settle(150);
+    expect(QStringLiteral("Storage is drawn again with nothing left to clean up: the button cannot be pressed"),
+           !pressable(*window.storagePage(), "Clean up everything not installed") && window.storagePage()->isVisible());
+    save(window, "sg2-storage-after-clean-up");
+
+    // ---- The logs have a Remove of their own (`cleanup --logs`).
+    expect(QStringLiteral("the logs are held, and their Remove can be pressed"), afterBytes("logs") > 0 && pressable(*window.storagePage(), "Remove"));
+    clickButton(window.storagePage(), "Remove");
+    waitUntilIdle(window, 30);
+    expect(QStringLiteral("it asks `cleanup --logs`, and the logs are gone; the image that came with the system was not asked for (%1)").arg(lastChange().join(' ')),
+           lastChange().contains("cleanup") && lastChange().contains("--logs") && answerOf({"storage", "--json"})["kinds"].toArray()[6].toObject()["bytes"].toInteger() == 0
+               && !timesAsked({"runtime", "remove"}));
+    window.showStorage();
+    settle(150);
+    save(window, "sg3-storage-logs-removed");
     window.showBrowse();
     settle(100);
 }
@@ -1563,9 +1985,9 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
             out << (holds ? "same: " : "DIFFERENT: ") << what << "\n";
             ok &= holds;
         };
-        out << "recipe storage: active " << storage["active_bytes"].toInteger() << "\n";
-        check(QStringLiteral("Storage shows what is installed takes %1").arg(bytesText(storage["active_bytes"].toInteger())),
-              shown.contains(bytesText(storage["active_bytes"].toInteger())));
+        out << "recipe storage: total " << storage["total_bytes"].toInteger() << "\n";
+        check(QStringLiteral("Storage shows what Recipe holds, %1 in all").arg(bytesText(storage["total_bytes"].toInteger())),
+              shown.contains(bytesText(storage["total_bytes"].toInteger())));
         out << "recipe history: " << history.size() << " entries, newest " << history.first().toObject()["what"].toString() << "\n";
         check(QStringLiteral("the history lists %1 entries, newest first (%2)").arg(history.size()).arg(lines.join(" | ")),
               lines.size() == history.size());
@@ -1742,7 +2164,7 @@ int takeShots(Window &window, const QString &folder)
     }
 
     window.showInstalled("element");
-    ok &= save(window, "7-updates");
+    ok &= save(window, "7-installed-with-update-mark");
     {
         QTextStream said(stdout);
         auto hold = [&](const QString &what, bool holds) {
@@ -1839,6 +2261,7 @@ int takeShots(Window &window, const QString &folder)
     sourceShots(window, saved, held);
     ownRecipesShots(window, folder, saved, held);
     availabilityShots(window, saved, held);
+    stepShots(folder, saved, held);
     placesShots(folder, saved, held);
     out << (ok ? "all flows ended where they should\n" : "some flows did not end where they should\n");
     return ok ? 0 : 1;

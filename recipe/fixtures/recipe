@@ -2,8 +2,31 @@
 """A stand-in for the `recipe` command, for running recipe-gui from a checkout.
 
 It answers the commands the front end uses (see ../README.md, "What the front
-end asks of recipe") from catalog.json and a small state file, and plays an
-install as a stream of events. Nothing is downloaded, built or installed.
+end asks of recipe") from catalog.json and small state files, and plays the steps as a
+stream of events. Nothing is downloaded, built or installed. It speaks the shapes of
+tools/recipe/docs/recipe-format.md, section 8, and the commands of section 6.3:
+
+  list --json                   every recipe, with `state`, `installed_version`, `keep`, `steps`,
+                                `functions`, `upstream`
+  installed --json              the installed programs, with `keep`, `on_disk` and the `update` mark
+  updates --json                what `update` would change, from the recipes as fetched
+  updates --upstream --json [NAME...]   also asks "upstream" (catalog.json `upstream_latest`); the
+                                `upstream` list is the "Newer upstream" mark, apart from `updates`
+  storage --json                all seven kinds, each with its `programs`
+  state NAME --json             the program's state and what it holds on disk
+  download|build|install|update NAME [--keep|--no-keep]   the single steps; install and update do
+                                every step still missing, then cleanup unless the keep option is on
+  remove NAME [--keep]          the installed files and what is left of its material (`--keep`: only
+                                the installed files)
+  cleanup [NAME] [--downloads|--build]   deletes downloads and build material; `cleanup --logs`
+  runtime remove                deletes the cached build image (not the one that came with the system)
+  history --json                what was done to the store
+
+Every run prints its result (section 8.6) on standard output, and in `--json-output FILE`; with
+`--machine-events` the events (`plan`, `step`, `fetch`, `progress`, `done`, `failed`) go to standard error.
+What each program holds (downloads, build material, an unfinished run, the keep option) is kept in
+`<store>.material.json`; a download is `max(network_max_bytes / 4, 1 MiB)` bytes, the build material
+two or three times that.
 
 It tells the places software can be in apart the way the real `recipe` does
 (tools/recipe, `system_route` and `default_package_root`):
@@ -43,15 +66,16 @@ Environment:
   RECIPE_STANDIN_INFO     nofile: `recipe info` does not print the Recipe: line
   RECIPE_STANDIN_SLOW_READS  seconds `list`, `installed` and `updates` take before they answer
   RECIPE_STANDIN_SPEED    time factor for an install; 0 runs it at once (default 1)
-  RECIPE_STANDIN_STOP_AT  "name:hook": stay in the middle of that step forever
+  RECIPE_STANDIN_STOP_AT  "name:step": stay in the middle of that step (build) forever
   RECIPE_STANDIN_REFUSE_NEW  a recipe whose install (not yet installed) the sandbox refuses,
                           as it refuses Element's update
   RECIPE_STANDIN_FIXED    "element": Element's update is no longer refused (its source fixed it)
   RECIPE_STANDIN_STOP_AT  also "name:remove": stay in the middle of that short change forever; so do
                           "refresh:refresh", "source:add" and "source:remove"
-  RECIPE_STANDIN_FAIL     "KIND:NAME" or "KIND": that short change (remove, refresh,
-                          source-add, source-remove) fails with plain output lines and recipe's own message, as
-                          a store that cannot be written to does
+  RECIPE_STANDIN_FAIL     "KIND:NAME" or "KIND": that change (remove, refresh, source-add, source-remove,
+                          cleanup, cleanup-logs, upstream) or step (download, build) fails with plain output
+                          lines and recipe's own message, as a store that cannot be written to does. A failed
+                          download leaves part of the download, a failed build an unfinished run
 
 It keeps a profile for each store (`profile` in its answers, `<store>/profile`; for the person's own store
 `<state>/me/profile`): `bin/NAME` for every program an installed package lists, and `share/applications/NAME.desktop`
@@ -94,6 +118,7 @@ STOP_AT = os.environ.get("RECIPE_STANDIN_STOP_AT", "")
 FAIL = os.environ.get("RECIPE_STANDIN_FAIL", "")
 PROFILE = STORE_ROOT + "/profile"  # main() sets the profile of the store the arguments name
 MACHINE_EVENTS = False
+JSON_OUTPUT = None
 
 
 def installed():
@@ -378,10 +403,18 @@ def breaks(kind, name=None):
     if FAIL not in (kind, "%s:%s" % (kind, name)):
         return
     sys.stderr.write("recipe: %s%s\n" % (kind.replace("-", " "), " " + name if name else ""))
-    reason = ("cannot switch the active profile of %s: Permission denied (os error 13)" % os.path.dirname(PROFILE)
-              if name else "could not fetch the list of levitate: connection timed out")
+    if kind == "cleanup":
+        reason = "cannot delete the material of %s: Permission denied (os error 13)" % name
+    elif kind == "cleanup-logs":
+        reason = "cannot delete the logs in %s: Permission denied (os error 13)" % os.path.join(STATE_DIR, "logs")
+    elif kind == "upstream":
+        reason = "could not ask upstream for the newest versions: connection timed out"
+    elif name:
+        reason = "cannot switch the active profile of %s: Permission denied (os error 13)" % os.path.dirname(PROFILE)
+    else:
+        reason = "could not fetch the list of levitate: connection timed out"
     if MACHINE_EVENTS and name:
-        emit(event="failed", recipe=name, hook=None, reason=reason)
+        emit(event="failed", recipe=name, step="cleanup" if kind == "cleanup" else None, reason=reason)
     else:
         sys.stderr.write("Error: %s\n" % reason)
     sys.exit(1)
@@ -403,121 +436,416 @@ def stop_here(name, hook):
             time.sleep(3600)
 
 
-def steps_of(item):
-    steps = ["acquire"] if item.get("sources") else []
-    steps += [hook for hook in ("build", "install") if hook in item["hooks"]]
-    return steps
+# ---------------------------------------------------------------- the steps and what a program holds on disk
+# A program is in one of four states (recipe-format.md, 6.2): none, downloaded, built, installed. The stand-in
+# keeps, beside each store, what each program holds besides its installed files (`<store>.material.json`):
+# downloads, build material, an unfinished run's saved state, and the keep option.
+
+COMMAND_STEPS = {"download": ["download"], "build": ["download", "build"],
+                 "install": ["download", "build", "install", "cleanup"],
+                 "update": ["download", "build", "install", "cleanup"]}
+MAT = None  # the material of the run that is going, flushed before the run ends
 
 
-def hook_event(name, hook, status, msg):
-    """One lifecycle event as the real recipe sends it."""
-    emit(event="recipe-hook", recipe=name, hook=hook, status=status, msg=msg)
+def material_path():
+    return STATE + ".material.json"
 
 
-def play(item, refuse=None):
+def load_material():
+    return read(material_path(), {})
+
+
+def flush():
+    if MAT is not None:
+        write(material_path(), {name: each for name, each in MAT.items() if any(each.values())})
+
+
+def held(name, material=None):
+    material = load_material() if material is None else material
+    each = material.get(name) or {}
+    return {"downloads": each.get("downloads", 0), "downloaded": each.get("downloaded", False),
+            "build": each.get("build", 0), "built": each.get("built", False),
+            "unfinished": each.get("unfinished", 0), "keep": each.get("keep", False)}
+
+
+def on_disk(name, material=None):
+    each = held(name, material)
+    return {"downloads": each["downloads"], "build": each["build"], "unfinished": each["unfinished"]}
+
+
+def state_of(name, items=None, material=None):
+    items = installed() if items is None else items
+    if any(each["name"] == name for each in items):
+        return "installed"
+    each = held(name, material)
+    return "built" if each["built"] else "downloaded" if each["downloaded"] else "none"
+
+
+def download_bytes(item):
+    return max(item["needs"]["network_max_bytes"] // 4, 1 << 20) if item.get("sources") else 0
+
+
+def build_bytes(item):
+    return download_bytes(item) * (3 if "build" in item["steps"] else 2)
+
+
+def extras():
+    """The two kinds that belong to no program: the logs and the cached build image. On the person's own store
+    the image was fetched for them; on the computer's it came with the system."""
+    mine = STATE == ME
+    return read(STATE + ".extras.json", {"logs": 12659175 if mine else 2097152, "image": 1363148800,
+                                          "system_image": not mine})
+
+
+def save_extras(value):
+    write(STATE + ".extras.json", value)
+
+
+def update_mark(item):
+    """`installed --json` `update`: the recipe as last fetched names another version. Nothing is fetched."""
+    found = next((each for each in recipes() if each["name"] == item["name"]), None)
+    if found and found["version"] != item["version"]:
+        return {"to": found["version"], "reason": "version", "source": found["source"]}
+    return None
+
+
+def installed_view():
+    material = load_material()
+    packages = []
+    for item in installed():
+        made = {key: item[key] for key in ("name", "version", "recipe", "source", "commit", "installed_on", "size_bytes")
+                if key in item}
+        made.update(keep=held(item["name"], material)["keep"], on_disk=on_disk(item["name"], material),
+                    update=update_mark(item))
+        packages.append(made)
+    return {"schema_version": 1, "profile": PROFILE, "packages": packages}
+
+
+def storage():
+    """`recipe storage --json`: every kind, in order, each byte counted once."""
+    items = installed()
+    material = load_material()
+    names = {each["name"] for each in items}
+    other = extras()
+    kinds = []
+
+    def kind(name, programs, remove, path=None, removable=True, bytes_=None):
+        total = sum(size for _, size in programs) if bytes_ is None else bytes_
+        kinds.append({"kind": name, "bytes": total, "removable": removable, "remove": remove if removable else None,
+                      "programs": [{"name": each, "bytes": size} for each, size in programs if size > 0], "path": path})
+
+    kind("installed", [(each["name"], each.get("size_bytes") or 0) for each in items], "recipe remove NAME")
+    kind("downloaded", [(name, each["downloads"]) for name, each in sorted(material.items()) if name not in names],
+         "recipe cleanup NAME --downloads")
+    kind("built", [(name, each["build"]) for name, each in sorted(material.items()) if name not in names],
+         "recipe cleanup NAME --build")
+    kind("kept", [(name, each["downloads"] + each["build"]) for name, each in sorted(material.items()) if name in names],
+         "recipe cleanup NAME")
+    kind("unfinished", [(name, each["unfinished"]) for name, each in sorted(material.items())],
+         "recipe cleanup NAME --build")
+    kind("build_image", [], "recipe runtime remove", os.path.join(os.path.dirname(STATE_DIR), "cache", "recipe", "images"),
+         not other["system_image"], other["image"])
+    kind("logs", [], "recipe cleanup --logs", os.path.join(STATE_DIR, "logs"), True, other["logs"])
+    return {"schema_version": 1, "profile": PROFILE, "state_dir": STATE_DIR,
+            "total_bytes": sum(each["bytes"] for each in kinds), "kinds": kinds}
+
+
+def state_answer(name):
+    item = next((each for each in recipes() if each["name"] == name), None)
+    current = next((each for each in installed() if each["name"] == name), None)
+    if not item and not current:
+        fail("no recipe named %s" % name)
+    each = held(name)
+    return {"schema_version": 1, "name": name, "version": item["version"] if item else current["version"],
+            "state": state_of(name), "installed_version": current["version"] if current else None,
+            "keep": each["keep"], "steps": item["steps"] if item else ["install", "cleanup"],
+            "on_disk": on_disk(name)}
+
+
+def step_event(name, step, status):
+    """One step event as the real recipe sends it (recipe-format.md, 8.7)."""
+    emit(event="step", recipe=name, step=step, status=status)
+
+
+def stop_failed(name, step, reason, refuse=None):
+    """A step that does not finish: its `step` and `failed` events, what it left behind kept, the exit."""
+    step_event(name, step, "failed")
+    event = dict(event="failed", recipe=name, step=step, reason=reason)
+    if refuse:
+        event["refused"] = refuse
+    emit(**event)
+    flush()
+    linger()
+    sys.exit(1)
+
+
+def play_step(item, step, refuse=None):
     name = item["name"]
+    if step == "download":
+        sys.stderr.write("recipe: fetching %s %s from %s\n" % (name, item["version"], next(iter(item["sources"]))))
+        total = download_bytes(item)
+        for part in range(1, 9):
+            if part == 3 and refuse:
+                # `refused` is asked for: the real recipe names the step and its own message only.
+                stop_failed(name, step, "connection refused by the sandbox",
+                            {"endpoint": refuse, "declared": item["needs"]["network"]})
+            if part == 3 and FAIL in ("download", "download:%s" % name):
+                if MAT is not None:
+                    MAT.setdefault(name, {})["downloads"] = total * 2 // 8
+                stop_failed(name, step, "could not fetch %s: connection timed out" % next(iter(item["sources"])))
+            emit(event="fetch", recipe=name, source=next(iter(item["sources"])), bytes=total * part // 8, total=total)
+            pause(0.25)
+    elif step == "build":
+        count = 24 if item["about"]["kind"] == "library" else 60
+        for done in range(1, count + 1):
+            emit(event="output", recipe=name, line="[%d/%d] Compiling C object %s.p/src_part%03d.c.o" % (done, count, name, done))
+            emit(event="progress", recipe=name, done=done, total=count)
+            if done == count // 3 and FAIL in ("build", "build:%s" % name):
+                if MAT is not None:
+                    MAT.setdefault(name, {})["unfinished"] = build_bytes(item) // 2
+                stop_failed(name, step, "the compiler was stopped: out of memory")
+            if done == count * 2 // 3:
+                stop_here(name, "build")
+            pause(0.08)
+    elif step == "cleanup":
+        emit(event="say", recipe=name, text="Deleting what is left of the downloads and build")
+        pause(0.2)
+    else:
+        emit(event="say", recipe=name, text="Putting the files in place")
+        pause(0.5)
+
+
+def play(item, steps=None, refuse=None, after=None):
+    """The steps of one recipe, with the events of each. `steps`: the ones to do (default: all it has)."""
+    name = item["name"]
+    steps = item["steps"] if steps is None else steps
     # Each recipe says which of its steps it needs this time, once its checks have run.
-    emit(event="plan", recipe=name, steps=steps_of(item))
-    for hook in steps_of(item):
-        hook_event(name, hook, "running", "executing recipe hook")
-        if hook == "acquire":
-            sys.stderr.write("recipe: fetching %s %s from %s\n" % (name, item["version"], next(iter(item["sources"]))))
-            total = max(item["needs"]["network_max_bytes"] // 4, 1 << 20)
-            for part in range(1, 9):
-                if refuse and part == 3:
-                    hook_event(name, hook, "failed", "connection refused by the sandbox")
-                    # `refused` is asked for: the real recipe names the step and its own message only.
-                    emit(event="failed", recipe=name, hook=hook,
-                         reason="connection refused by the sandbox",
-                         refused={"endpoint": refuse, "declared": item["needs"]["network"]})
-                    linger()
-                    sys.exit(1)
-                emit(event="fetch", recipe=name, source=next(iter(item["sources"])),
-                     bytes=total * part // 8, total=total)
-                pause(0.25)
-        elif hook == "build":
-            count = 24 if item["about"]["kind"] == "library" else 60
-            for done in range(1, count + 1):
-                emit(event="output", recipe=name,
-                     line="[%d/%d] Compiling C object %s.p/src_part%03d.c.o" % (done, count, name, done))
-                emit(event="progress", recipe=name, done=done, total=count)
-                if done == count * 2 // 3:
-                    stop_here(name, hook)
-                pause(0.08)
-        else:
-            emit(event="say", recipe=name, text="Putting the files in place")
-            pause(0.5)
-        hook_event(name, hook, "success", "step finished")
+    emit(event="plan", recipe=name, steps=steps)
+    for step in steps:
+        step_event(name, step, "running")
+        play_step(item, step, refuse)
+        step_event(name, step, "done")
+        if after:
+            after(step)
 
 
-def install(name, update_only=False):
+def contract_answer(item):
+    return {"digest": "sha256:" + ("5d1c%s" % item["name"]).ljust(64, "0")[:64]}
+
+
+def finish(answer):
+    """The finished run (recipe-format.md, 8.6): on standard output, and in `--json-output FILE` when named."""
+    text = json.dumps(answer)
+    print(text)
+    sys.stdout.flush()
+    if JSON_OUTPUT:
+        with open(JSON_OUTPUT, "w") as out:
+            out.write(text + "\n")
+
+
+def run_answer(operation, item, **fields):
+    answer = {"schema_version": 1, "operation": operation, "name": item["name"] if item else "",
+              "version": item["version"] if item else "", "state": "none", "steps": [], "outputs": {},
+              "activation": None, "kept": False, "freed_bytes": 0, "dependencies": [],
+              "contract": contract_answer(item) if item else None, "network_usage": {"complete": True, "bytes": 0}}
+    answer.update(fields)
+    return answer
+
+
+def run_command(command, name, keep_flag=None):
+    """`download`, `build`, `install` or `update` of one program, with the steps still missing, in order."""
+    global MAT
     item = recipe(name)
     items = installed()
     current = next((each for each in items if each["name"] == name), None)
-    order = [recipe(dep) for dep in item["build_deps"]] + [item]
+    if command == "update" and not current:
+        fail("%s is not installed" % name)
+    MAT = load_material()
+    mine = MAT.setdefault(name, {})
+    held_now = held(name, MAT)
+    keep = held_now["keep"] if keep_flag is None else keep_flag
+    mine["keep"] = keep
+    wanted = [step for step in COMMAND_STEPS[command] if step in item["steps"]]
+    if keep and "cleanup" in wanted:
+        wanted.remove("cleanup")  # the keep option: the material stays
     # The real recipe says where it keeps the run's log, in a plain line, as the run begins.
     logs = os.path.join(STATE_DIR, "logs", "%s-%d" % (name, int(time.time() * 1000)))
     os.makedirs(logs, exist_ok=True)
     open(os.path.join(logs, "worker.log"), "w").write("the stand-in's worker log\n")
     sys.stderr.write("recipe: diagnostics: %s\n" % logs)
-    emit(event="plan", recipes=[{"name": each["name"], "steps": steps_of(each)} for each in order])
+    # What a compile needs first: the build dependencies, each with the steps it has.
+    compiling = "build" in wanted and not held_now["built"]
+    needed = [recipe(dep) for dep in item["build_deps"]] if compiling else []
+    emit(event="plan", recipes=[{"name": each["name"], "steps": each["steps"]} for each in needed]
+         + [{"name": name, "steps": wanted}])
     # The sample story: the newer Element recipe reaches for a host it has not declared.
     # The real `recipe` reports the numeric address Ginux's audit names, never a host name.
     # RECIPE_STANDIN_REFUSE_NEW names a recipe whose first install is refused the same way.
     # RECIPE_STANDIN_FIXED=element: its source has since published a recipe that does not.
-    refuse = ("203.0.113.9:443" if (name == "element" and current and os.environ.get("RECIPE_STANDIN_FIXED") != name)
-              or (not current and name == os.environ.get("RECIPE_STANDIN_REFUSE_NEW")) else None)
-    for each in order:
-        play(each, refuse if each is item else None)
-    about = item["about"].get("adds", {})
-    entry = {
-        "name": name, "version": item["version"],
-        "recipe": "/usr/share/recipe/recipes/%s.rhai" % name,
-        "files": ["bin/" + program for program in about.get("programs", [])]
-                 + ["share/applications/%s.desktop" % name for _ in about.get("menu", [])[:1]],
-        "installed_on": int(time.time()),
-        "size_bytes": 62914560,
-    }
-    if remote_source(name):
-        entry["source"] = remote_source(name)
-        entry["commit"] = next(each["commit"] for each in listed_sources() if each["name"] == entry["source"])
-    if current:
-        entry["size_bytes"] = current["size_bytes"]
-        items.remove(current)
-    items.append(entry)
-    sync_profile([entry])
-    save(sorted(items, key=lambda each: each["name"]))
-    record("update" if update_only else "install", name, current["version"] if current else None, item["version"],
-           remote_source(name))
+    refuse = ("203.0.113.9:443" if (name == "element" and current and command in ("install", "update")
+                                    and os.environ.get("RECIPE_STANDIN_FIXED") != name)
+              or (not current and command in ("install", "update") and name == os.environ.get("RECIPE_STANDIN_REFUSE_NEW"))
+              else None)
+    dependencies = []
+    for each in needed:
+        play(each)
+        dependencies.append({"name": each["name"], "state": "none",
+                             "steps": [{"step": step, "status": "done"} for step in each["steps"]]})
+    done_steps = []
+    freed = 0
+
+    def after(step):
+        nonlocal freed
+        if step == "download":
+            mine.update(downloads=download_bytes(item), downloaded=True)
+        elif step == "build":
+            mine.update(build=build_bytes(item), built=True, unfinished=0)
+        elif step == "cleanup":
+            freed = mine.get("downloads", 0) + mine.get("build", 0) + mine.get("unfinished", 0)
+            mine.update(downloads=0, downloaded=False, build=0, built=False, unfinished=0)
+        flush()
+
+    for step in COMMAND_STEPS[command]:
+        if step not in item["steps"]:
+            done_steps.append({"step": step, "status": "none"})
+            continue
+        if step not in wanted:
+            continue
+        already = (step == "download" and (held_now["downloaded"] or held_now["built"])) or (step == "build" and held_now["built"])
+        if already:
+            step_event(name, step, "already")
+            done_steps.append({"step": step, "status": "already"})
+            continue
+        step_event(name, step, "running")
+        play_step(item, step, refuse if step == "download" else None)
+        if step == "install":
+            about = item["about"].get("adds", {})
+            entry = {
+                "name": name, "version": item["version"],
+                "recipe": "/usr/share/recipe/recipes/%s.rhai" % name,
+                "files": ["bin/" + program for program in about.get("programs", [])]
+                         + ["share/applications/%s.desktop" % name for _ in about.get("menu", [])[:1]],
+                "installed_on": int(time.time()),
+                "size_bytes": 62914560,
+            }
+            if remote_source(name):
+                entry["source"] = remote_source(name)
+                entry["commit"] = next(each["commit"] for each in listed_sources() if each["name"] == entry["source"])
+            if current:
+                entry["size_bytes"] = current["size_bytes"]
+                items.remove(current)
+            items.append(entry)
+            sync_profile([entry])
+            save(sorted(items, key=lambda each: each["name"]))
+            record("update" if command == "update" else "install", name, current["version"] if current else None,
+                   item["version"], remote_source(name))
+        step_event(name, step, "done")
+        after(step)
+        done_steps.append({"step": step, "status": "done"})
+    flush()
+    ending = state_of(name, installed(), MAT)
+    activation = {"profile": PROFILE, "bin": PROFILE + "/bin"} if command in ("install", "update") else None
+    outputs = ({"package": os.path.join(os.path.dirname(PROFILE), "store", name)}
+               if command in ("build", "install", "update") and "install" in item["steps"] else {})
     emit(event="done", recipe=name)
+    finish(run_answer(command, item, state=ending, steps=done_steps, outputs=outputs, activation=activation,
+                      kept=keep and ending == "installed" and any(held(name, MAT)[key] for key in ("downloads", "build")),
+                      freed_bytes=freed, dependencies=dependencies,
+                      network_usage={"complete": True, "bytes": download_bytes(item) if any(
+                          each["status"] == "done" and each["step"] == "download" for each in done_steps) else 0}))
     linger()
 
 
-def storage():
-    """What `recipe storage` says: what is installed."""
-    items = installed()
-    answer = {"schema_version": 1, "active_bytes": sum(each.get("size_bytes") or 0 for each in items),
-              "profile": PROFILE}
-    print(json.dumps(answer))
-
-
-def remove(name):
+def remove(name, keep_material=False):
+    """`recipe remove NAME`: the installed files, then what is left of its downloads and build; with `--keep`
+    only the installed program."""
+    global MAT
     items = installed()
     current = next((each for each in items if each["name"] == name), None)
-    if not current:
+    MAT = load_material()
+    left = held(name, MAT)
+    leftovers = left["downloads"] + left["build"] + left["unfinished"]
+    if not current and not (leftovers or left["downloaded"] or left["built"]):
         fail("%s is not installed" % name)
-    sys.stderr.write("recipe: removing %s %s\n" % (name, current["version"]))
+    sys.stderr.write("recipe: removing %s %s\n" % (name, current["version"] if current else "(only what is left of it)"))
     stop_here(name, "remove")
     breaks("remove", name)
     pause(0.4)
-    items.remove(current)
-    unsync_profile(current)
-    save(items)
-    record("remove", name, current["version"], None, remote_source(name))
+    freed = current["size_bytes"] if current else 0
+    if current:
+        items.remove(current)
+        unsync_profile(current)
+        save(items)
+        record("remove", name, current["version"], None, remote_source(name))
+    if not keep_material:
+        freed += leftovers
+        MAT.pop(name, None)  # the keep option is forgotten with it
+    flush()
     emit(event="done", recipe=name)
+    item = next((each for each in recipes() if each["name"] == name), None)
+    answer = run_answer("remove", item or {"name": name, "version": current["version"] if current else ""},
+                        state=state_of(name, items, MAT), freed_bytes=freed,
+                        steps=[{"step": "cleanup", "status": "none" if keep_material else "done"}])
+    answer["contract"] = None
+    finish(answer)
 
 
-def updates():
+def cleanup(name, which=None):
+    """`recipe cleanup [NAME] [--downloads|--build]`: the downloads and build material; the program stays."""
+    global MAT
+    MAT = load_material()
+    targets = [name] if name else sorted(MAT)
+    if name and name not in MAT and not any(each["name"] == name for each in recipes() + installed()):
+        fail("no recipe named %s" % name)
+    emit(event="plan", recipes=[{"name": each, "steps": ["cleanup"]} for each in targets])
+    freed = 0
+    for each in targets:
+        breaks("cleanup", each)
+        step_event(each, "cleanup", "running")
+        mine = MAT.setdefault(each, {})
+        if which in (None, "downloads"):
+            freed += mine.get("downloads", 0)
+            mine.update(downloads=0, downloaded=False)
+        if which in (None, "build"):
+            freed += mine.get("build", 0) + mine.get("unfinished", 0)
+            mine.update(build=0, built=False, unfinished=0)
+        pause(0.2)
+        step_event(each, "cleanup", "done")
+    flush()
+    emit(event="done", recipe=name or None)
+    item = next((each for each in recipes() if each["name"] == name), None) if name else None
+    answer = run_answer("cleanup", item or {"name": name or "", "version": ""},
+                        state=state_of(name, installed(), MAT) if name else "none", freed_bytes=freed,
+                        steps=[{"step": "cleanup", "status": "done"}])
+    answer["contract"] = None
+    finish(answer)
+
+
+def cleanup_logs():
+    other = extras()
+    freed, other["logs"] = other["logs"], 0
+    breaks("cleanup-logs")
+    save_extras(other)
+    finish(run_answer("cleanup", None, freed_bytes=freed, steps=[{"step": "cleanup", "status": "done"}]))
+
+
+def runtime_remove():
+    other = extras()
+    if other["system_image"]:
+        fail("the build image came with the system; Recipe cannot remove it")
+    freed, other["image"] = other["image"], 0
+    pause(0.4)
+    save_extras(other)
+    finish(run_answer("cleanup", None, freed_bytes=freed, steps=[{"step": "cleanup", "status": "done"}]))
+
+
+def version_key(text):
+    return [int(part) for part in "".join(ch if ch.isdigit() else "." for ch in text).split(".") if part]
+
+
+def updates(upstream=None):
+    """`recipe updates --json`: what `recipe update` would change, from the recipes as last fetched. With
+    `--upstream` (optionally with names) Recipe also asks upstream; the two marks are separate lists."""
     found = []
     for each in installed():
         if not any(item["name"] == each["name"] for item in recipes()):
@@ -526,9 +854,35 @@ def updates():
         if newer != each["version"]:
             # As the real `recipe updates`: only the fields of NEEDS that differ,
             # and null where nothing was recorded at install.
-            found.append({"name": each["name"], "source": "levitate", "from": each["version"], "to": newer,
+            found.append({"name": each["name"], "source": recipes_source(each["name"]), "from": each["version"], "to": newer,
                           "reason": "version", "changes": CATALOG["changes"].get(each["name"])})
-    return found
+    answer = {"schema_version": 1, "upstream_checked": upstream is not None, "updates": found,
+              "problems": [{"name": each["name"], "problem": "no recipe for it is in the collection or the sources any more"}
+                           for each in installed() if not any(item["name"] == each["name"] for item in recipes())]}
+    if upstream is not None:
+        breaks("upstream")
+        pause(0.8)
+        names = upstream or [each["name"] for each in installed()]
+        asked = []
+        for name in names:
+            item = next((each for each in recipes() if each["name"] == name.split(":", 1)[-1]), None)
+            if not item:
+                continue
+            current = next((each for each in installed() if each["name"] == item["name"]), None)
+            declared = item.get("upstream")
+            latest = CATALOG["upstream_latest"].get(item["name"]) if declared else None
+            error = None
+            if not declared:
+                error = "the recipe says nowhere where its newest version is"
+            elif latest is None:
+                error = "upstream answered with no version"
+            asked.append({"name": item["name"], "installed": current["version"] if current else None,
+                          "recipe_version": item["version"], "latest": latest,
+                          "newer": bool(latest) and version_key(latest) > version_key(item["version"]),
+                          "how": None if not declared else "github" if declared.get("github") else "latest()",
+                          "error": error})
+        answer["upstream"] = asked
+    return answer
 
 
 # ---------------------------------------------------------------- the system route
@@ -585,13 +939,13 @@ def play_effects(changed=True):
         return {"status": "unchanged"}
     sys.stderr.write("Rebuilding the root's caches with //usr/lib/recipe/effects.rhai...\n")
     emit(event="plan", recipes=[{"name": "effects", "steps": ["install"]}])
-    hook_event("effects", "install", "running", "executing recipe hook")
+    step_event("effects", "install", "running")
     pause(0.6)
     if EFFECTS == "failed":
-        hook_event("effects", "install", "failed", EFFECTS_ERROR)
-        emit(event="failed", recipe="effects", hook="install", reason=EFFECTS_ERROR)
+        step_event("effects", "install", "failed")
+        emit(event="failed", recipe="effects", step="install", reason=EFFECTS_ERROR)
         return {"status": "failed", "recipe": "usr/lib/recipe/effects.rhai", "error": EFFECTS_ERROR}
-    hook_event("effects", "install", "success", "step finished")
+    step_event("effects", "install", "done")
     emit(event="done", recipe="effects")
     return {"status": "done", "recipe": "usr/lib/recipe/effects.rhai", "package": "system-effects", "files": 212}
 
@@ -622,7 +976,7 @@ def system_change(action, name):
         # What it needs at run time and the other root lacks is written with it.
         needed = [recipe(dep) for dep in item["deps"] if dep not in other]
         order = needed + [recipe(dep) for dep in item["build_deps"]] + [item]
-        emit(event="plan", recipes=[{"name": each["name"], "steps": steps_of(each)} for each in order])
+        emit(event="plan", recipes=[{"name": each["name"], "steps": each["steps"]} for each in order])
         for each in order:
             play(each)
         # As the real recipe: the producer's own last event comes before the other root is written.
@@ -642,7 +996,8 @@ def system_change(action, name):
     print(json.dumps({"action": action, "package": name, "packages": written,
                       "other_root": state["other"]["root"], "other_mount": OTHER_MOUNT,
                       "running_root": state["booted"]["root"], "active_now": False,
-                      "in_other_root": name in other, "effects": effects}))
+                      "in_other_root": name in other, "effects": effects,
+                      "state": "none" if action == "remove" else "installed", "freed_bytes": 0}))
     end_system_change(effects)
 
 
@@ -675,7 +1030,7 @@ def one_root_change(action, name):
         present = [dep for dep in item["deps"] if dep in names]
         needed = [recipe(dep) for dep in item["deps"] if dep not in names]
         order = needed + [recipe(dep) for dep in item["build_deps"]] + [item]
-        emit(event="plan", recipes=[{"name": each["name"], "steps": steps_of(each)} for each in order])
+        emit(event="plan", recipes=[{"name": each["name"], "steps": each["steps"]} for each in order])
         for each in order:
             play(each)
         # As the real recipe: the producer's own last event comes before the root is written.
@@ -700,7 +1055,8 @@ def one_root_change(action, name):
     print(json.dumps({"action": action, "package": name, "packages": written, "root": "/",
                       "receipt": "/usr/lib/recipe/system.json", "kept_config": kept,
                       "new_config_beside": [path + ".recipe-new" for path in beside], "accounts_created": created,
-                      "var_seeded": seeded, "present": present, "effects": effects}))
+                      "var_seeded": seeded, "present": present, "effects": effects,
+                      "state": "none" if action == "remove" else "installed", "freed_bytes": 0}))
     end_system_change(effects)
 
 
@@ -737,7 +1093,7 @@ def log(args, route):
 def main(args):
     # The real recipe tells the places apart by `--system`, and by whether a store is
     # named: without one it is the person's own.
-    global STATE, PROFILE, MACHINE_EVENTS
+    global STATE, PROFILE, MACHINE_EVENTS, JSON_OUTPUT
     system = "--system" in args
     root = args[args.index("--package-root") + 1] if "--package-root" in args else None
     if system and not AB:
@@ -745,45 +1101,53 @@ def main(args):
         root = os.path.join(STATE_DIR, "one-root")
         STATE = ONE_ROOT
     MACHINE_EVENTS = "--machine-events" in args
+    JSON_OUTPUT = args[args.index("--json-output") + 1] if "--json-output" in args else None
     log(args, "system" if system else "me" if root is None else "store")
     if root is None and not system:
         STATE = ME
         PROFILE = os.path.join(STATE_DIR, "me", "profile")
     elif root is not None:
         PROFILE = os.path.join(root, "profile")
+    keep = True if "--keep" in args else False if "--no-keep" in args else None
     words, skip = [], False
     for arg in args:
         if skip:
             skip = False
-        elif arg in ("--recipes-path", "--package-root"):
+        elif arg in ("--recipes-path", "--package-root", "--json-output"):
             skip = True
         elif arg == "--path":
             pass  # `source add --path FOLDER`: the folder is the next word
         elif not arg.startswith("--"):
             words.append(arg)
     command = words[0] if words else ""
-    if command in ("install", "update", "remove") and len(words) == 2:
+    if command in ("install", "update", "remove", "download", "build", "state") and len(words) == 2:
         words[1] = words[1].split(":", 1)[-1]  # SOURCE:NAME; the stand-in's names are unique
-    if system and not AB:
-        if command == "installed":
-            if SLOW_READS > 0:
-                time.sleep(SLOW_READS)
-            print(json.dumps(one_root_view()))
-        elif command in ("install", "update", "remove") and len(words) == 2:
-            one_root_change(command, words[1])
-        else:
-            fail("--system supports install, update, remove, installed and isinstalled")
+    which = "downloads" if "--downloads" in args else "build" if "--build" in args else None
+    if command == "installed" and system and not AB:
+        if SLOW_READS > 0:
+            time.sleep(SLOW_READS)
+        print(json.dumps(one_root_view()))
         return
-    if system and AB:
-        if command == "installed":
-            if SLOW_READS > 0:
-                time.sleep(SLOW_READS)
-            print(json.dumps(system_view()))
-        elif command in ("install", "update", "remove") and len(words) == 2:
-            system_change(command, words[1])
-        else:
-            fail("--system supports install, update, remove, installed and isinstalled")
+    if command == "installed" and system:
+        if SLOW_READS > 0:
+            time.sleep(SLOW_READS)
+        print(json.dumps(system_view()))
         return
+    if system and command in ("install", "update", "remove") and len(words) == 2:
+        (one_root_change if not AB else system_change)(command, words[1])
+        return
+    if system and AB and command == "state" and len(words) == 2:
+        # On an A/B system the program is in the other root or it is not: the system's software has no
+        # downloads or build material of its own.
+        item = recipe(words[1])
+        here = words[1] in system_state()["other"]["packages"]
+        print(json.dumps({"schema_version": 1, "name": item["name"], "version": item["version"],
+                          "state": "installed" if here else "none",
+                          "installed_version": system_state()["other"]["packages"].get(words[1]), "keep": False,
+                          "steps": item["steps"], "on_disk": {"downloads": 0, "build": 0, "unfinished": 0}}))
+        return
+    if system and command not in ("state",):
+        fail("--system supports install, update, remove, installed and state")
     if command in ("list", "installed", "updates") and SLOW_READS > 0:
         time.sleep(SLOW_READS)
     if command == "info" and len(words) == 2:
@@ -793,8 +1157,18 @@ def main(args):
         # once a second source is added, so the Sources page has something to show.
         problems = [{"path": os.path.join(STATE_DIR, "recipes", "yazi.rhai"),
                      "problem": "it names nothing to download"}] if len(sources()) > 1 else []
-        print(json.dumps({"schema_version": 1, "host_libc": HOST_LIBC, "sources": listed_sources(),
-                          "recipes": recipes(), "problems": problems}))
+        material = load_material()
+        items = installed()
+        listed = []
+        for each in recipes():
+            made = dict(each)
+            current = next((item for item in items if item["name"] == each["name"]), None)
+            made.update(state=state_of(each["name"], items, material),
+                        installed_version=current["version"] if current else None,
+                        keep=held(each["name"], material)["keep"])
+            listed.append(made)
+        print(json.dumps({"schema_version": 1, "host_libc": HOST_LIBC, "collections": [OWN], "sources": listed_sources(),
+                          "recipes": listed, "problems": problems}))
     elif command == "refresh":
         refresh(words[1] if len(words) > 1 else "")
     elif command == "source" and words[1:2] == ["add"] and len(words) == 3:
@@ -802,22 +1176,26 @@ def main(args):
     elif command == "source" and words[1:2] == ["remove"] and len(words) == 3:
         source_remove(words[2])
     elif command == "installed":
-        # The shape `recipe installed` has today, plus the fields the front end asks for.
-        print(json.dumps({"packages": installed(), "profile": PROFILE}))
+        print(json.dumps(installed_view()))
     elif command == "updates":
-        print(json.dumps({"schema_version": 1, "updates": updates(),
-                          "problems": [{"name": each["name"],
-                                        "problem": "no recipe for it is in the collection or the sources any more"}
-                                       for each in installed()
-                                       if not any(item["name"] == each["name"] for item in recipes())]}))
+        print(json.dumps(updates(words[1:] if "--upstream" in args else None)))
     elif command == "storage":
-        storage()
+        print(json.dumps(storage()))
+    elif command == "state" and len(words) == 2:
+        answer = state_answer(words[1])
+        print(json.dumps(answer) if "--json" in args or not sys.stdout.isatty() else answer["state"])
     elif command == "history":
         print(json.dumps({"schema_version": 1, "history": history()}))
-    elif command in ("install", "update") and len(words) == 2:
-        install(words[1], command == "update")
+    elif command in ("download", "build", "install", "update") and len(words) == 2:
+        run_command(command, words[1], keep)
     elif command == "remove" and len(words) == 2:
-        remove(words[1])
+        remove(words[1], "--keep" in args)
+    elif command == "cleanup" and "--logs" in args:
+        cleanup_logs()
+    elif command == "cleanup" and len(words) <= 2:
+        cleanup(words[1] if len(words) == 2 else None, which)
+    elif command == "runtime" and words[1:2] == ["remove"]:
+        runtime_remove()
     else:
         sys.stderr.write("stand-in recipe: unknown command: %s\n" % " ".join(args))
         sys.exit(2)

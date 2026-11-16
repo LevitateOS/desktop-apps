@@ -99,9 +99,10 @@ public:
     // recipe has run, and the root's caches are rebuilt after that: the recipe's own `done` is not the
     // end of it, the command's exit is.
     // `doing` and `done`: the title while one single step runs ("Downloading X") and when it ended
-    // ("Downloaded X"); empty for an install or update.
+    // ("Downloaded X"); empty for an install or update. `step`: which single step it is (download,
+    // build, install), so a failure says only what is true of that step.
     void begin(const Catalog &catalog, const QString &name, Run *run, Place place = Place::Computer, bool system = false,
-               const QString &doing = QString(), const QString &done = QString());
+               const QString &doing = QString(), const QString &done = QString(), const QString &step = QString());
     // What the command printed on its standard output when it ended (`recipe --system install`
     // says which root it wrote into); empty before.
     QJsonObject answer() const { return answer_; }
@@ -131,7 +132,7 @@ private:
     void addPlanRow(const QString &recipe, const QStringList &steps);
 
     Catalog catalog_;
-    QString name_, updatingFrom_, doneWords_, doingWords_;
+    QString name_, updatingFrom_, doneWords_, doingWords_, singleStep_;
     Place place_ = Place::Computer;
     Run *run_ = nullptr;
     QVBoxLayout *column_ = nullptr;

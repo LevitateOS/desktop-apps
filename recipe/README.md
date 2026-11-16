@@ -2,7 +2,8 @@
 
 The graphical front end for Recipe on the desktop images: Plasma on LevitateOS,
 LXQt on AcornOS. One window to find software, see what its recipe will do and
-may use, read the recipe, install, update and remove.
+may use, read the recipe, install, update and remove, step by step if one wants, and see what Recipe
+holds on disk and remove any of it.
 
 It holds no package rules. It runs `recipe`, reads its JSON and shows it. It has
 no agent inside: the only bridge to one is a "Copy for agent" button on failure
@@ -17,8 +18,9 @@ The rules it follows are the settled design in the superproject's
 
 The window is the shared frame (`../kit/frame.*`, see `../kit/README.md`): the
 rail on the left, the pages in the middle, a status line below. The rail is
-Browse, Installed, Updates (the number of updates is its badge), Sources,
-Storage, and Help, which the frame owns. The window opens at 1100 x 700 the
+Browse, Installed (the number of programs with an "Update" mark is its badge),
+Sources, Storage, and Help, which the frame owns. There is no Updates page: the
+updates are marks on Installed. The window opens at 1100 x 700 the
 first time, then at the size it had.
 
 - **Browse**: the search and the boxes for the source and the kind of software,
@@ -26,13 +28,20 @@ first time, then at the size it had.
   where it is installed, what can be done to it, what it may use and what comes
   with it, the licence, and the recipe itself.
 - **Installed**: what is installed, grouped by place (below), with Open, Update,
-  Remove and the rest on each row. The system's base is one row of its own, and the
-  libraries of system groups are shared parts (see "Where software goes").
-- **Updates**: what `recipe updates` says would change, with what the newer
-  recipe may use that the installed one may not. "Check for updates" fetches the
-  sources' lists again. Each update starts from its own Before step.
+  Remove and the rest on each row, and the size of each program and of what it
+  holds beside its files. Two marks sit in their own columns and are never
+  mixed: "Update" (the recipe as last fetched names another version, or is another
+  file, so `recipe update` would change something; known without the network, and
+  what the rail's badge counts) and "Newer upstream" (upstream has a version newer
+  than the recipe names). The second is known only after the person presses
+  "Check for updates", which asks upstream (`recipe updates --upstream`); it is a
+  read, not a run: no run page, nothing is installed, and there is nothing to
+  press for a newer upstream, because the recipe has to be updated first. Each
+  update starts from its own Before step. The system's base is one row of its own,
+  and the libraries of system groups are shared parts (see "Where software goes").
 - **Sources**: where recipes come from, and how to use recipes of one's own.
-- **Storage**: what installed software takes.
+- **Storage**: one total, what Recipe holds, and each of its seven kinds with its
+  programs and a way to remove it (see "Storage").
 - **Help**: the frame's page, the same shape in all three apps.
 
 The status line says where the recipes are from and when they were read.
@@ -41,7 +50,7 @@ The status line says where the recipes are from and when they were read.
 ## Where software goes
 
 There are two places, and the window says which in words on the Before page,
-on every row of Installed and Updates and on a recipe's page.
+on every row of Installed and on a recipe's page.
 
 | Place | What it means | What the window runs |
 |---|---|---|
@@ -162,6 +171,13 @@ and stays on screen (it does not move on to the recipe's page); there is no "Try
 again". A change whose command fails without that answer is a failed install as
 before. A removal whose only failure is the caches says the same on its own page.
 
+**Single steps** (below) use the same run page, with a title of their own
+("Downloading X", "Building X") and the events of that one step. A stopped run says only
+what is true of its step: a stopped download or build says "Nothing was installed. What was
+already downloaded (or built) stays; Clean up on the program's page deletes it", never
+"Nothing on this computer was changed". The question asked when the window is closed
+meanwhile is worded the same way. "Copy for agent" only copies text.
+
 A stopped install shows the issue in one sentence and the facts: what Recipe
 recorded (the refused address and the recipe's allowed list, Recipe's own
 message, the recipe's path, what is still installed) and the last 20 lines of the
@@ -170,7 +186,7 @@ output, with where the run's log is (`recipe: diagnostics: DIRECTORY`).
 agent" puts the issue, the facts and the output on the clipboard. A refused
 connection names the numeric address Recipe reports, never a host name.
 
-Short changes (remove, add or remove a source, fetch
+Short changes (remove, cleaning up, add or remove a source, fetch
 the lists) have a page of their own with a Stop, the
 command's output, and on failure "Try again" and "Back". Only one change runs at
 a time: a second one is told "One thing at a time". Closing the window while a
@@ -179,6 +195,32 @@ keeping the window open.
 
 ## A program's page and Installed
 
+- **The State panel** says where the program stands on this system: nothing of it
+  here, or only part of its downloads or an unfinished run ("Nothing is installed.
+  Part of its downloads or an unfinished run is here."); downloaded; built, not
+  installed; installed, with its version. Under it, what it holds on disk beside
+  the installed files (downloads, build, unfinished run), the "Update" mark ("the
+  recipe installs X, the installed version is Y") and the "Newer upstream" mark
+  ("upstream has X, this recipe installs Y"), each on its own line, and a "Check for updates"
+  button when the recipe says where its newest version is (`UPSTREAM`); a recipe that
+  does not say so is told in a sentence instead. State, sizes and marks come from
+  `recipe list`, `installed` and `state`; the window decides none of them.
+- **Install** (or **Update**) and **Remove** are the two main buttons. Remove asks
+  first, and says that what is left of the program's downloads and build is removed
+  with it (`recipe remove NAME`). On a program that is not installed but holds
+  something, Remove deletes what is left (`recipe cleanup NAME`).
+- **One step at a time** (the link under the recipe's file) opens the single steps,
+  each with its own button, what it holds on disk, and the author's note (`ABOUT.steps`)
+  when there is one: Download (`recipe download NAME`; only where the recipe has sources),
+  Build (`recipe build NAME`; only where the recipe has a `build` function), Install
+  (`recipe install NAME`), and Clean up (`recipe cleanup NAME`, which deletes the
+  program's downloads and build material and leaves the installed program). "Remove the
+  download" (`cleanup NAME --downloads`), "Remove the build" (`cleanup NAME --build`,
+  an unfinished run included) and "Remove only the program" (`remove NAME --keep`) are beside
+  them, and cannot be pressed when there is nothing to remove. The checkbox "Keep
+  downloads and build after installing" is the keep option: it is sent as `--keep` or
+  `--no-keep` with Build, Install and Update, Recipe remembers it per program, and Storage
+  lists what is kept.
 - **Open** starts the program from the profile of the place it is in: the `Exec`
   line of `PROFILE/share/applications/NAME.desktop` (field codes dropped), else
   the first `bin/` file the receipt lists, with `PROFILE/bin` first on its
@@ -194,11 +236,25 @@ keeping the window open.
 
 ## Storage
 
-One section of numbers per store the computer has (`recipe storage --json`): what is
-installed takes, and what was done to the stores (`recipe history --json`, as
-sentences with the time). Only numbers `recipe` reports are shown: it has
-no build-cache or download sizes, and the page says so. An A/B computer's running
-root has no store behind it, so it has no row of numbers.
+One section per store the computer has (`recipe storage --json`), with one total at the top
+("Recipe holds X on this computer") and a line for each of the seven kinds, each with its
+size, what it is, and a way to remove it:
+
+| Kind | What | Removed by |
+|---|---|---|
+| Installed programs | the files of what is installed | "Show what is installed": a program is removed from Installed |
+| Downloaded | downloads of programs that are not installed | per program, `recipe cleanup NAME --downloads` |
+| Built | build material and results of programs that are not installed | per program, `recipe cleanup NAME --build` |
+| Kept by choice | material of installed programs that have the keep option | per program, `recipe cleanup NAME` |
+| Unfinished runs | what an interrupted run left behind | per program, `recipe cleanup NAME --build` |
+| Build image | the cached compiler image, fetched again when a recipe needs it | `recipe runtime remove`; not for an image installed with the system |
+| Logs | the diagnostic logs | `recipe cleanup --logs` |
+
+"Clean up everything not installed" (`recipe cleanup`) deletes every program's downloads and
+build material, kept material included; installed programs stay and so do their keep options.
+It cannot be pressed when there is nothing to delete. Below the kinds, what was done to the stores
+(`recipe history --json`, as sentences with the time). An A/B computer's running root has no store
+behind it, so it has no row of numbers.
 
 ## Sources and your own recipes
 
@@ -208,7 +264,7 @@ every recipe where it is from.
 
 | Action | Command |
 |---|---|
-| Fetch again, Fetch all again, Check for updates | `recipe refresh [NAME]`, as the person |
+| Fetch again, Fetch all again | `recipe refresh [NAME]`, as the person |
 | Add a source (an address, or a folder) | `recipe source add ADDRESS` or `recipe source add --path FOLDER`, as root |
 | Remove | `recipe source remove NAME`, as root |
 
@@ -228,39 +284,48 @@ more. That fetches nothing from the network.
 
 A read is `list`, then for each place that has a store `installed`, `updates`,
 `storage` and `history`, and `--system installed --json` for the A/B computer's
-root. When `updates` fails the catalog is not shown and the page says why; when
+root. `state NAME --json` is read when a program's page needs it. Upstream is never asked
+by a read: only the "Check for updates" buttons do (`recipe updates --upstream`). When `updates` fails the catalog is not shown and the page says why; when
 `storage` or `history` fails only the sizes or the history are missing.
 
 ## What it asks of `recipe`
+
+The shapes are those of section 8 of `tools/recipe/docs/recipe-format.md`, and the commands those
+of its section 6.3.
 
 Reads (JSON on stdout, `"schema_version": 1`):
 
 | Command | The window reads |
 |---|---|
-| `recipe list --json` | `host_libc`; per recipe `name`, `version`, `description`, `about`, `needs`, `deps`, `build_deps`, `hooks`, `source`, `runs_here`, `not_runnable_reason`; `sources`; `problems` for recipes that cannot be read |
-| `recipe installed --json` | per package `name`, `version`, `recipe`, `files`, `installed_on`, `size_bytes`, `source`, `commit`; and `profile` |
+| `recipe list --json` | `host_libc`; per recipe `name`, `version`, `description`, `about`, `needs`, `deps`, `build_deps`, `steps`, `functions`, `upstream`, `state`, `installed_version`, `keep`, `source`, `runs_here`, `not_runnable_reason`; `sources`; `problems` for recipes that cannot be read |
+| `recipe installed --json` | per package `name`, `version`, `recipe`, `installed_on`, `size_bytes`, `source`, `commit`, `keep`, `on_disk` (`downloads`, `build`, `unfinished`) and `update` (`to`, `reason`, `source`; the "Update" mark); and `profile` |
 | `recipe updates --json` | `updates` (`name`, `source`, `from`, `to`, `reason`, `changes`) and `problems` |
-| `recipe storage --json` | `active_bytes` |
+| `recipe updates --upstream [NAME...] --json` | only when asked: `upstream` (`name`, `installed`, `recipe_version`, `latest`, `newer`, `how`, `error`; the "Newer upstream" mark) beside `updates` |
+| `recipe state NAME --json` | `state`, `installed_version`, `keep`, `steps`, `on_disk` |
+| `recipe storage --json` | `total_bytes` and the seven `kinds`, each with `bytes`, `removable`, `remove`, `programs`, `path` |
 | `recipe history --json` | `history`, each with `at`, `what`, `package`, `from`, `to`, `source` |
 | `recipe --system installed --json` | on both kinds of computer. A/B: `booted`, `other`, `not_done`; one root: `root`, `packages`. Per package `name`, `version`, `dependencies`, `sessions`; for the base `release` and `serial` |
 | `recipe info NAME` | the line `Recipe: PATH`, to find the recipe's file |
 
-Changes, through the root helper unless they are for the person's own store,
-with `--machine-events`: `install`, `update`, `remove`,
-with `--system` first for the three that change software for everyone
-(not on the one explicit store a check names); `refresh`; `source add`,
-`source remove`. `--recipes-path` is added when `RECIPE_GUI_RECIPES_PATH` is set.
+Changes, through the root helper unless they are for the person's own store, with
+`--machine-events`: `download`, `build`, `install`, `update` (the last three with `--keep` or
+`--no-keep` when the keep checkbox says so), `remove` (`remove --keep` for "Remove only the program"),
+`cleanup [NAME] [--downloads|--build]`, `cleanup --logs`, `runtime remove`, with `--system` first for
+the ones that change software for everyone (not on the one explicit store a check names); `refresh`;
+`source add`, `source remove`. `--recipes-path` is added when `RECIPE_GUI_RECIPES_PATH` is set.
+A finished run prints its result (section 8.6: `operation`, `state`, `steps`, `kept`, `freed_bytes`, ...)
+on standard output.
 
 The events the run page reads, one JSON object per line on stderr; any other line
-is shown as output: `plan` (recipes and their steps), `step` and `recipe-hook`
-(`recipe`, `hook`, `status`, `msg`), `fetch` (`bytes`, `total`), `progress`
+is shown as output: `plan` (recipes and their steps), `step` (`recipe`, `step`, `status`:
+`running`, `done`, `already`, `none`, `failed`), `fetch` (`bytes`, `total`), `progress`
 (`done`, `total`), `say`, `output`, and the last one, `done` or `failed`
-(`recipe`, `hook`, `reason`, and `refused` with `endpoint` and `declared` for a
-refused connection). Without a `plan` the window adds three steps for each recipe
+(`recipe`, `step`, `reason`, and `refused` with `endpoint` and `declared` for a
+refused connection). Without a `plan` the window adds four steps for each recipe
 as its first step arrives.
 
 The password prompt (`data/org.levitateos.recipe.policy`) says what the action
-covers: install, update, remove, and adding or
+covers: install, update, remove, cleaning up, and adding or
 removing a source. Fetching the lists runs as the
 person and asks for nothing.
 
@@ -296,7 +361,11 @@ Needs the Qt 6 base and SVG development files (`qt6-qtbase-devel`,
 
 `fixtures/recipe` is a stand-in for `recipe` that answers in the real shapes
 from `fixtures/catalog.json` and a state folder (`RECIPE_STANDIN_STATE`). It
-downloads and installs nothing. Its settings are listed at the top of the file:
+downloads and installs nothing. It speaks section 8 of the recipe format and the commands of section 6.3:
+`list`, `installed`, `updates` (with `--upstream`, answered from `upstream_latest` in the catalog),
+`storage` (all seven kinds), `state`, the single steps with `--keep` and `--no-keep`, `remove` (`--keep`),
+`cleanup`, `cleanup --logs`, `runtime remove`, the finished-run JSON and the machine events; what each program
+holds (downloads, build, an unfinished run, the keep option) is a file beside the store. Its settings are listed at the top of the file:
 `RECIPE_STANDIN_AB=0|1` (an A/B computer, or one with one root whose `--system`
 answers are `{root, packages}` and `root_route`'s result), `RECIPE_STANDIN_EFFECTS=failed`
 (the effects recipe fails after a system change: the change is written, the answer says
@@ -324,7 +393,12 @@ QT_QPA_PLATFORM=offscreen HOME=$S/home XDG_CONFIG_HOME=$S/home/config XDG_STATE_
   build/recipe/recipe-gui --look levitate --shots $S/shots
 ```
 
-The state folders must be new. The story needs `pgrep`. Its last part opens
+The state folders must be new. The story needs `pgrep`. Its pictures are named by what they show:
+`f*` the frame and rail, `15*` the program page, `st*` a program's State panel and its single steps
+(download, build, install, remove only the program, remove with what is left, a download and a build
+that did not finish), `m*` the two marks and the check upstream, `sg*` Storage with every kind and
+"Clean up everything not installed", `17e-upstream-check-failed` a check that could not ask. The steps,
+marks and Storage parts run in a store and a stand-in of their own. Its last part opens
 windows of its own on a scratch command line, one for an A/B computer and one
 for a computer with one root (`RECIPE_STANDIN_AB=0`), and checks the exact arguments of every
 change (`--system` on both) and that "for me" never reaches the root helper. It also walks the
@@ -344,9 +418,9 @@ recipe, installs it into a test store, pictures each point and removes it again
 | `src/model.*` | the data: recipes, what is installed, updates, as read from JSON |
 | `src/client.*` | the only code that runs `recipe`; a `Run` reports one change as events |
 | `src/beforewords.*` | the words of the Before page, from what `recipe` reported |
-| `src/pages.*` | Browse, a program's page, a run, Installed, Updates, the remove question |
+| `src/pages.*` | Browse, a program's page (state, steps, marks), a run, Installed, the remove question |
 | `src/sources.*` | the Sources page |
-| `src/storage.*` | the Storage page |
+| `src/storage.*` | the Storage page: the total, the seven kinds, clean up |
 | `src/sourceview.*` | the read-only recipe viewer |
 | `src/window.*` | the frame, its rail and status, and the flows between pages |
 | `src/shots.*` | the picture mode and the story |
@@ -375,6 +449,11 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
 
 ## Not done
 
+- **The single steps, the State panel, the two marks and the new Storage page were not run**: they
+  compiled, and the stand-in answers their commands, but no app was started, no story was run
+  and no picture was taken. The stand-in's idea of sizes (a download is a quarter of the most the recipe
+  may fetch, a build two or three times that) is its own. A build image that can be removed (the person's own
+  store, not the one installed with the system) is not in the story.
 - **None of the system-software work was run**: the system groups (kind `system`, the
   no-choice Before page, one-root "for everyone" through `recipe --system`), the base
   row and its button to the release page, "Needed by" and the held-back Remove, the last

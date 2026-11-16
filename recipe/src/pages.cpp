@@ -1084,8 +1084,9 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
 // ---------------------------------------------------------------- A run
 
 void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place place, bool system, const QString &doing,
-                    const QString &done)
+                    const QString &done, const QString &step)
 {
+    singleStep_ = step;
     catalog_ = catalog;
     name_ = name;
     run_ = run;
@@ -1408,8 +1409,14 @@ void RunPage::onFinished(bool ok)
         what = tr("Installing %1 was stopped").arg(shown);
     else
         what = tr("The update to %1 was stopped").arg(version);
-    const QString unchanged = updatingFrom_.isEmpty()
-                                  ? tr("Nothing on this computer was changed.")
+    // What is true after a stop depends on the step: a download or a build installs nothing, but
+    // leaves what it had fetched or made; only an install that wrote nothing changed nothing.
+    const QString unchanged =
+        singleStep_ == QLatin1String("download")
+            ? tr("Nothing was installed. What was already downloaded stays; Clean up on the program's page deletes it.")
+        : singleStep_ == QLatin1String("build")
+            ? tr("Nothing was installed. What was already downloaded or built stays; Clean up on the program's page deletes it.")
+        : updatingFrom_.isEmpty() ? tr("Nothing on this computer was changed.")
                                   : tr("%1 %2 is still installed and works as before.").arg(shown, updatingFrom_);
     auto *verdict = new Verdict;
     verdict->setFrameShape(QFrame::NoFrame);

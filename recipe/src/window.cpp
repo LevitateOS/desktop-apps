@@ -375,6 +375,7 @@ void Window::startInstall(const QString &name, Place place)
     runPlace_ = place;
     runName_ = name;
     runUpdate_ = installed;
+    runStepName_.clear();
     runDone_.clear();
     stepAgain_ = nullptr;
     run_ = installed ? client_.update(named, place, keepFor(name)) : client_.install(named, place, keepFor(name));
@@ -412,6 +413,7 @@ void Window::runStep(const QString &name, Place place, const QString &step)
     runPlace_ = place;
     runName_ = name;
     runUpdate_ = false;
+    runStepName_ = step;
     stepAgain_ = [this, name, place, step] { runStep(name, place, step); };
     QString doing, done;
     if (step == QLatin1String("download")) {
@@ -429,7 +431,7 @@ void Window::runStep(const QString &name, Place place, const QString &step)
     }
     runDone_ = done;
     const bool system = step == QLatin1String("install") && !client_.places().one && place != Place::Me;
-    runPage_->begin(catalog_, name, run_, place, system, doing, done);
+    runPage_->begin(catalog_, name, run_, place, system, doing, done, step);
     stack_->setCurrentWidget(runPage_);
     run_->start();
 }
@@ -1014,11 +1016,18 @@ QString Window::closeWords() const
         return tr("%1 is still running.\n\n%2").arg(changeWords_.title, changeWords_.stopNote);
     const QString shown = shownName(runName_);
     const InstalledItem *item = catalog_.installedItem(runName_, runPlace_);
-    const QString unchanged = runUpdate_ && item ? tr("%1 %2 stays installed and works as before.").arg(shown, item->version)
-                                                 : tr("Nothing on this computer is changed.");
+    const bool single = runStepName_ == QLatin1String("download") || runStepName_ == QLatin1String("build");
+    // A download or a build installs nothing, but leaves what it fetched or made.
+    const QString unchanged = single                 ? tr("Nothing is installed by it.")
+                              : runUpdate_ && item ? tr("%1 %2 stays installed and works as before.").arg(shown, item->version)
+                                                   : tr("Nothing on this computer is changed.");
+    const QString running = runStepName_ == QLatin1String("download") ? tr("Downloading %1").arg(shown)
+                            : runStepName_ == QLatin1String("build")  ? tr("Building %1").arg(shown)
+                            : runUpdate_                              ? tr("Updating %1").arg(shown)
+                                                                      : tr("Installing %1").arg(shown);
     QString words = tr("%1 is still running.\n\nIf you close the window now it is stopped. What is already fetched and built is kept. "
                        "%2 You can start it again from %3's page whenever you like.")
-                        .arg(runUpdate_ ? tr("Updating %1").arg(shown) : tr("Installing %1").arg(shown), unchanged, shown);
+                        .arg(running, unchanged, shown);
     return words;
 }
 

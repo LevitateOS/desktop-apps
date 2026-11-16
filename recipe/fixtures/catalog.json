@@ -50,10 +50,15 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": {
+    "github": "ONLYOFFICE/DesktopEditors"
+   }
   },
   {
    "name": "thunderbird",
@@ -98,10 +103,15 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": {
+    "github": "thunderbird/thunderbird"
+   }
   },
   {
    "name": "mpv",
@@ -151,11 +161,18 @@
     "libass",
     "libplacebo"
    ],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": {
+    "github": "mpv-player/mpv"
+   }
   },
   {
    "name": "krita",
@@ -200,11 +217,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "gimp",
@@ -248,11 +270,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "element",
@@ -297,10 +324,15 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": {
+    "github": "element-hq/element-desktop"
+   }
   },
   {
    "name": "rust",
@@ -343,10 +375,17 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "latest"
+   ],
+   "upstream": {
+    "latest": true
+   }
   },
   {
    "name": "htop",
@@ -400,11 +439,18 @@
    "build_deps": [
     "ncurses"
    ],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": {
+    "github": "htop-dev/htop"
+   }
   },
   {
    "name": "tree",
@@ -443,11 +489,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "nvidia-driver",
@@ -488,11 +539,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "codecs",
@@ -529,11 +585,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "ncurses",
@@ -563,11 +624,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "ffmpeg",
@@ -597,11 +663,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "libass",
@@ -630,11 +701,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "libplacebo",
@@ -663,11 +739,16 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build"
+   ],
+   "upstream": null
   },
   {
    "name": "claude-code",
@@ -714,12 +795,19 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
-    "acquire",
+   "steps": [
+    "download",
     "build",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [
+    "build",
+    "latest"
+   ],
+   "upstream": {
+    "latest": true
+   }
   },
   {
    "name": "steam",
@@ -771,11 +859,13 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
-    "acquire",
+   "steps": [
+    "download",
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": null
   },
   {
    "name": "plasma",
@@ -812,10 +902,12 @@
     "desktop-libs"
    ],
    "build_deps": [],
-   "hooks": [
+   "steps": [
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": null
   },
   {
    "name": "lxqt",
@@ -849,10 +941,12 @@
     "desktop-libs"
    ],
    "build_deps": [],
-   "hooks": [
+   "steps": [
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": null
   },
   {
    "name": "printing",
@@ -886,10 +980,12 @@
     "desktop-libs"
    ],
    "build_deps": [],
-   "hooks": [
+   "steps": [
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": null
   },
   {
    "name": "desktop-libs",
@@ -921,10 +1017,12 @@
    },
    "deps": [],
    "build_deps": [],
-   "hooks": [
+   "steps": [
     "install",
-    "remove"
-   ]
+    "cleanup"
+   ],
+   "functions": [],
+   "upstream": null
   }
  ],
  "installed": [
@@ -1005,5 +1103,14 @@
    }
   ],
   "gimp": []
+ },
+ "upstream_latest": {
+  "element": "1.12.5",
+  "rust": "1.96.0",
+  "thunderbird": "140.4.0",
+  "mpv": "0.41.0",
+  "htop": "3.5.3",
+  "onlyoffice": "9.2.0",
+  "claude-code": "2.1.330"
  }
 }

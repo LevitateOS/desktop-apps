@@ -137,6 +137,8 @@ private:
     // What the install or update that runs is, for the question when the window closes.
     QString runName_;
     bool runUpdate_ = false;
+    // Which single step runs (download, build, install); empty for an install or update.
+    QString runStepName_;
     // A single step runs (not an install or update): said when it ended, and how to run it again.
     QString runDone_;
     std::function<void()> stepAgain_;
