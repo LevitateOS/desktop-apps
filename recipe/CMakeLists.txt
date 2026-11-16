@@ -24,8 +24,6 @@ qt_add_executable(recipe-gui
     ../kit/help.cpp
     ../kit/firstrun.cpp
     ../kit/helpstory.cpp
-    ../kit/before.cpp
-    src/beforewords.cpp
     src/pages.cpp
     src/sources.cpp
     src/sourceview.cpp

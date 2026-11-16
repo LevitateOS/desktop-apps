@@ -1,8 +1,8 @@
 #include "pages.h"
 
-#include "beforewords.h"
 #include "client.h"
 #include "parts.h"
+#include "words.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -70,6 +70,72 @@ QLabel *tinted(QLabel *label, Mood mood)
     palette.setColor(QPalette::Text, moodColour(palette, mood));
     label->setPalette(palette);
     return label;
+}
+
+// "host (port 443)" and the list of them.
+QString endpointText(const QString &endpoint)
+{
+    const qsizetype colon = endpoint.lastIndexOf(':');
+    if (colon < 0)
+        return endpoint;
+    return QObject::tr("%1 (port %2)").arg(endpoint.left(colon), endpoint.mid(colon + 1));
+}
+
+QString endpointsText(const QStringList &endpoints)
+{
+    QStringList shown;
+    for (const QString &endpoint : endpoints)
+        shown << endpointText(endpoint);
+    return shown.join(QObject::tr(", "));
+}
+
+// Where an install goes and what that means, said beside the Install button: the place, whether
+// it asks for the administrator password, when it is active, and what is not touched.
+QString placeSentences(const Catalog &catalog, const Places &places, Place place, bool systemOnly)
+{
+    const QString password = places.password ? QObject::tr("Asks for the administrator password.")
+                                             : QObject::tr("This window makes the change itself; no password is asked.");
+    const QString root = catalog.otherRoot.isEmpty() ? QObject::tr("that root") : QObject::tr("root %1").arg(catalog.otherRoot);
+    if (places.one)
+        return QObject::tr("It goes into the one store this window was started with, the only place this window changes.");
+    if (systemOnly)
+        // Software of the system itself has no other place: one sentence says why.
+        return (catalog.ab ? QObject::tr("It becomes part of the system, so it is written into %1 and is active when %2 is started. "
+                                         "The running root is not touched.")
+                                 .arg(catalog.otherWords(), root)
+                           : QObject::tr("It becomes part of the system, so it is written into this computer's root and is active at "
+                                         "once; programs that are already running may need a restart."))
+               + QLatin1Char(' ') + password;
+    if (place == Place::Me)
+        return QObject::tr("For me: into your own folder. It works at once, for you only. No password.");
+    if (catalog.ab)
+        return QObject::tr("For everyone: written into %1, not into the running root. It becomes active, for everyone, when %2 is "
+                           "started. The running root is not touched. %3")
+            .arg(catalog.otherWords(), root, password);
+    return QObject::tr("For everyone: written into this computer's system. It is active at once; programs that are already running "
+                       "may need a restart. %1")
+        .arg(password);
+}
+
+// One change of what a recipe may use, as `recipe updates` reported it.
+QString changeWords(const Change &change)
+{
+    if (!change.isList()) {
+        const QString how = change.kind == QLatin1String("raised")    ? QObject::tr("more than before")
+                            : change.kind == QLatin1String("lowered") ? QObject::tr("less than before")
+                                                                      : QObject::tr("changed");
+        return QObject::tr("%1 → %2 (%3)").arg(Change::amount(change.before), Change::amount(change.after), how);
+    }
+    const bool network = change.field == QLatin1String("network");
+    auto shown = [network](const QStringList &names) { return network ? endpointsText(names) : names.join(QObject::tr(", ")); };
+    QStringList parts;
+    if (!change.added().isEmpty())
+        parts << QObject::tr("New: %1.").arg(shown(change.added()));
+    if (!change.removed().isEmpty())
+        parts << QObject::tr("No longer: %1.").arg(shown(change.removed()));
+    if (!change.stays().isEmpty())
+        parts << QObject::tr("As before: %1.").arg(shown(change.stays()));
+    return parts.join(QLatin1Char(' '));
 }
 
 // The flag shown before an install: proprietary software is chosen knowingly.
@@ -453,7 +519,9 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
             grid->addWidget(dim(text(tr("Not available"))), row, 4, Qt::AlignRight);
         } else if (held.isEmpty() && !catalog.inOtherRoot(name)) {
             auto *button = new QPushButton(tr("Install"));
-            connect(button, &QPushButton::clicked, this, [this, name] { emit install(name); });
+            const QList<Place> places = catalog.installPlaces(name);
+            const Place first = places.isEmpty() ? Place::Computer : places.first(); // "for me" when it is offered
+            connect(button, &QPushButton::clicked, this, [this, name, first] { emit install(name, first); });
             grid->addWidget(button, row, 4, Qt::AlignRight);
         } else {
             grid->addWidget(dim(text(onlyOther || held.isEmpty()
@@ -522,7 +590,7 @@ struct Rows {
 
 } // namespace
 
-void RecipePage::show(const Catalog &catalog, const QString &name, bool keep)
+void RecipePage::show(const Catalog &catalog, const Places &places, const QString &name, bool keep)
 {
     QVBoxLayout *column = fresh();
     const Recipe *found = catalog.recipe(name);
@@ -626,10 +694,31 @@ void RecipePage::show(const Catalog &catalog, const QString &name, bool keep)
         connect(go, &QPushButton::clicked, this, [this, name, place] { emit this->update(name, place); });
         buttons->addWidget(go);
     }
+    // Where an install goes, and what that means: said beside the button, because Install starts at once.
+    QLabel *installWords = nullptr;
     if (!free.isEmpty() && unavailable.isEmpty()) {
         // Installed in one place and free in the other: the page offers that other place.
+        // Two free places ("for me" and "for everyone"): the person picks beside the button; "for me" is the default.
+        const bool systemOnly = catalog.intoSystemOnly(name);
+        QMap<int, QString> said;
+        for (Place each : free)
+            said.insert(int(each), placeSentences(catalog, places, each, systemOnly && each != Place::Me));
+        installWords = dim(text(said.value(int(free.first())), true));
+        QComboBox *scope = nullptr;
+        if (free.size() > 1) {
+            scope = new QComboBox;
+            for (Place each : free)
+                scope->addItem(placeTitle(each), int(each));
+            scope->setToolTip(tr("Where Install puts it"));
+            buttons->addWidget(scope);
+            connect(scope, &QComboBox::currentIndexChanged, installWords, [installWords, scope, said] {
+                installWords->setText(said.value(scope->currentData().toInt()));
+            });
+        }
         auto *go = held.isEmpty() ? primary(tr("Install")) : new QPushButton(tr("Install %1").arg(where(free.first())));
-        connect(go, &QPushButton::clicked, this, [this, name] { emit install(name); });
+        connect(go, &QPushButton::clicked, this, [this, name, scope, first = free.first()] {
+            emit install(name, scope ? Place(scope->currentData().toInt()) : first);
+        });
         buttons->addWidget(go);
     }
     // Remove: the program and whatever is left of its download and build (the second main button).
@@ -652,7 +741,7 @@ void RecipePage::show(const Catalog &catalog, const QString &name, bool keep)
         connect(remove, &QPushButton::clicked, this, [this, name, stepPlace] { emit this->cleanup(name, stepPlace, Cleanup::Everything); });
         buttons->addWidget(remove);
     }
-    QString note = tr("You see what will happen before anything starts");
+    QString note = !free.isEmpty() && unavailable.isEmpty() ? tr("Install starts at once") : tr("Update starts at once");
     if (!free.isEmpty() && !unavailable.isEmpty() && held.isEmpty())
         note = tr("Not available on this system");
     else if (!held.isEmpty() && !anyUpdate)
@@ -669,6 +758,22 @@ void RecipePage::show(const Catalog &catalog, const QString &name, bool keep)
         actions->addWidget(dim(text(note)), 0, Qt::AlignRight);
         header->addLayout(actions);
         body->addLayout(header);
+    }
+    // Said under the buttons: where the install goes and what that means, before the person presses.
+    if (installWords)
+        body->addWidget(installWords);
+    // Update starts at once, so what the newer recipe may use is said here, under its button.
+    for (const InstalledItem *item : held) {
+        const UpdateItem *update = catalog.update(name, item->place);
+        if (!update || item->place == Place::Other || !update->changesKnown)
+            continue;
+        QStringList changed;
+        for (const Change &change : update->changes)
+            changed << tr("%1: %2").arg(change.title(), changeWords(change));
+        QLabel *words = text(changed.isEmpty() ? tr("What it may use is the same as before: the update asks for nothing new.")
+                                               : tr("What it may use changes: %1").arg(changed.join(tr(" "))),
+                             true);
+        body->addWidget(changed.isEmpty() ? dim(words) : tinted(words, Mood::Warn));
     }
     if (!recipe.details.isEmpty())
         body->addWidget(text(recipe.details, true));

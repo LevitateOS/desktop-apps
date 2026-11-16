@@ -36,8 +36,8 @@ first time, then at the size it had.
   than the recipe names). The second is known only after the person presses
   "Check for updates", which asks upstream (`recipe updates --upstream`); it is a
   read, not a run: no run page, nothing is installed, and there is nothing to
-  press for a newer upstream, because the recipe has to be updated first. Each
-  update starts from its own Before step. The system's base is one row of its own,
+  press for a newer upstream, because the recipe has to be updated first. Update
+  starts at once, from the row or from the program's page (see "Install and Update start at once"). The system's base is one row of its own,
   and the libraries of system groups are shared parts (see "Where software goes").
 - **Sources**: where recipes come from, and how to use recipes of one's own.
 - **Storage**: one total, what Recipe holds, and each of its seven kinds with its
@@ -49,8 +49,8 @@ The status line says where the recipes are from and when they were read.
 
 ## Where software goes
 
-There are two places, and the window says which in words on the Before page,
-on every row of Installed and on a recipe's page.
+There are two places, and the window says which in words on the program's page,
+beside the Install button, on every row of Installed and on a recipe's page.
 
 | Place | What it means | What the window runs |
 |---|---|---|
@@ -68,7 +68,7 @@ the computer is A/B is read from the kernel command line (`recab.immutable`,
 **System groups go only into the system.** A recipe of kind `system` (the
 desktop, Firefox, audio, printing, ...), and a recipe of kind `library` that a
 system group needs (`deps`, directly or through other libraries), is never
-installed "for me": the Before page offers no choice of place, and says in one
+installed "for me": the program's page offers no choice of place beside Install, and says in one
 sentence why ("It becomes part of the system, so it is written into the other
 root (B) and is active when root B is started." on A/B; "... written into this
 computer's root and is active at once; programs that are already running may
@@ -114,26 +114,39 @@ of the recipe with the one `--system installed` lists), and Remove.
   installed again with Recipe from there: recipe --system install NAME, with the name
   of the desktop." Removing stays allowed.
 
-## Before anything happens
+## Install and Update start at once
 
-An install or an update does not start at once. The window shows the shared
-Before page (`../kit/before.*`, the words in `src/beforewords.*`):
+Pressing Install or Update starts the whole run and shows the run page: there is
+no page and no second press in between (the buttons of Browse rows, of a program's page and of
+Installed rows all go straight to `Window::startInstall`). Remove is the
+one change that asks first (see "Remove" below). What the person needs to know is
+on the program's page, before the button:
 
-- **Where it goes**: the places that do not hold the software yet. One explicit
-  store, or a place that is already taken, leaves nothing to choose.
-- **What happens**: which version of what; that it is fetched from the hosts of
-  the recipe's declared network endpoints and built or put in place inside the
-  sandbox; which other recipes come with it and which are only needed to build
-  it; for an update, from which version to which. Proprietary software says so
-  here, with its licence, before the button: the person chooses it knowingly.
+- **Where it goes**: next to Install, a "For me / For everyone" choice when both
+  places are free ("For me" is the default, as everywhere), and under the buttons one
+  paragraph for the place picked: where it is written, whether the administrator
+  password is asked, when it is active, and on A/B "The running root is not
+  touched". A recipe that can only go into the system has no choice, and the
+  paragraph says why in one sentence ("It becomes part of the system, so it is
+  written into the other root (B) and is active when root B is started." on A/B; "...
+  written into this computer's root and is active at once; programs that are
+  already running may need a restart." on one root). One explicit store has no
+  choice either. A list row's Install goes to "for me" when it is offered, else to the system;
+  the program's page is where the other place is chosen.
+- **What happens**: version and source, the licence with the proprietary flag
+  (warning-coloured in the header, and "proprietary, not free software" in the
+  Licence row), what comes with it ("Needs", "To build it", a restart or logging in
+  again after it), and the steps the recipe runs.
 - **What the recipe may use**: network, the most it may download, memory, disk
-  while it builds, time, and "The sandbox refuses anything else." For an update,
-  what `recipe updates` reported as changed.
-- **Foot**: which source the recipe is from, and "Read the recipe".
+  while it builds, time, and "The sandbox refuses anything else."
+- **For an update**: under the buttons, what `recipe updates` reported as changed in
+  what the recipe may use ("What it may use changes: ..."; warning-coloured). A list
+  row's Update (Browse, Installed) starts at once, except when the newer recipe adds
+  or raises something it may use: then it opens the program's page, with a line in
+  the status, and the Update button there starts at once.
 
-"Install" or "Update" starts the run. "Cancel" and Escape go back and nothing
-has run. The page does not give a download size or disk use: `recipe` reports
-neither before it has run.
+The page gives no download size or disk use: `recipe` reports neither before it
+has run.
 
 A recipe that this system cannot run is not offered: one line says why. The cause is
 `ABOUT.libc` (this system's C library cannot run it) or `ABOUT.systems` (it is made
@@ -226,7 +239,7 @@ keeping the window open.
   the first `bin/` file the receipt lists, with `PROFILE/bin` first on its
   `PATH`. A menu entry with `Terminal=true` is not started: the status line says
   to run it in a terminal. `DBusActivatable`, `TryExec` and `Path` are ignored.
-- **Read it** (and "Read the recipe" on the Before page) opens a read-only viewer
+- **Read it** opens a read-only viewer
   of the recipe's file (`src/sourceview.*`), with Rhai highlighting and the
   source it is from. The file is the one `recipe info NAME` names; for a remote
   source `recipe info` fetches the copy to read. It cannot be changed here.
@@ -417,14 +430,13 @@ recipe, installs it into a test store, pictures each point and removes it again
 |---|---|
 | `src/model.*` | the data: recipes, what is installed, updates, as read from JSON |
 | `src/client.*` | the only code that runs `recipe`; a `Run` reports one change as events |
-| `src/beforewords.*` | the words of the Before page, from what `recipe` reported |
 | `src/pages.*` | Browse, a program's page (state, steps, marks), a run, Installed, the remove question |
 | `src/sources.*` | the Sources page |
 | `src/storage.*` | the Storage page: the total, the seven kinds, clean up |
 | `src/sourceview.*` | the read-only recipe viewer |
 | `src/window.*` | the frame, its rail and status, and the flows between pages |
 | `src/shots.*` | the picture mode and the story |
-| `../kit/` | the shared frame, Before page, widgets, command runner (see its README) |
+| `../kit/` | the shared frame, widgets, command runner (see its README) |
 | `fixtures/` | the stand-in `recipe`, its catalog, `as-root`, `helper-log` |
 | `data/` | the menu entry and the polkit action |
 
@@ -455,7 +467,7 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
   may fetch, a build two or three times that) is its own. A build image that can be removed (the person's own
   store, not the one installed with the system) is not in the story.
 - **None of the system-software work was run**: the system groups (kind `system`, the
-  no-choice Before page, one-root "for everyone" through `recipe --system`), the base
+  no-choice place sentence on the program's page, one-root "for everyone" through `recipe --system`), the base
   row and its button to the release page, "Needed by" and the held-back Remove, the last
   desktop question, the result sentences of a system change, the page for a change
   whose only failure is the caches, the one-line reason for `ABOUT.systems`, the
@@ -480,7 +492,7 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
 - Not shown, because `recipe` carries nothing for it: "Copy to your own recipes",
   sort and licence boxes, search of Installed, sizes of downloads and
   builds, a source's "added by you on".
-- Remove asks in its own small window, not on the Before page.
+- Remove asks in its own small window; Install and Update ask nothing.
 - Recipes show a letter until the catalog carries `NAME.svg`. No translation
   exists, though every string goes through `tr()`. No notice appears when updates
   appear.

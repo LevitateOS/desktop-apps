@@ -5,7 +5,6 @@
 #include "sourceview.h"
 #include "storage.h"
 
-#include "before.h"
 #include "frame.h"
 #include "parts.h"
 #include "refresh.h"
@@ -38,13 +37,12 @@ Window::Window(QWidget *parent)
     stack_ = new QStackedWidget;
     browse_ = new BrowsePage;
     recipe_ = new RecipePage;
-    before_ = new BeforePage;
     runPage_ = new RunPage;
     installed_ = new InstalledPage;
     sources_ = new SourcesPage;
     storage_ = new StoragePage;
     change_ = new ChangePage;
-    for (QWidget *page : {static_cast<QWidget *>(browse_), static_cast<QWidget *>(recipe_), static_cast<QWidget *>(before_),
+    for (QWidget *page : {static_cast<QWidget *>(browse_), static_cast<QWidget *>(recipe_),
                           static_cast<QWidget *>(runPage_), static_cast<QWidget *>(installed_),
                           static_cast<QWidget *>(sources_), static_cast<QWidget *>(storage_),
                           static_cast<QWidget *>(change_)})
@@ -79,8 +77,8 @@ Window::Window(QWidget *parent)
             [this](int index) { chooseSource(browse_->fromBox()->itemData(index).toString()); });
 
     connect(browse_, &BrowsePage::openRecipe, this, &Window::showRecipe);
-    connect(browse_, &BrowsePage::install, this, [this](const QString &name) { askInstall(name); });
-    connect(browse_, &BrowsePage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
+    connect(browse_, &BrowsePage::install, this, [this](const QString &name, Place place) { startInstall(name, place); });
+    connect(browse_, &BrowsePage::update, this, &Window::updateFromRow);
     connect(browse_, &BrowsePage::retry, this, [this] { reload([this] { showBrowse(); }); });
     connect(sources_, &SourcesPage::refresh, this, &Window::fetchSources);
     connect(sources_, &SourcesPage::add, this, &Window::addSource);
@@ -109,8 +107,8 @@ Window::Window(QWidget *parent)
     connect(again, &QToolButton::clicked, this, &Window::refresh);
     frame_->addStatusWidget(again);
     connect(recipe_, &RecipePage::back, this, [this] { showBrowse(); });
-    connect(recipe_, &RecipePage::install, this, [this](const QString &name) { askInstall(name); });
-    connect(recipe_, &RecipePage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
+    connect(recipe_, &RecipePage::install, this, [this](const QString &name, Place place) { startInstall(name, place); });
+    connect(recipe_, &RecipePage::update, this, [this](const QString &name, Place place) { startInstall(name, place); });
     connect(recipe_, &RecipePage::remove, this, &Window::askRemove);
     connect(recipe_, &RecipePage::open, this, &Window::open);
     connect(recipe_, &RecipePage::readRecipe, this, &Window::viewSource);
@@ -125,21 +123,6 @@ Window::Window(QWidget *parent)
     connect(storage_, &StoragePage::cleanupLogs, this, &Window::cleanupLogsNow);
     connect(storage_, &StoragePage::removeBuildImage, this, &Window::removeBuildImageNow);
 
-    // The Before step: what will happen, then Cancel or go on.
-    connect(before_, &BeforePage::cancelled, this, [this] {
-        if (const auto draw = again_)
-            draw();
-        else
-            showBrowse(category_);
-    });
-    connect(before_, &BeforePage::choiceChanged, this, [this](const QString &key) {
-        // The sentences depend on the place: say them again for the one picked.
-        before_->show(beforeContent(catalog_, client_.places(), ask_, placeFromKey(key)));
-    });
-    connect(before_, &BeforePage::confirmed, this, [this](const QString &key) {
-        startInstall(ask_.name, ask_.update ? ask_.place : placeFromKey(key));
-    });
-    connect(before_, &BeforePage::linkClicked, this, [this] { viewSource(ask_.name); });
     connect(runPage_, &RunPage::back, this, [this] { showBrowse(); });
     connect(runPage_, &RunPage::retry, this, [this](const QString &name) {
         if (const auto again = stepAgain_)
@@ -162,7 +145,7 @@ Window::Window(QWidget *parent)
     connect(installed_, &InstalledPage::openRelease, this, [this] { frame_->showRelease(); });
     connect(storage_, &StoragePage::openInstalled, this, [this] { showInstalled(installedChoice_, installedPlace_); });
     connect(installed_, &InstalledPage::remove, this, &Window::askRemove);
-    connect(installed_, &InstalledPage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
+    connect(installed_, &InstalledPage::update, this, &Window::updateFromRow);
     connect(installed_, &InstalledPage::selected, this, [this](const QString &name, Place place) {
         installedChoice_ = name;
         installedPlace_ = int(place);
@@ -249,7 +232,7 @@ void Window::refresh()
     if (busy())
         return;
     QWidget *shown = stack_->currentWidget();
-    const bool drawn = shown != runPage_ && shown != before_ && shown != change_;
+    const bool drawn = shown != runPage_ && shown != change_;
     reload([this, drawn] {
         // A copy: drawing the page sets `again_` anew, and the one running must outlive that.
         if (const auto draw = again_; drawn && draw)
@@ -316,7 +299,7 @@ void Window::showRecipe(const QString &name)
 {
     again_ = [this, name] { showRecipe(name); };
     const Recipe *recipe = catalog_.recipe(name);
-    recipe_->show(catalog_, name, keepChoice_.value(name, recipe && recipe->keep));
+    recipe_->show(catalog_, client_.places(), name, keepChoice_.value(name, recipe && recipe->keep));
     stack_->setCurrentWidget(recipe_);
 }
 
@@ -328,40 +311,24 @@ void Window::showInstalled(const QString &selected, int place)
     stack_->setCurrentWidget(installed_);
 }
 
-// What will happen, before it does. An install is asked where; the places
-// offered are the ones that do not hold the software yet.
-void Window::askInstall(const QString &name)
+// Update on a list row: at once, unless the newer recipe may use more than the installed one did (something
+// added or raised). Then the program's page opens, so the change is seen beside its Update button.
+void Window::updateFromRow(const QString &name, Place place)
 {
-    // A recipe this system's C library cannot run is not installable: nothing starts, and one line says why.
-    if (const QString why = catalog_.unavailable(name); !why.isEmpty()) {
-        frame_->flash(tr("%1 is not available on this system. %2").arg(shownName(name), catalog_.unavailableLine(name)));
+    const UpdateItem *update = catalog_.update(name, place);
+    bool more = false;
+    if (update && update->changesKnown)
+        for (const Change &change : update->changes)
+            more = more || (change.isList() ? !change.added().isEmpty() : change.kind == QLatin1String("raised") || change.kind == QLatin1String("added"));
+    if (!more) {
+        startInstall(name, place);
         return;
     }
-    QList<Place> choices = catalog_.installPlaces(name);
-    if (choices.isEmpty())
-        return;
-    ask_ = Ask{name, false, choices.first(), choices};
-    showBefore();
+    frame_->flash(tr("%1 may use more than before. Read what changes, then press Update.").arg(shownName(name)));
+    showRecipe(name);
 }
 
-void Window::askUpdate(const QString &name, Place place)
-{
-    ask_ = Ask{name, true, place, {place}};
-    showBefore();
-}
-
-void Window::showBefore()
-{
-    if (run_ || changeRun_) {
-        frame_->flash(tr("One thing at a time: wait for the running one, or stop it."));
-        stack_->setCurrentWidget(run_ ? static_cast<QWidget *>(runPage_) : change_);
-        return;
-    }
-    // The Cancel button comes back to the page the person was on: `again_` is still its.
-    before_->show(beforeContent(catalog_, client_.places(), ask_, ask_.update ? ask_.place : ask_.choices.first()));
-    stack_->setCurrentWidget(before_);
-}
-
+// Install and Update start at once: the program's page says what will happen before the button.
 void Window::startInstall(const QString &name, Place place)
 {
     if (run_ || changeRun_) {
@@ -370,6 +337,11 @@ void Window::startInstall(const QString &name, Place place)
         return;
     }
     const bool installed = catalog_.installedItem(name, place) != nullptr;
+    // A recipe this system cannot run is not installable: nothing starts, and one line says why.
+    if (!installed && !catalog_.unavailable(name).isEmpty()) {
+        frame_->flash(tr("%1 is not available on this system. %2").arg(shownName(name), catalog_.unavailableLine(name)));
+        return;
+    }
     // `recipe` is given SOURCE:NAME, so two sources with one name cannot be confused.
     const QString named = catalog_.qualified(name);
     runPlace_ = place;
@@ -761,7 +733,7 @@ void Window::checkUpstream(const QStringList &names)
             frame_->flash(newer ? tr("Upstream has a newer version for %1.").arg(counted(newer, tr("%1 program"), tr("%1 programs")))
                                 : tr("Upstream has nothing newer than the recipes install."));
             QWidget *shown = stack_->currentWidget();
-            if (const auto draw = again_; draw && shown != runPage_ && shown != before_ && shown != change_)
+            if (const auto draw = again_; draw && shown != runPage_ && shown != change_)
                 draw();
             return;
         }
@@ -843,8 +815,7 @@ void Window::changeEnded(bool ok)
                     draw();
                 else
                     showBrowse(category_);
-            } else if (const auto draw = again_; draw && stack_->currentWidget() != runPage_
-                                                  && stack_->currentWidget() != before_) {
+            } else if (const auto draw = again_; draw && stack_->currentWidget() != runPage_) {
                 draw();
             }
         });

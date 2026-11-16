@@ -1,7 +1,6 @@
 // The one window: the shared frame, the pages in it, and the flows between them.
 #pragma once
 
-#include "beforewords.h"
 #include "client.h"
 #include "model.h"
 #include "pages.h"
@@ -16,7 +15,6 @@
 
 
 
-class BeforePage;
 class BrowsePage;
 class Frame;
 class InstalledPage;
@@ -35,14 +33,11 @@ public:
     void showBrowse(const QString &category = QString());
     void showRecipe(const QString &name);
     void showInstalled(const QString &selected = QString(), int place = -1);
-    // The Before step: what will happen, shown before anything starts. An
-    // install asks where; an update acts where the software is. The page's
-    // button goes on to `startInstall`.
-    void askInstall(const QString &name);
-    void askUpdate(const QString &name, Place place);
-    // Starts the install or update at once, with no Before step: for the run
-    // the person has just agreed to, and for "Try again".
+    // Install and Update start at once and show the run page: the program's page says what
+    // will happen before its button. Also "Try again".
     void startInstall(const QString &name, Place place = Place::Computer);
+    // A list row's Update: at once, or the program's page when the update raises or adds what the recipe may use.
+    void updateFromRow(const QString &name, Place place);
     void askRemove(const QString &name, Place place = Place::Computer);
     // "One step at a time": one single step (download, build or install) of one program, with its own run page.
     void runStep(const QString &name, Place place, const QString &step);
@@ -70,7 +65,6 @@ public:
     const Catalog &catalog() const { return catalog_; }
     Frame *frame() const { return frame_; }
     BrowsePage *browsePage() const { return browse_; }
-    BeforePage *beforePage() const { return before_; }
     Places places() const { return client_.places(); }
     bool busy() const { return run_ != nullptr || changeRun_ != nullptr || client_.loading() || checking_; }
     // From a checkout: remove without the question.
@@ -108,7 +102,6 @@ private:
     void updateStatus();
     // Takes a said-for-a-moment line away at once.
     void clearFlash();
-    void showBefore();
     // A short change has a page of its own: what is being done, Stop, the command's output, and
     // when it did not finish, why. `make` starts the same command again for "Try again".
     void change(const ChangePage::Words &words, std::function<Run *()> make);
@@ -153,7 +146,6 @@ private:
     // A read asked for while another is going: done as soon as that one ends.
     bool reloadQueued_ = false;
     std::function<void()> queuedThen_;
-    Ask ask_;           // what the Before page is about
     Place runPlace_ = Place::Computer; // where the running (or last) run acts
     std::function<void()> again_;
     QString installedChoice_;
@@ -168,7 +160,6 @@ private:
     QStackedWidget *stack_;
     BrowsePage *browse_;
     RecipePage *recipe_;
-    BeforePage *before_;
     RunPage *runPage_;
     ChangePage *change_;
     InstalledPage *installed_;

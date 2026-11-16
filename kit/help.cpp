@@ -68,30 +68,30 @@ HelpText recipeText()
         "Recipe is where you find software, see what its recipe will do and what it may use, install it, update it, go "
         "back a version and remove it. Programs are fetched and built by Recipe, inside a sandbox.");
     t.never = QObject::tr(
-        "It installs or updates nothing until you have read what will happen, on the page that says so, and pressed its "
-        "button.");
+        "It installs or updates nothing until you press “Install” or “Update”. The program's page says what will happen "
+        "before the button; Remove asks first.");
     t.ideas = {
         {QObject::tr("Recipes"),
          QObject::tr("A recipe says how a program is fetched and built, what it needs and what it may use."),
          QObject::tr("A program's page shows what its recipe says: where it is from, what comes with it and what it may "
-                     "use. The page that says what will happen lists it again before anything runs."),
+                     "use. Read it before you press “Install”: the install starts at once."),
          true},
         {QObject::tr("The sandbox and what a recipe may use"),
          QObject::tr("A recipe runs inside a sandbox, and may use only what it declares."),
          QObject::tr("It declares the network addresses it may reach, the most it may download, memory, disk while it "
-                     "builds and time. The sandbox refuses anything else. You see the list before an install."),
+                     "builds and time. The sandbox refuses anything else. The program's page lists it before the button."),
          true},
         {QObject::tr("The two places software goes"),
          QObject::tr("Software goes either for you alone or for the whole computer."),
          QObject::tr("“For me” goes into your own folder, takes effect at once, is only for you and asks for no "
                      "password. “For this computer” is for everyone and asks for the administrator's password; on a "
-                     "locked computer it goes into the other root and takes effect once that root is started. The page before an "
-                     "install says which place, and lets you choose when both are open."),
+                     "locked computer it goes into the other root and takes effect once that root is started. The program's "
+                     "page says which place beside “Install”, and lets you choose when both are open."),
          true}};
     t.how = {
         {QObject::tr("Find and install a program"),
-         QObject::tr("Search, or pick a kind, then open a program and choose “Install”. A page says what will happen; "
-                     "nothing starts until you press “Install”."),
+         QObject::tr("Search, or pick a kind, then open a program. Its page says what will happen, what it may use and where "
+                     "it goes; “Install” starts the install at once."),
          QStringLiteral("browse"), QObject::tr("Browse")},
         {QObject::tr("See what is installed, and remove it"),
          QObject::tr("Installed lists what is installed and in which place. “Open” starts a program from the place it is "

@@ -42,8 +42,9 @@ public:
     QStringList listed() const { return listed_; }
 signals:
     void openRecipe(const QString &name);
-    // Install asks where; update acts where the software is.
-    void install(const QString &name);
+    // Both start at once. Install goes where `catalog.installPlaces` puts it first ("for me" by default);
+    // update acts where the software is.
+    void install(const QString &name, Place place);
     void update(const QString &name, Place place);
     void retry();
 private:
@@ -59,12 +60,14 @@ class RecipePage : public Page {
 public:
     using Page::Page;
     // `keep`: the state of the keep option on this page (the window remembers it for the page).
-    void show(const Catalog &catalog, const QString &name, bool keep);
+    // `places`: what the window knows of where software can go, for the sentence under Install.
+    void show(const Catalog &catalog, const Places &places, const QString &name, bool keep);
 signals:
     void back();
     // From the page of software whose recipe is gone: back to what is installed.
     void backToInstalled();
-    void install(const QString &name);
+    // Starts the install at once, in the place the person picked beside the button.
+    void install(const QString &name, Place place);
     void update(const QString &name, Place place);
     void remove(const QString &name, Place place);
     void open(const QString &name, Place place);

@@ -1,6 +1,5 @@
 #include "shots.h"
 
-#include "before.h"
 #include "frame.h"
 #include "helpstory.h"
 #include "look.h"
@@ -30,6 +29,7 @@
 #include <QMap>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QComboBox>
 #include <QPushButton>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -73,11 +73,44 @@ QStringList buttonTexts(QWidget &inside)
     return buttons;
 }
 
-// The Before step: press its one button ("Install", "Update"), as a click would.
-void goOn(Window &window, const QString &button)
+// The place picker beside Install on the program's page now (null when the page offers no choice).
+QComboBox *scopeBox(Window &window)
+{
+    for (QComboBox *box : window.recipePage()->findChildren<QComboBox *>())
+        if (box->isVisible() && box->toolTip() == QLatin1String("Where Install puts it"))
+            return box;
+    return nullptr;
+}
+
+void chooseScope(Window &window, Place place)
+{
+    if (QComboBox *box = scopeBox(window))
+        box->setCurrentIndex(box->findData(int(place)));
+}
+
+// Install on the program's page, pressed as a click would: the install starts at once, with no page in between.
+void clickInstall(Window &window)
 {
     settle(100); // a page drawn just now is shown once the event loop has run
-    clickButton(window.beforePage(), button);
+    clickButton(window.recipePage(), QStringLiteral("Install"));
+}
+
+// The program's page, the person's pick beside Install when it has one, and Install pressed.
+void pressInstall(Window &window, const QString &name, std::optional<Place> place = std::nullopt)
+{
+    window.showRecipe(name);
+    settle(150);
+    if (place)
+        chooseScope(window, *place);
+    clickInstall(window);
+}
+
+// Update on the program's page, pressed: the update starts at once.
+void pressUpdate(Window &window, const QString &name)
+{
+    window.showRecipe(name);
+    settle(150);
+    clickButton(window.recipePage(), QStringLiteral("Update"));
 }
 
 // What `recipe` was asked to change, each as the arguments it got, from the
@@ -395,37 +428,35 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                catalog.hostLibc == "glibc" && !window.frame()->statusText().contains("next system"));
         qsizetype before = changesAsked().size();
 
-        // Install: where it goes, with the sentences for the place picked. "For me" is the default.
+        // Install: the program's page says where it goes beside the button, with the sentences for the place picked.
+        // "For me" is the default, and Install starts the whole install at once.
         window.showBrowse();
-        window.askInstall("htop");
-        BeforePage *page = window.beforePage();
-        expect(QStringLiteral("Before: both places, and for me is picked (%1)").arg(page->pageText().left(60)),
-               page->isVisible() && page->choiceNames() == QStringList({"For me", "For everyone"})
-                   && page->chosen() == placeKey(Place::Me) && page->pageText().contains("Install htop for me?")
-                   && page->pageText().contains("Nothing has started. This is what will happen if you go on."));
-        page->choose(placeKey(Place::Computer));
+        window.showRecipe("htop");
+        settle(150);
+        QComboBox *scope = scopeBox(window);
+        expect(QStringLiteral("the page: both places beside Install, and for me is picked (%1)").arg(wordsOn(window).left(60)),
+               scope && scope->count() == 2 && scope->itemText(0) == "For me" && scope->itemText(1) == "For everyone"
+                   && scope->currentData().toInt() == int(Place::Me)
+                   && wordsOn(window).contains("For me: into your own folder. It works at once, for you only. No password.")
+                   && wordsOn(window).contains("Install starts at once"));
+        chooseScope(window, Place::Computer);
         expect(QStringLiteral("for everyone on an A/B system: written into the other root, active when it is started, the booted one untouched"),
-               page->pageText().contains("Install htop for everyone?")
-                   && page->pageText().contains("Written into the other root (B), not into the running root. It becomes active, for everyone, when root B is started.")
-                   && page->pageText().contains("Asks for the administrator password.")
-                   && page->pageText().contains("The running root is not touched.")
-                   && !page->pageText().contains("next system") && !page->pageText().contains("restart"));
-        expect(QStringLiteral("it says what the catalog says: where it is fetched from and the sandbox"),
-               page->pageText().contains("is fetched from") && page->pageText().contains("inside the sandbox")
-                   && page->pageText().contains("The sandbox refuses anything else."));
-        expect(QStringLiteral("it does not say how much is downloaded or used; recipe does not report that"),
-               !page->pageText().contains("is downloaded") && !page->pageText().contains("is used"));
-        expect(QStringLiteral("the foot names the source and offers the recipe"),
-               page->pageText().contains("From ") && page->pageText().contains("Read the recipe"));
+               wordsOn(window).contains("For everyone: written into the other root (B), not into the running root. It becomes active, for everyone, when root B is started.")
+                   && wordsOn(window).contains("Asks for the administrator password.")
+                   && wordsOn(window).contains("The running root is not touched.")
+                   && !wordsOn(window).contains("next system"));
+        expect(QStringLiteral("the page says what the recipe may use and where it is from, before the button"),
+               wordsOn(window).contains("What it may use") && wordsOn(window).contains("The sandbox refuses anything else.")
+                   && wordsOn(window).contains("Licence") && buttonTexts(window).contains("Read it"));
         save(window, "p1-before-install-choice");
-        page->choose(placeKey(Place::Me));
+        chooseScope(window, Place::Me);
         expect(QStringLiteral("choosing For me: your own folder, at once, and the roots are not mentioned"),
-               page->chosen() == placeKey(Place::Me) && page->pageText().contains("Install htop for me?")
-                   && page->pageText().contains("Into your own folder. It works at once, for you only.")
-                   && !page->pageText().contains("The running root is not touched."));
+               scope->currentData().toInt() == int(Place::Me)
+                   && wordsOn(window).contains("For me: into your own folder. It works at once, for you only.")
+                   && !wordsOn(window).contains("The running root is not touched."));
         save(window, "p2-before-install-for-me");
-        page->choose(placeKey(Place::Computer));
-        goOn(window, "Install");
+        chooseScope(window, Place::Computer);
+        clickInstall(window);
         waitUntilIdle(window, 30);
         QList<Asked> now = asked(before);
         expect(QStringLiteral("for everyone on A/B: `recipe --system install NAME` through the root helper"),
@@ -455,9 +486,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             return helper.open(QIODevice::ReadOnly) ? helper.readAll().count('\n') : 0;
         };
         const qsizetype helperBefore = helperLines();
-        window.askInstall("krita");
-        page->choose(placeKey(Place::Me));
-        goOn(window, "Install");
+        pressInstall(window, "krita", Place::Me);
         waitUntilIdle(window, 30);
         now = asked(before);
         const qsizetype helperAfter = helperLines();
@@ -503,17 +532,18 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         }
         before = changesAsked().size();
 
-        // Update where the software is: no choice, only the statement.
+        // Update where the software is: the program's page says what the update is before the button, and
+        // Update starts at once.
         window.showInstalled("gimp", int(Place::Computer));
-        window.askUpdate("gimp", Place::Computer);
-        expect(QStringLiteral("an update has no choice, only the statement of where it is"),
-               page->choiceNames() == QStringList({"For everyone"}) && page->pageText().contains("Where it is")
-                   && page->pageText().contains("Update GIMP to 3.0.6?")
-                   && page->pageText().contains("GIMP goes from version 3.0.4 to 3.0.6."));
-        expect(QStringLiteral("what the booted root's version was allowed to use is not known, and the page says so"),
-               page->pageText().contains("is not known here, so the two cannot be compared"));
+        window.showRecipe("gimp");
+        settle(150);
+        expect(QStringLiteral("an update has no choice of place, and the page says what the update is before its button"),
+               !scopeBox(window) && wordsOn(window).contains("Where it is") && buttonTexts(window).contains("Update")
+                   && wordsOn(window).contains("Update: the recipe installs 3.0.6, the installed version is 3.0.4."));
+        expect(QStringLiteral("what the booted root's version was allowed to use is not known: the page claims no change"),
+               !wordsOn(window).contains("What it may use changes"));
         save(window, "p3-before-update-ab");
-        goOn(window, "Update");
+        pressUpdate(window, "gimp");
         waitUntilIdle(window, 30);
         now = asked(before);
         expect(QStringLiteral("updating system software: `recipe --system update NAME`"),
@@ -538,10 +568,11 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         save(window, "p3b-recipe-two-roots");
 
         // The person's own update, with what `recipe updates` said changed in the recipe.
-        window.askUpdate("tree", Place::Me);
-        expect(QStringLiteral("an update for me names where and compares nothing it cannot: tree was recorded without needs"),
-               page->pageText().contains("Update tree to 2.3.2?") && page->pageText().contains("For me"));
-        goOn(window, "Update");
+        window.showRecipe("tree");
+        settle(150);
+        expect(QStringLiteral("an update for me: the page names what the recipe installs, and compares nothing it cannot: tree was recorded without needs"),
+               wordsOn(window).contains("Update: the recipe installs 2.3.2") && !wordsOn(window).contains("What it may use changes"));
+        pressUpdate(window, "tree");
         waitUntilIdle(window, 30);
         now = asked(before);
         expect(QStringLiteral("updating for me: `recipe update NAME`, nothing else"),
@@ -600,19 +631,16 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             clickButton(last, "Cancel");
             settle(100);
             // Software of the system itself is only ever installed into the system: no choice of place.
-            window.askInstall("lxqt");
-            BeforePage *system = window.beforePage();
-            expect(QStringLiteral("a system group offers no choice of place and says why in one sentence (%1)").arg(system->choiceNames().join("|")),
-                   system->isVisible() && system->choiceNames() == QStringList({"The system"})
-                       && system->pageText().contains("It becomes part of the system, so it is written into the other root (B) and is active when root B is started.")
-                       && !system->pageText().contains("For me") && system->pageText().contains("Install LXQt desktop?")
-                       && !window.catalog().installPlaces("lxqt").contains(Place::Me));
+            window.showRecipe("lxqt");
+            settle(150);
+            expect(QStringLiteral("a system group offers no choice of place and says why in one sentence beside Install (%1)").arg(buttonTexts(window).join("|")),
+                   !scopeBox(window) && buttonTexts(window).contains("Install")
+                       && wordsOn(window).contains("It becomes part of the system, so it is written into the other root (B) and is active when root B is started.")
+                       && !wordsOn(window).contains("For me") && !window.catalog().installPlaces("lxqt").contains(Place::Me));
             expect(QStringLiteral("a library a system group needs is system software too"),
                    window.catalog().intoSystemOnly("desktop-libs") && window.catalog().intoSystemOnly("plasma")
                        && !window.catalog().intoSystemOnly("htop"));
             save(window, "p1b-before-install-system-group");
-            clickButton(system, "Cancel");
-            settle(100);
         }
         window.showInstalled();
         save(window, "p5-installed-update-marks-both-roots");
@@ -676,8 +704,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             Environment effects;
             effects.set("RECIPE_STANDIN_EFFECTS", "failed");
             before = changesAsked().size();
-            window.askInstall("lxqt");
-            goOn(window, "Install");
+            pressInstall(window, "lxqt");
             waitUntilIdle(window, 30);
             settle(200);
             const QString said = window.runPage()->pageText();
@@ -702,8 +729,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         // And the same install when the caches are rebuilt: the page says what was done, and nothing else.
         {
             before = changesAsked().size();
-            window.askInstall("printing");
-            goOn(window, "Install");
+            pressInstall(window, "printing");
             waitUntilIdle(window, 30);
             settle(200);
             const QString said = window.runPage()->pageText();
@@ -736,12 +762,12 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                    && window.catalog().installedItem("tree", Place::Me) && !window.catalog().installedItem("anything", Place::Other)
                    && window.catalog().installedItem("gimp", Place::Computer) && !window.catalog().installedItem("gimp", Place::Computer)->inStore);
         qsizetype before = changesAsked().size();
-        window.askInstall("htop");
-        BeforePage *page = window.beforePage();
-        page->choose(placeKey(Place::Computer));
-        expect(QStringLiteral("Before says nothing of roots (%1)").arg(abWords(page->pageText())),
-               abWords(page->pageText()).isEmpty() && page->pageText().contains("Install htop for everyone?"));
-        goOn(window, "Install");
+        window.showRecipe("htop");
+        settle(150);
+        chooseScope(window, Place::Computer);
+        expect(QStringLiteral("the page says nothing of roots (%1)").arg(abWords(wordsOn(window))),
+               abWords(wordsOn(window)).isEmpty() && wordsOn(window).contains("For everyone: written into this computer's system."));
+        clickInstall(window);
         waitUntilIdle(window, 30);
         const QList<Asked> now = asked(before);
         expect(QStringLiteral("the change still goes through `--system` and the helper"),
@@ -789,14 +815,14 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                    && !window.catalog().stores[int(Place::Computer)].has && window.catalog().installedItem("tree", Place::Me)
                    && window.catalog().installedItem("base", Place::Computer) && window.catalog().installedItem("base", Place::Computer)->base);
         qsizetype before = changesAsked().size();
-        window.askInstall("htop");
-        BeforePage *page = window.beforePage();
-        expect(QStringLiteral("for me is the default here too"), page->chosen() == placeKey(Place::Me));
-        page->choose(placeKey(Place::Computer));
-        expect(QStringLiteral("for everyone, one root: into this computer's system, at once, and no word of roots (%1)").arg(abWords(page->pageText())),
-               page->pageText().contains("Written into this computer's system, for everyone. It is active at once; programs that are already running may need a restart.")
-                   && abWords(page->pageText()).isEmpty() && !page->pageText().contains("next system"));
-        goOn(window, "Install");
+        window.showRecipe("htop");
+        settle(150);
+        expect(QStringLiteral("for me is the default here too"), scopeBox(window) && scopeBox(window)->currentData().toInt() == int(Place::Me));
+        chooseScope(window, Place::Computer);
+        expect(QStringLiteral("for everyone, one root: into this computer's system, at once, and no word of roots (%1)").arg(abWords(wordsOn(window))),
+               wordsOn(window).contains("For everyone: written into this computer's system. It is active at once; programs that are already running may need a restart.")
+                   && abWords(wordsOn(window)).isEmpty() && !wordsOn(window).contains("next system"));
+        clickInstall(window);
         waitUntilIdle(window, 30);
         QList<Asked> now = changesAsked().mid(before);
         expect(QStringLiteral("one root: `recipe --system install NAME` through the helper, and no --package-root"),
@@ -820,14 +846,15 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         save(window, "18d-program-no-recipe-receipt");
 
         // A system group: no choice of place, one sentence why; then what the change reports.
-        window.askInstall("lxqt");
-        expect(QStringLiteral("a system group offers no choice and says it becomes part of the system, written at once (%1)").arg(page->choiceNames().join("|")),
-               page->choiceNames() == QStringList({"The system"})
-                   && page->pageText().contains("It becomes part of the system, so it is written into this computer's root and is active at once; programs that are already running may need a restart.")
-                   && !page->pageText().contains("For me") && abWords(page->pageText()).isEmpty());
+        window.showRecipe("lxqt");
+        settle(150);
+        expect(QStringLiteral("a system group offers no choice and says it becomes part of the system, written at once (%1)").arg(buttonTexts(window).join("|")),
+               !scopeBox(window) && buttonTexts(window).contains("Install")
+                   && wordsOn(window).contains("It becomes part of the system, so it is written into this computer's root and is active at once; programs that are already running may need a restart.")
+                   && !wordsOn(window).contains("For me") && abWords(wordsOn(window)).isEmpty());
         save(window, "p1c-before-install-system-group-one-root");
         before = changesAsked().size();
-        goOn(window, "Install");
+        clickInstall(window);
         waitUntilIdle(window, 30);
         settle(200);
         now = changesAsked().mid(before);
@@ -909,8 +936,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         {
             Environment effects;
             effects.set("RECIPE_STANDIN_EFFECTS", "failed");
-            window.askInstall("printing");
-            goOn(window, "Install");
+            pressInstall(window, "printing");
             waitUntilIdle(window, 30);
             settle(200);
             const QString said = window.runPage()->pageText();
@@ -960,10 +986,10 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                    && !buttonTexts(window).contains("Install"));
         save(window, "a5-unavailable-systems");
         const qsizetype before = changesAsked().size();
-        window.askInstall("plasma");
+        window.startInstall("plasma", Place::Computer);
         settle(100);
         expect(QStringLiteral("asking anyway starts nothing and says why"),
-               !window.beforePage()->isVisible() && changesAsked().size() == before
+               changesAsked().size() == before
                    && window.frame()->statusText().contains("is not available on this system"));
     }
 }
@@ -1781,17 +1807,16 @@ void sourceShots(Window &window, const Save &save, const Expect &expect)
     viewer->close();
     settle(100);
 
-    // The Before step offers the same file.
-    window.askInstall("htop");
+    // The program's page offers the same file ("Read it").
+    window.showRecipe("htop");
     settle(100);
-    emit window.beforePage()->linkClicked();
+    clickButton(window.recipePage(), "Read it");
     waitFor([&] { return window.sourceViewer() && window.sourceViewer()->isVisible(); }, 15);
-    expect(QStringLiteral("the Before step's \"Read the recipe\" opens the same viewer"),
+    expect(QStringLiteral("the program page's \"Read it\" opens the same viewer"),
            window.sourceViewer() && window.sourceViewer()->pathWords() == real);
     if (window.sourceViewer())
         window.sourceViewer()->close();
     settle(100);
-    clickButton(window.beforePage(), "Cancel");
 
     // When Recipe does not say where the file is, the viewer says so and shows no code.
     {
@@ -1875,18 +1900,14 @@ void availabilityShots(Window &window, const Save &save, const Expect &expect)
            wordsOn(window).contains("Proprietary software. Its licence: proprietary (Steam Subscriber Agreement).")
                && buttonTexts(window).contains("Install"));
     save(window, "a1-proprietary-recipe-page");
-    window.askInstall("steam");
-    settle(100);
-    BeforePage *page = window.beforePage();
-    expect(QStringLiteral("the Before step says it first, in What happens (%1)").arg(page->pageText().left(120).replace('\n', '|')),
-           page->isVisible() && page->pageText().contains("Steam is proprietary software. Its licence: proprietary (Steam Subscriber Agreement).")
-               && page->pageText().indexOf("is proprietary software") < page->pageText().indexOf("is fetched from"));
+    // Proprietary software is chosen knowingly: the flag and the licence stand beside the Install button, so
+    // pressing it (which starts the install at once) is the knowing choice.
+    expect(QStringLiteral("the flag is in the page's header, beside Install, and the Licence row says so too"),
+           wordsOn(window).contains("(proprietary, not free software)"));
     save(window, "a2-proprietary-before");
-    clickButton(page, "Cancel");
-    window.askInstall("htop");
+    window.showRecipe("htop");
     settle(100);
-    expect(QStringLiteral("free software carries no such flag"), !window.beforePage()->pageText().contains("proprietary"));
-    clickButton(window.beforePage(), "Cancel");
+    expect(QStringLiteral("free software carries no such flag"), !wordsOn(window).contains("Proprietary software"));
 
     // A system whose C library is musl: steam and claude-code declare glibc, htop declares both.
     {
@@ -1925,14 +1946,13 @@ void availabilityShots(Window &window, const Save &save, const Expect &expect)
                    && words.contains("Proprietary software.") && buttonTexts(other).contains("Read it"));
         save(other, "a4-unavailable-recipe-page");
         const qsizetype before = changesAsked().size();
-        other.askInstall("steam");
+        other.startInstall("steam", Place::Computer);
         settle(100);
         expect(QStringLiteral("asking for it anyway starts nothing and says why (%1)").arg(other.frame()->statusText()),
-               !other.beforePage()->isVisible() && changesAsked().size() == before && other.frame()->statusText().contains(line));
-        other.askInstall("htop");
+               changesAsked().size() == before && other.frame()->statusText().contains(line));
+        other.showRecipe("htop");
         settle(100);
-        expect(QStringLiteral("what it can run is still offered"), other.beforePage()->isVisible());
-        clickButton(other.beforePage(), "Cancel");
+        expect(QStringLiteral("what it can run is still offered"), buttonTexts(other).contains("Install"));
     }
     window.showBrowse();
 }
@@ -1953,9 +1973,6 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
     ok &= save(window, "real-1-browse");
     window.showRecipe(name);
     ok &= save(window, "real-2-recipe");
-    // The Before step reads nothing and starts nothing; it is shown in both modes.
-    window.askInstall(name);
-    ok &= save(window, "real-2b-before");
     if (readOnly) {
         window.showInstalled(name);
         ok &= save(window, "real-5-installed");
@@ -2003,7 +2020,7 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
         return ok ? 0 : 1;
     }
 
-    goOn(window, QStringLiteral("Install"));
+    pressInstall(window, name);
     settle(20000);
     if (window.busy())
         ok &= save(window, "real-3-running");
@@ -2059,10 +2076,11 @@ int takeShots(Window &window, const QString &folder)
     window.showRecipe("htop");
     ok &= save(window, "2-recipe");
 
-    // Before an install: what will happen, with no choice because there is one place.
-    window.askInstall("htop");
+    // Before an install: the program's page says what will happen beside the button, with no choice because
+    // there is one place. Install starts at once.
+    window.showRecipe("htop");
+    settle(150);
     {
-        BeforePage *page = window.beforePage();
         auto hold = [&](const QString &what, bool holds) {
             if (!holds) {
                 said << "not as expected: " << what << "\n";
@@ -2070,32 +2088,24 @@ int takeShots(Window &window, const QString &folder)
                 ok = false;
             }
         };
-        hold("the Before page says nothing has started", page->isVisible()
-                 && page->pageText().contains("Nothing has started. This is what will happen if you go on."));
-        hold("one explicit store is one place, so no choice: a statement", page->choiceNames().size() == 1
-                 && !page->pageText().contains("For me") && page->pageText().contains("It is the only place this window changes."));
-        hold("it says what happens from the catalog: fetched from, built, in the sandbox, what it needs",
-             page->pageText().contains("htop 3.5.3 is fetched from github.com and release-assets.githubusercontent.com and built on this computer, inside the sandbox.")
-                 && page->pageText().contains("Needed only to build it: ncurses."));
+        const QString page = wordsOn(window);
+        hold("the page offers Install and says nothing has started", buttonTexts(window).contains("Install")
+                 && page.contains("Install starts at once"));
+        hold("one explicit store is one place, so no choice: a statement", !scopeBox(window)
+                 && !page.contains("For me") && page.contains("the only place this window changes."));
+        hold("it says what the catalog says: where it is from, what comes with it, what it needs",
+             page.contains("To build it") && page.contains("ncurses"));
         hold("it lists what the recipe may use and that the sandbox refuses the rest",
-             page->pageText().contains("github.com (port 443), release-assets.githubusercontent.com (port 443). Nothing else.")
-                 && page->pageText().contains("Memory") && page->pageText().contains("Time")
-                 && page->pageText().contains("The sandbox refuses anything else."));
-        hold("it does not say how much is downloaded or how much disk is used: recipe does not report either",
-             !page->pageText().contains("is downloaded") && !page->pageText().contains("is used"));
-        hold("no running system to mention: this is not a locked computer", !page->pageText().contains("The running root is not touched."));
+             page.contains("github.com (port 443), release-assets.githubusercontent.com (port 443). Nothing else.")
+                 && page.contains("Memory") && page.contains("Time")
+                 && page.contains("The sandbox refuses anything else."));
+        hold("no running system to mention: this is not a locked computer", !page.contains("The running root is not touched."));
         ok &= save(window, "2b-before-install");
-        // Cancel comes back to where the person was; nothing was run.
-        const qsizetype asked = changesAsked().size();
-        clickButton(page, "Cancel");
-        hold("Cancel starts nothing and comes back to the recipe", changesAsked().size() == asked && !page->isVisible()
-                 && window.frame()->selected() == "browse");
     }
     qputenv("RECIPE_STANDIN_SPEED", "0");
     qputenv("RECIPE_STANDIN_STOP_AT", "htop:build");
     const qsizetype beforeInstall = changesAsked().size();
-    window.askInstall("htop");
-    goOn(window, QStringLiteral("Install"));
+    pressInstall(window, "htop");
     // Until the stand-in recipe has been asked, and has stopped where it was told to.
     waitFor([&] { return changesAsked().size() > beforeInstall; }, 30);
     settle(300);
@@ -2113,21 +2123,32 @@ int takeShots(Window &window, const QString &folder)
     waitUntilIdle(window);
 
     qunsetenv("RECIPE_STANDIN_STOP_AT");
-    // Before an update: where the software is, and what the newer recipe may use that the old one could not.
-    window.askUpdate("element", Place::Computer);
+    // Before an update: the program's page says what the update is, and what the newer recipe may use that the
+    // old one could not, beside the button. Update starts at once.
+    window.showRecipe("element");
+    settle(150);
     ok &= save(window, "4b-before-update");
     {
-        BeforePage *page = window.beforePage();
-        const bool holds = page->pageText().contains("Update Element to 1.12.4?")
-                           && page->pageText().contains("Element goes from version 1.12.3 to 1.12.4.")
-                           && page->pageText().contains("New: static.element.io (port 443).")
-                           && page->pageText().contains("Download") && page->choiceNames().size() == 1;
+        const QString page = wordsOn(window);
+        const bool holds = page.contains("Update: the recipe installs 1.12.4, the installed version is 1.12.3.")
+                           && page.contains("New: static.element.io (port 443).") && buttonTexts(window).contains("Update");
         if (!holds) {
-            said << "not as expected: the update's Before page names the version change and what the recipe may use now\n";
+            said << "not as expected: the program's page names the version change and what the recipe may use now\n";
             ok = false;
         }
     }
-    goOn(window, QStringLiteral("Update"));
+    {
+        // A list row's Update does not start an update that adds to what the recipe may use: the page opens.
+        const qsizetype asked = changesAsked().size();
+        window.showInstalled("element", int(Place::Computer));
+        window.updateFromRow("element", Place::Computer);
+        settle(150);
+        if (changesAsked().size() != asked || !window.recipePage()->isVisible()) {
+            said << "not as expected: a list row's Update for an update that adds to what the recipe may use opens the page and starts nothing\n";
+            ok = false;
+        }
+    }
+    pressUpdate(window, "element");
     waitUntilIdle(window);
     ok &= save(window, "4-stopped");
     {
