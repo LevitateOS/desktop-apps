@@ -310,20 +310,22 @@ def recipes():
     return found
 
 
-RECIPE_TEXT = """// the stand-in's recipe for %(name)s
+RECIPE_TEXT = """const RECIPE_API = 1;
+// the stand-in's recipe for %(name)s
 /* what a recipe says about itself */
+const NEEDS = #{ outputs: #{ "package": "directory" } };
 const ABOUT = #{
     kind: "tool",
     title: "%(name)s",
     libc: ["glibc"],
 };
+const PACKAGE = #{
+    name: "%(name)s",
+    version: "1.0.0",
+};
 
-fn install(ctx) {
-    let programs = 3;
-    if programs > 2 {
-        print("putting the files in place");
-    }
-    return true;
+fn build(src, out) {
+    print("putting the files in place");
 }
 """
 
