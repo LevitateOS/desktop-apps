@@ -1547,7 +1547,7 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
                 << "\n";
         for (const QString &problem : window.catalog().updateProblems)
             out << "not looked up: " << problem << "\n";
-        out << "installed takes " << window.catalog().activeBytes << " bytes\n";
+        out << "installed takes " << window.catalog().installedBytes() << " bytes\n";
         if (!window.catalog().updates.isEmpty()) {
             window.showUpdates(name);
             ok &= save(window, "real-7-updates");

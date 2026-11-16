@@ -112,8 +112,8 @@ private:
     void onFinished(bool ok);
     // The command failed only in its last step: the change is written and `effects.status` is "failed".
     void cachesFailed(const QJsonObject &answer);
-    StepMark *mark(const QString &recipe, const QString &hook);
-    void addPlanRow(const QString &recipe, const QStringList &hooks);
+    StepMark *mark(const QString &recipe, const QString &step);
+    void addPlanRow(const QString &recipe, const QStringList &steps);
 
     Catalog catalog_;
     QString name_, updatingFrom_;

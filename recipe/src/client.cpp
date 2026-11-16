@@ -84,7 +84,7 @@ void RecipeClient::query(const QStringList &arguments, Answered then)
             return;
         }
         const QJsonObject object = QJsonDocument::fromJson(run->answer()).object();
-        // `installed` carries no version of its own yet; an answer that names one must name ours.
+        // Every answer names its schema version; it must be ours.
         if (object.contains("schema_version") && object["schema_version"].toInt() != 1) {
             then({}, tr("%1 answered in a form this program does not know (schema %2)")
                          .arg(asked)
@@ -127,6 +127,9 @@ static void readList(const QJsonObject &list, Catalog &fresh)
     }
 }
 
+// `recipe installed --json` (section 8.2). Its `update` is the "Update" mark: the recipe as last
+// fetched names another version, or is another file. The reasons `updates --json` gives for what
+// the newer recipe may use are added by `readUpdates`.
 static void readInstalled(const QJsonObject &installed, Catalog &fresh, Place place)
 {
     const QString profile = installed["profile"].toString();
@@ -143,19 +146,16 @@ static void readInstalled(const QJsonObject &installed, Catalog &fresh, Place pl
         item.source = o["source"].toString();
         item.commit = o["commit"].toString();
         item.receiptRecipe = o["recipe"].toString();
-        // What it put on the system, from the receipt's own list of files.
-        for (const QJsonValue &file : o["files"].toArray()) {
-            const QString path = file.toString();
-            item.files << path;
-            if (path.startsWith("bin/"))
-                item.programs << path.mid(4);
-            else if (path.startsWith("share/applications/") && path.endsWith(".desktop"))
-                item.menu << path.mid(19).chopped(8);
-            // Until the receipt carries a size, measure what the profile holds.
-            if (!o.contains("size_bytes") && !profile.isEmpty())
-                item.sizeBytes += QFileInfo(profile + '/' + path).size();
-        }
+        item.keep = o["keep"].toBool();
+        item.onDisk = OnDisk::fromJson(o["on_disk"].toObject());
         fresh.installed << item;
+        const QJsonObject update = o["update"].toObject();
+        if (!update.isEmpty()) {
+            UpdateItem mark{item.name, item.version, update["to"].toString(), place, false, {}};
+            mark.changesKnown = false; // until `updates --json` says
+            mark.sameVersion = update["reason"].toString() == QLatin1String("recipe");
+            fresh.updates << mark;
+        }
     }
 }
 
@@ -238,31 +238,53 @@ static void readSystem(const QJsonObject &answer, Catalog &fresh)
         fresh.notDone << NotDone{value.toObject()["package"].toString(), value.toObject()["error"].toString()};
 }
 
+// `recipe updates --json` (section 8.3, without `--upstream`): what the newer recipe may use that the
+// installed one may not. The "Update" mark itself is from `installed --json`; an update only this
+// answer names is added.
 static void readUpdates(const QJsonObject &updates, Catalog &fresh, Place place)
 {
     for (const QJsonValue &value : updates["updates"].toArray()) {
         const QJsonObject o = value.toObject();
-        UpdateItem item{o["name"].toString(), o["from"].toString(), o["to"].toString(), place, false, {}};
+        UpdateItem *item = nullptr;
+        for (UpdateItem &each : fresh.updates)
+            if (each.name == o["name"].toString() && each.place == place)
+                item = &each;
+        if (!item) {
+            fresh.updates << UpdateItem{o["name"].toString(), o["from"].toString(), o["to"].toString(), place, false, {}};
+            item = &fresh.updates.last();
+            item->sameVersion = o["reason"].toString() == QLatin1String("recipe");
+        }
         // Null: nothing was recorded when the installed version was installed.
-        item.changesKnown = o["changes"].isArray();
-        item.sameVersion = o["reason"] == QLatin1String("recipe");
+        item->changesKnown = o["changes"].isArray();
         for (const QJsonValue &change : o["changes"].toArray()) {
             const QJsonObject c = change.toObject();
-            item.changes << Change{c["field"].toString(), c["before"].toString(), c["after"].toString(),
-                                   c["kind"].toString()};
+            item->changes << Change{c["field"].toString(), c["before"].toString(), c["after"].toString(),
+                                    c["kind"].toString()};
         }
-        fresh.updates << item;
     }
     for (const QJsonValue &value : updates["problems"].toArray())
         fresh.updateProblems << QStringLiteral("%1: %2").arg(value.toObject()["name"].toString(),
                                                              value.toObject()["problem"].toString());
 }
 
+// `recipe storage --json` (section 8.4): all seven kinds, each byte counted once.
 static void readStorage(const QJsonObject &storage, Catalog &fresh, Place place)
 {
     Store &store = fresh.stores[int(place)];
     store.has = true;
-    store.activeBytes = storage["active_bytes"].toInteger();
+    store.storage.totalBytes = storage["total_bytes"].toInteger();
+    for (const QJsonValue &value : storage["kinds"].toArray()) {
+        const QJsonObject o = value.toObject();
+        StorageKind kind;
+        kind.kind = o["kind"].toString();
+        kind.bytes = o["bytes"].toInteger();
+        kind.removable = o["removable"].toBool();
+        kind.remove = o["remove"].toString();
+        kind.path = o["path"].toString();
+        for (const QJsonValue &program : o["programs"].toArray())
+            kind.programs << qMakePair(program.toObject()["name"].toString(), program.toObject()["bytes"].toInteger());
+        store.storage.kinds << kind;
+    }
 }
 
 // What `recipe history --json` answers: `{"schema_version": 1, "history": [...]}`,
@@ -302,6 +324,13 @@ void RecipeClient::load(Loaded done)
             // lists it says only names and versions); the collection's own version says what is
             // newer. Never for a recipe of the system's release (source "system"): those change
             // only with a system release, and never for one Recipe says cannot be installed here.
+            // What an installed program adds is what its recipe says it adds (ABOUT.adds).
+            for (InstalledItem &item : fresh->installed) {
+                if (const Recipe *recipe = fresh->recipe(item.name)) {
+                    item.programs = recipe->programs;
+                    item.menu = recipe->menu;
+                }
+            }
             for (const InstalledItem &item : fresh->installed) {
                 const Recipe *recipe = fresh->recipe(item.name);
                 // Not when the other root already holds the recipe's version.
@@ -313,9 +342,6 @@ void RecipeClient::load(Loaded done)
                     newer.changesKnown = false;
                     fresh->updates << newer;
                 }
-            }
-            for (const Store &store : fresh->stores) {
-                fresh->activeBytes += store.activeBytes;
             }
         }
         done(ok, *fresh, problem);
@@ -394,19 +420,87 @@ Run *RecipeClient::change(const QStringList &arguments, Place place)
     return new Run(rootHelper_, QStringList{program_} + arguments, this);
 }
 
-Run *RecipeClient::install(const QString &name, Place place)
+// The keep option of a run (section 6.4): left as it is remembered, on, or off.
+static QStringList keepArguments(Keep keep)
 {
-    return change(lead(place) + QStringList{"install", name, "--machine-events"} + collection() + at(place), place);
+    return keep == Keep::Keep ? QStringList{"--keep"} : keep == Keep::NoKeep ? QStringList{"--no-keep"} : QStringList();
 }
 
-Run *RecipeClient::update(const QString &name, Place place)
+// A step or a change of one program, with the events of the run on standard error and the finished
+// run (section 8.6) as the JSON on standard output.
+Run *RecipeClient::step(const QString &command, const QString &name, Place place, const QStringList &options)
 {
-    return change(lead(place) + QStringList{"update", name, "--machine-events"} + collection() + at(place), place);
+    return change(lead(place) + QStringList{command, name, "--machine-events"} + options + collection() + at(place), place);
 }
 
-Run *RecipeClient::remove(const QString &name, Place place)
+Run *RecipeClient::download(const QString &name, Place place)
 {
-    return change(lead(place) + QStringList{"remove", name, "--machine-events"} + collection() + at(place), place);
+    return step("download", name, place, {});
+}
+
+Run *RecipeClient::build(const QString &name, Place place, Keep keep)
+{
+    return step("build", name, place, keepArguments(keep));
+}
+
+Run *RecipeClient::install(const QString &name, Place place, Keep keep)
+{
+    return step("install", name, place, keepArguments(keep));
+}
+
+Run *RecipeClient::update(const QString &name, Place place, Keep keep)
+{
+    return step("update", name, place, keepArguments(keep));
+}
+
+Run *RecipeClient::remove(const QString &name, Place place, bool onlyProgram)
+{
+    return step("remove", name, place, onlyProgram ? QStringList{"--keep"} : QStringList());
+}
+
+Run *RecipeClient::cleanup(const QString &name, Place place, Cleanup what)
+{
+    QStringList options;
+    if (what == Cleanup::Downloads)
+        options << "--downloads";
+    else if (what == Cleanup::Build)
+        options << "--build";
+    if (name.isEmpty())
+        return change(lead(place) + QStringList{"cleanup", "--machine-events"} + options + collection() + at(place), place);
+    return step("cleanup", name, place, options);
+}
+
+Run *RecipeClient::cleanupLogs(Place place)
+{
+    return change(lead(place) + QStringList{"cleanup", "--logs"} + at(place), place);
+}
+
+Run *RecipeClient::removeBuildImage(Place place)
+{
+    return change(lead(place) + QStringList{"runtime", "remove"} + at(place), place);
+}
+
+void RecipeClient::state(const QString &name, Place place, std::function<void(const StateInfo &, const QString &)> then)
+{
+    query(QStringList{"state", name, "--json"} + collection() + at(place), [then](const QJsonObject &answer, const QString &problem) {
+        then(problem.isEmpty() ? StateInfo::fromJson(answer) : StateInfo(), problem);
+    });
+}
+
+// Asked only when the person asks: Recipe goes to each program's upstream.
+void RecipeClient::checkUpstream(const QStringList &names, Place place, UpstreamLoaded then)
+{
+    query(QStringList{"updates", "--upstream", "--json"} + names + collection() + at(place),
+          [then](const QJsonObject &answer, const QString &problem) {
+              QList<UpstreamItem> found;
+              for (const QJsonValue &value : answer["upstream"].toArray()) {
+                  const QJsonObject o = value.toObject();
+                  found << UpstreamItem{o["name"].toString(),   o["installed"].toString(), o["recipe_version"].toString(),
+                                        o["latest"].toString(), o["how"].toString(),       o["error"].toString(),
+                                        o["newer"].toBool()};
+              }
+              then(problem.isEmpty(), found, problem);
+          });
 }
 
 Run *RecipeClient::refresh(const QString &source)

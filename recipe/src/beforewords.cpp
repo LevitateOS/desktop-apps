@@ -93,10 +93,10 @@ QString fetchSentence(const Recipe &recipe)
             hosts << hostOf(endpoint);
     const QString what = QObject::tr("%1 %2").arg(recipe.shown(), recipe.version);
     if (hosts.isEmpty())
-        return recipe.hooks.contains("build")
+        return recipe.compiles()
                    ? QObject::tr("%1 is built on this computer, inside the sandbox. Nothing is fetched from the network.").arg(what)
                    : QObject::tr("%1 is put in place by its recipe, inside the sandbox. Nothing is fetched from the network.").arg(what);
-    return recipe.hooks.contains("build")
+    return recipe.compiles()
                ? QObject::tr("%1 is fetched from %2 and built on this computer, inside the sandbox.").arg(what, listWords(hosts))
                : QObject::tr("%1 is fetched from %2 and put in place by its recipe, inside the sandbox.").arg(what, listWords(hosts));
 }

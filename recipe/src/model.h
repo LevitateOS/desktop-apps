@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -37,6 +38,31 @@ struct Origin {
     QString state() const;
 };
 
+// Where a program stands on this system (`recipe state`, section 6.2 of the recipe format): nothing
+// of it here (or only part of its downloads), all its downloads, a kept result not installed, or
+// installed (any version).
+enum class State { None, Downloaded, Built, Installed };
+
+State stateFromText(const QString &text);
+// One word for a person: "not here", "downloaded", "built", "installed".
+QString stateTitle(State state);
+
+// What a program holds on disk beside its installed files, as `recipe installed --json` and
+// `recipe state --json` give it (`on_disk`).
+struct OnDisk {
+    qint64 downloads = 0, build = 0, unfinished = 0;
+    qint64 total() const { return downloads + build + unfinished; }
+    static OnDisk fromJson(const QJsonObject &object);
+};
+
+// How a recipe says where its newest upstream version is (`UPSTREAM`): a GitHub project, or its own
+// `latest()` function. Neither: nowhere.
+struct UpstreamDecl {
+    QString github;
+    bool latestFunction = false;
+    bool declared() const { return latestFunction || !github.isEmpty(); }
+};
+
 struct Recipe {
     QString origin; // the name of the source it is from
     QString name, version, description;
@@ -47,7 +73,15 @@ struct Recipe {
     // Enforced.
     QList<Source> sources;
     Needs needs;
-    QStringList deps, buildDeps, hooks;
+    QStringList deps, buildDeps;
+    // The steps it has (`recipe list --json` `steps`: from download, build, install, cleanup), and the
+    // functions it defines (build, configure, verify, latest).
+    QStringList steps, functions;
+    UpstreamDecl upstream;
+    // On this system, and the keep option (section 6.4).
+    State state = State::None;
+    QString installedVersion;
+    bool keep = false;
     // ABOUT.libc: the C libraries its build is linked against (empty: any), and
     // whether the package brings its own C library and loader.
     QStringList libc;
@@ -58,6 +92,9 @@ struct Recipe {
     QString path;
 
     QString shown() const { return title.isEmpty() ? name : title; }
+    bool hasStep(const QString &step) const { return steps.contains(step); }
+    // It compiles something: it shows a build step (a recipe without a `build` function shows none).
+    bool compiles() const { return hasStep(QStringLiteral("build")); }
     bool listed() const { return kind != QLatin1String("library"); }
     // ABOUT.kind "system": a group of the system's own software (the desktop, the printing stack).
     bool isSystem() const { return kind == QLatin1String("system"); }
@@ -79,14 +116,19 @@ struct InstalledItem {
     QString name, version;
     QDate installedOn;
     qint64 sizeBytes = 0;
+    // What it adds: the programs (in the profile's `bin`) and menu entries, taken from its recipe's
+    // ABOUT.adds (`installed --json` lists no files). Empty when its recipe is gone.
     QStringList programs, menu;
-    // What the receipt says besides: every file it put in the profile, the
-    // source its recipe was fetched from and the commit (both only when
-    // recorded), and the recipe file it was installed from.
+    // Not in `installed --json` any more: always empty. F2: the page that lists a receipt's files
+    // drops that list.
     QStringList files;
+    // What the receipt says besides: the source its recipe was fetched from and the commit (both
+    // only when recorded), and the recipe file it was installed from.
     QString source, commit, receiptRecipe;
-    // The profile of the store it is in, as `installed --json` names it: the
-    // programs and the menu entries are in its `bin` and `share/applications`.
+    // The keep option, and what the program holds beside its installed files.
+    bool keep = false;
+    OnDisk onDisk;
+    // The profile of the store it is in, as `installed --json` names it.
     // Empty where no store stands behind it.
     QString profile;
     Place place = Place::Computer;
@@ -120,15 +162,18 @@ struct Change {
     static QString amount(const QString &value);
 };
 
+// "Update": the recipe as last fetched names another version, or is another file for the same
+// version. Known without asking upstream (`installed --json` `update`, `updates --json` `updates`).
+// Never mixed with `UpstreamItem`, "Newer upstream".
 struct UpdateItem {
     QString name, from, to;
     Place place = Place::Computer;
-    // Made from the collection's version, not by `recipe updates` (which
+    // Made from the collection's version, not from `recipe`'s own mark (which
     // cannot look at an A/B system's software).
     bool fromCollection = false;
     QList<Change> changes;
-    // False when `recipe` cannot say what changed in what the recipe may use:
-    // nothing was recorded when the installed version was installed.
+    // False when `recipe` has not said what changed in what the recipe may use: `updates --json` is
+    // not read yet for it, or nothing was recorded when the installed version was installed.
     bool changesKnown = true;
     // The version is the same and the source publishes another recipe file.
     bool sameVersion = false;
@@ -136,6 +181,13 @@ struct UpdateItem {
     // What it asks for beyond what the installed version had, in a few words:
     // "network, memory". Empty when nothing is more.
     QString asksMoreWords() const;
+};
+
+// "Newer upstream": what `recipe updates --upstream --json` found out when the person asked. Only
+// `newer` is a mark; `error` says why upstream could not be asked for this one.
+struct UpstreamItem {
+    QString name, installed, recipeVersion, latest, how, error;
+    bool newer = false;
 };
 
 // One line of `recipe history`: what was done to a store. `from` and `to` are
@@ -146,14 +198,72 @@ struct HistoryEntry {
     QString package, from, to, source;
 };
 
-// What one store takes, as `recipe storage` says, and what was done to it, as
+// One kind of what Recipe holds on disk (`recipe storage --json` `kinds`): installed, downloaded,
+// built, kept, unfinished, build_image, logs.
+struct StorageKind {
+    QString kind;
+    qint64 bytes = 0;
+    bool removable = false;
+    // The command that removes it, as Recipe says it ("recipe cleanup NAME --downloads"); empty for none.
+    QString remove;
+    // Per program; empty for build_image and logs.
+    QList<QPair<QString, qint64>> programs;
+    // The folder, for build_image and logs.
+    QString path;
+};
+
+// What one store holds, as `recipe storage` says.
+struct StorageInfo {
+    qint64 totalBytes = 0;
+    QList<StorageKind> kinds;
+    const StorageKind *kind(const QString &name) const;
+    qint64 bytesOf(const QString &name) const;
+};
+
+// What one store holds, as `recipe storage` says, and what was done to it, as
 // `recipe history` says (newest first).
 struct Store {
     bool has = false;
-    qint64 activeBytes = 0;
+    StorageInfo storage;
+    qint64 installedBytes() const { return storage.bytesOf(QStringLiteral("installed")); }
     QList<HistoryEntry> history;
     // `recipe history` answered (an empty history is an answer).
     bool historyKnown = false;
+};
+
+// What `recipe state NAME --json` says (section 8.5).
+struct StateInfo {
+    QString name, version, installedVersion;
+    State state = State::None;
+    bool keep = false;
+    QStringList steps;
+    OnDisk onDisk;
+    static StateInfo fromJson(const QJsonObject &object);
+};
+
+// One step of a finished run, and the program it ran for.
+struct RunStep {
+    QString step, status; // status: done, already, none
+};
+
+struct RunDependency {
+    QString name;
+    State state = State::None;
+    QList<RunStep> steps;
+};
+
+// A finished run (section 8.6): what `install`, `update`, `download`, `build`, `remove` and
+// `cleanup` print at the end.
+struct RunResult {
+    QString operation, name, version;
+    State state = State::None;
+    QList<RunStep> steps;
+    bool kept = false;
+    qint64 freedBytes = 0;
+    // The profile and its `bin`, when a package was activated.
+    QString profile, bin;
+    QList<RunDependency> dependencies;
+    static RunResult fromJson(const QJsonObject &object);
 };
 
 // A recipe `recipe list` could not read, and why.
@@ -175,9 +285,11 @@ struct Catalog {
     QList<UpdateItem> updates;
     // Installed software `recipe updates` could not look up, each as "name: why".
     QStringList updateProblems;
-    // What the store takes: what is installed.
-    // Summed over the stores there are; `stores` has each, by `Place`.
-    qint64 activeBytes = 0;
+    // "Newer upstream", only after the person asked (`recipe updates --upstream`); empty before.
+    // The window keeps it across reads of the catalog.
+    bool upstreamChecked = false;
+    QList<UpstreamItem> upstream;
+    // What each store holds, by `Place`.
     Store stores[2];
     // More than one place holds software (or can): rows say where they are.
     bool twoPlaces = false;
@@ -206,6 +318,12 @@ struct Catalog {
     // The first place that holds it (Me before Computer before Other), or the given one.
     const InstalledItem *installedItem(const QString &name) const;
     const InstalledItem *installedItem(const QString &name, Place place) const;
+    // Summed over the stores there are: what is installed.
+    qint64 installedBytes() const;
+    // The upstream answer for one program, newer or not; null before it was asked.
+    const UpstreamItem *upstreamOf(const QString &name) const;
+    // Only when upstream has a newer version than the recipe names.
+    const UpstreamItem *newerUpstream(const QString &name) const;
     const UpdateItem *update(const QString &name) const;
     const UpdateItem *update(const QString &name, Place place) const;
     // The other root holds it (and the booted root does not hold that version).
@@ -249,7 +367,8 @@ struct Catalog {
 };
 
 QString categoryTitle(const QString &id);
-QString hookTitle(const QString &hook);
+// The words for a step: "Download", "Build", "Install", "Clean up".
+QString stepTitle(const QString &step);
 
 
 // "For me", "For everyone", "In the other root (B)".

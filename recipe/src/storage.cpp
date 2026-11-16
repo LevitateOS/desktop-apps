@@ -78,7 +78,8 @@ void StoragePage::show(const Catalog &catalog, const Places &places)
         top->addWidget(heading(tr("Recipe could not say what it keeps")));
         top->addWidget(dim(text(tr("`recipe storage` gave no answer for any place."), true)));
     } else {
-        top->addWidget(heading(tr("Installed software takes %1").arg(bytesText(catalog.activeBytes))));
+        // F2: this page shows one total and one line per kind (`Store::storage.kinds`), each removable.
+        top->addWidget(heading(tr("Installed software takes %1").arg(bytesText(catalog.installedBytes()))));
     }
     header->addLayout(top, 1);
     column->addLayout(header);
@@ -107,7 +108,7 @@ void StoragePage::show(const Catalog &catalog, const Places &places)
             const QString where = !catalog.twoPlaces ? tr("in %1").arg(places.systemRoot.isEmpty() ? tr("the store recipe uses") : places.systemRoot)
                                   : place == Place::Me ? tr("in your own folder")
                                                        : tr("in %1").arg(places.systemRoot);
-            line(catalog.twoPlaces ? placeTitle(place) : tr("This store"), tr("%1, %2").arg(bytesText(store.activeBytes), where));
+            line(catalog.twoPlaces ? placeTitle(place) : tr("This store"), tr("%1, %2").arg(bytesText(store.installedBytes()), where));
         } else if (place == Place::Computer && catalog.twoPlaces) {
             // An A/B system: Recipe answers with names and versions, no store stands behind them.
             line(placeTitle(place), catalog.ab ? tr("In %1. Recipe reports no size for it.").arg(catalog.bootedWords())

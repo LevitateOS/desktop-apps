@@ -36,6 +36,91 @@ QString Source::pin() const
     return QObject::tr("checked against a checksum the recipe's author took at first download");
 }
 
+State stateFromText(const QString &text)
+{
+    if (text == QLatin1String("installed"))
+        return State::Installed;
+    if (text == QLatin1String("built"))
+        return State::Built;
+    if (text == QLatin1String("downloaded"))
+        return State::Downloaded;
+    return State::None;
+}
+
+QString stateTitle(State state)
+{
+    switch (state) {
+    case State::Installed:
+        return QObject::tr("installed");
+    case State::Built:
+        return QObject::tr("built");
+    case State::Downloaded:
+        return QObject::tr("downloaded");
+    case State::None:
+        break;
+    }
+    return QObject::tr("not here");
+}
+
+OnDisk OnDisk::fromJson(const QJsonObject &object)
+{
+    return OnDisk{object["downloads"].toInteger(), object["build"].toInteger(), object["unfinished"].toInteger()};
+}
+
+const StorageKind *StorageInfo::kind(const QString &name) const
+{
+    for (const StorageKind &k : kinds)
+        if (k.kind == name)
+            return &k;
+    return nullptr;
+}
+
+qint64 StorageInfo::bytesOf(const QString &name) const
+{
+    const StorageKind *found = kind(name);
+    return found ? found->bytes : 0;
+}
+
+StateInfo StateInfo::fromJson(const QJsonObject &object)
+{
+    StateInfo info;
+    info.name = object["name"].toString();
+    info.version = object["version"].toString();
+    info.installedVersion = object["installed_version"].toString();
+    info.state = stateFromText(object["state"].toString());
+    info.keep = object["keep"].toBool();
+    info.steps = strings(object["steps"]);
+    info.onDisk = OnDisk::fromJson(object["on_disk"].toObject());
+    return info;
+}
+
+static QList<RunStep> runSteps(const QJsonValue &value)
+{
+    QList<RunStep> out;
+    for (const QJsonValue &item : value.toArray())
+        out << RunStep{item.toObject()["step"].toString(), item.toObject()["status"].toString()};
+    return out;
+}
+
+RunResult RunResult::fromJson(const QJsonObject &object)
+{
+    RunResult result;
+    result.operation = object["operation"].toString();
+    result.name = object["name"].toString();
+    result.version = object["version"].toString();
+    result.state = stateFromText(object["state"].toString());
+    result.steps = runSteps(object["steps"]);
+    result.kept = object["kept"].toBool();
+    result.freedBytes = object["freed_bytes"].toInteger();
+    result.profile = object["activation"].toObject()["profile"].toString();
+    result.bin = object["activation"].toObject()["bin"].toString();
+    for (const QJsonValue &value : object["dependencies"].toArray()) {
+        const QJsonObject o = value.toObject();
+        result.dependencies << RunDependency{o["name"].toString(), stateFromText(o["state"].toString()), runSteps(o["steps"])};
+    }
+    return result;
+}
+
 Recipe Recipe::fromJson(const QJsonObject &object)
 {
     Recipe r;
@@ -78,7 +163,14 @@ Recipe Recipe::fromJson(const QJsonObject &object)
     r.origin = object["source"].toString();
     r.deps = strings(object["deps"]);
     r.buildDeps = strings(object["build_deps"]);
-    r.hooks = strings(object["hooks"]);
+    r.steps = strings(object["steps"]);
+    r.functions = strings(object["functions"]);
+    const QJsonObject upstream = object["upstream"].toObject();
+    r.upstream.github = upstream["github"].toString();
+    r.upstream.latestFunction = upstream["latest"].toBool();
+    r.state = stateFromText(object["state"].toString());
+    r.installedVersion = object["installed_version"].toString();
+    r.keep = object["keep"].toBool();
     r.libc = strings(about["libc"]);
     r.libcCarried = about["libc_carried"].toBool();
     r.runsHere = object["runs_here"].toBool(true);
@@ -265,6 +357,28 @@ QList<const InstalledItem *> Catalog::installedEverywhere(const QString &name) c
         if (const InstalledItem *item = installedItem(name, place))
             found << item;
     return found;
+}
+
+qint64 Catalog::installedBytes() const
+{
+    qint64 bytes = 0;
+    for (const Store &store : stores)
+        bytes += store.installedBytes();
+    return bytes;
+}
+
+const UpstreamItem *Catalog::upstreamOf(const QString &name) const
+{
+    for (const UpstreamItem &u : upstream)
+        if (u.name == name)
+            return &u;
+    return nullptr;
+}
+
+const UpstreamItem *Catalog::newerUpstream(const QString &name) const
+{
+    const UpstreamItem *found = upstreamOf(name);
+    return found && found->newer ? found : nullptr;
 }
 
 const UpdateItem *Catalog::update(const QString &name) const
@@ -495,15 +609,15 @@ QString categoryTitle(const QString &id)
     return id;
 }
 
-QString hookTitle(const QString &hook)
+QString stepTitle(const QString &step)
 {
-    if (hook == QLatin1String("acquire"))
-        return QObject::tr("Fetch");
-    if (hook == QLatin1String("build"))
+    if (step == QLatin1String("download"))
+        return QObject::tr("Download");
+    if (step == QLatin1String("build"))
         return QObject::tr("Build");
-    if (hook == QLatin1String("install"))
+    if (step == QLatin1String("install"))
         return QObject::tr("Install");
-    if (hook == QLatin1String("remove"))
-        return QObject::tr("Remove");
-    return hook;
+    if (step == QLatin1String("cleanup"))
+        return QObject::tr("Clean up");
+    return step;
 }

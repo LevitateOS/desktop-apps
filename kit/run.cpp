@@ -119,9 +119,10 @@ void Run::lines(QByteArray &pending)
             failure_["reason"] = object["message"];
             continue;
         }
-        if (object["event"] == QLatin1String("recipe-hook") && object["status"] == QLatin1String("failed")) {
+        // recipe's `step` event: `recipe`, `step`, `status` (other commands' `step` events name no recipe).
+        if (object["event"] == QLatin1String("step") && object.contains("recipe") && object["status"] == QLatin1String("failed")) {
             failure_["recipe"] = object["recipe"];
-            failure_["hook"] = object["hook"];
+            failure_["step"] = object["step"];
         }
         if (object["event"] == QLatin1String("output"))
             emit output(object["line"].toString());

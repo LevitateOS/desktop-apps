@@ -92,7 +92,7 @@ QString fetchSentence(const Recipe &recipe)
 
 QString buildSentence(const Recipe &recipe)
 {
-    if (!recipe.hooks.contains("build"))
+    if (!recipe.compiles())
         return QObject::tr("The recipe has no build step.");
     QString sentence = QObject::tr("Runs the recipe's build step on this computer, inside the sandbox. It sees none of your files.");
     if (!recipe.buildDeps.isEmpty())
@@ -701,7 +701,8 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
         recipeHead->addWidget(read);
     }
     recipePanel->column()->addLayout(recipeHead);
-    recipePanel->column()->addLayout(stepRow(1, tr("Fetch"), fetchSentence(recipe), recipe.notes.value("acquire")));
+    // F2: the page shows state and two buttons; the steps (download, build, install, cleanup) with their disk use go behind "One step at a time".
+    recipePanel->column()->addLayout(stepRow(1, tr("Fetch"), fetchSentence(recipe), recipe.notes.value("download")));
     recipePanel->column()->addLayout(stepRow(2, tr("Build"), buildSentence(recipe), recipe.notes.value("build")));
     recipePanel->column()->addLayout(stepRow(3, tr("Install"), installSentence(recipe), recipe.notes.value("install")));
     body->addWidget(recipePanel);
@@ -891,6 +892,7 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
                                                  : tr("The file is not there any more."),
                                              true)));
         }
+        // F2: `item->files` is always empty now; drop the receipt's file list from this page.
         QStringList shown = item->files.mid(0, 14);
         QString fileWords = shown.join(QLatin1Char('\n'));
         if (item->files.size() > shown.size())
@@ -1004,7 +1006,7 @@ void RunPage::begin(const Catalog &catalog, const QString &name, Run *run, Place
     emit status(tr("Starting %1").arg(recipe.shown()));
 }
 
-void RunPage::addPlanRow(const QString &recipe, const QStringList &hooks)
+void RunPage::addPlanRow(const QString &recipe, const QStringList &steps)
 {
     const int row = plan_->rowCount();
     const Recipe *found = catalog_.recipe(recipe);
@@ -1014,24 +1016,24 @@ void RunPage::addPlanRow(const QString &recipe, const QStringList &hooks)
     name->setMinimumWidth(110);
     plan_->addWidget(name, row, 0);
     int column = 1;
-    for (int index = 0; index < hooks.size(); ++index) {
+    for (int index = 0; index < steps.size(); ++index) {
         auto *stepMark = new StepMark(index + 1);
-        marks_.insert(recipe + ':' + hooks[index], stepMark);
+        marks_.insert(recipe + ':' + steps[index], stepMark);
         plan_->addWidget(stepMark, row, column++);
-        QLabel *label = text(hookTitle(hooks[index]));
+        QLabel *label = text(stepTitle(steps[index]));
         label->setMinimumWidth(70);
         plan_->addWidget(label, row, column++);
     }
-    stepsTotal_ += hooks.size();
+    stepsTotal_ += steps.size();
 }
 
-StepMark *RunPage::mark(const QString &recipe, const QString &hook)
+StepMark *RunPage::mark(const QString &recipe, const QString &step)
 {
     // A `recipe` that sends no plan still gets its rows, as its steps appear.
-    if (!marks_.contains(recipe + ':' + hook) && !marks_.contains(recipe + QStringLiteral(":acquire"))
+    if (!marks_.contains(recipe + ':' + step) && !marks_.contains(recipe + QStringLiteral(":download"))
         && !marks_.contains(recipe + QStringLiteral(":build")) && !marks_.contains(recipe + QStringLiteral(":install")))
-        addPlanRow(recipe, {"acquire", "build", "install"});
-    return marks_.value(recipe + ':' + hook);
+        addPlanRow(recipe, {"download", "build", "install", "cleanup"});
+    return marks_.value(recipe + ':' + step);
 }
 
 void RunPage::onEvent(const QJsonObject &event)
@@ -1044,45 +1046,47 @@ void RunPage::onEvent(const QJsonObject &event)
 
     if (kind == QLatin1String("plan")) {
         for (const QJsonValue &value : event["recipes"].toArray()) {
-            QStringList hooks;
-            for (const QJsonValue &hook : value.toObject()["steps"].toArray())
-                hooks << hook.toString();
-            addPlanRow(value.toObject()["name"].toString(), hooks);
+            QStringList steps;
+            for (const QJsonValue &step : value.toObject()["steps"].toArray())
+                steps << step.toString();
+            addPlanRow(value.toObject()["name"].toString(), steps);
         }
         // One recipe's own plan, once its checks have run: the steps it does
         // not name are not needed this time.
         if (!recipe.isEmpty() && event["steps"].isArray()) {
             QStringList needed;
-            for (const QJsonValue &hook : event["steps"].toArray())
-                needed << hook.toString();
-            for (const QString &hook : {QStringLiteral("acquire"), QStringLiteral("build"), QStringLiteral("install")}) {
-                StepMark *stepMark = needed.contains(hook) ? nullptr : mark(recipe, hook);
+            for (const QJsonValue &step : event["steps"].toArray())
+                needed << step.toString();
+            for (const QString &step : {QStringLiteral("download"), QStringLiteral("build"), QStringLiteral("install"), QStringLiteral("cleanup")}) {
+                StepMark *stepMark = needed.contains(step) ? nullptr : mark(recipe, step);
                 if (stepMark)
                     stepMark->setState(StepMark::Skipped);
             }
         }
-    } else if (kind == QLatin1String("step") || kind == QLatin1String("recipe-hook")) {
-        const QString hook = event["hook"].toString();
+    } else if (kind == QLatin1String("step")) {
+        const QString step = event["step"].toString();
         const QString outcome = event["status"].toString();
-        if (hook != QLatin1String("acquire") && hook != QLatin1String("build") && hook != QLatin1String("install"))
+        if (step != QLatin1String("download") && step != QLatin1String("build") && step != QLatin1String("install")
+            && step != QLatin1String("cleanup"))
             return;
-        StepMark *stepMark = mark(recipe, hook);
+        StepMark *stepMark = mark(recipe, step);
         if (!stepMark)
             return;
         if (outcome.contains("run")) {
             stepMark->setState(StepMark::Running);
             ++stepsStarted_;
             bar_->setRange(0, 0);
-            const QString doing = hook == QLatin1String("acquire") ? tr("Fetching %1").arg(shown)
-                                  : hook == QLatin1String("build") ? tr("Building %1").arg(shown)
-                                                                    : tr("Installing %1").arg(shown);
+            const QString doing = step == QLatin1String("download") ? tr("Downloading %1").arg(shown)
+                                  : step == QLatin1String("build") ? tr("Building %1").arg(shown)
+                                  : step == QLatin1String("cleanup") ? tr("Cleaning up after %1").arg(shown)
+                                                                      : tr("Installing %1").arg(shown);
             state_->setText(doing);
             emit status(tr("%1, step %2 of %3").arg(doing).arg(stepsStarted_).arg(qMax(stepsTotal_, stepsStarted_)));
-        } else if (outcome.contains("skip") || outcome == QLatin1String("satisfied")) {
+        } else if (outcome.contains("skip") || outcome == QLatin1String("already") || outcome == QLatin1String("none")) {
             stepMark->setState(StepMark::Skipped);
         } else if (outcome.contains("fail")) {
             stepMark->setState(StepMark::Failed);
-        } else if (outcome == QLatin1String("done") || outcome == QLatin1String("success")) {
+        } else if (outcome == QLatin1String("done")) {
             stepMark->setState(StepMark::Done);
         }
     } else if (kind == QLatin1String("fetch")) {
@@ -1256,14 +1260,14 @@ void RunPage::onFinished(bool ok)
     // The page puts together the issue and the facts; "Copy for agent" puts them
     // on the clipboard with the whole output.
     const QJsonObject refused = failure["refused"].toObject();
-    const QString hook = failure["hook"].toString();
+    const QString step = failure["step"].toString();
     const QString doing = updatingFrom_.isEmpty() ? tr("Installing %1 %2").arg(shown, version)
                                                    : tr("Updating %1 from %2 to %3").arg(shown, updatingFrom_, version);
     QString issue;
     QStringList facts;
     if (!refused.isEmpty()) {
-        const QString during = hook == QLatin1String("acquire") ? tr("fetching")
-                               : hook == QLatin1String("build") ? tr("building") : tr("installing");
+        const QString during = step == QLatin1String("download") ? tr("downloading")
+                               : step == QLatin1String("build") ? tr("building") : tr("installing");
         QStringList declared;
         for (const QJsonValue &value : refused["declared"].toArray())
             declared << value.toString();
@@ -1274,8 +1278,8 @@ void RunPage::onFinished(bool ok)
         // Recipe reports the address the sandbox saw, not the name it was reached by.
         facts << tr("Recipe reports the address the recipe tried to reach, not a host name.");
     } else {
-        issue = hook.isEmpty() ? tr("%1 stopped.").arg(doing)
-                               : tr("%1 stopped in the %2 step.").arg(doing, hookTitle(hook).toLower());
+        issue = step.isEmpty() ? tr("%1 stopped.").arg(doing)
+                               : tr("%1 stopped in the %2 step.").arg(doing, stepTitle(step).toLower());
         if (!reason.isEmpty())
             facts << tr("Recipe's own message: %1").arg(reason);
     }
@@ -1623,7 +1627,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
     QVBoxLayout *column = fresh();
     // What Recipe says the stores take; summed from the list for a store it
     // could not measure.
-    qint64 size = catalog.activeBytes;
+    qint64 size = catalog.installedBytes(); // F2: one total from `storage` kinds, not `active_bytes`
     if (!size)
         for (const InstalledItem &item : catalog.installed)
             size += item.sizeBytes;
@@ -1695,7 +1699,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                 programs += !each->base;
             title += tr(" · %1").arg(counted(programs, tr("%1 program"), tr("%1 programs")));
             if (catalog.stores[int(place)].has && place != Place::Other)
-                title += tr(", %1").arg(bytesText(catalog.stores[int(place)].activeBytes));
+                title += tr(", %1").arg(bytesText(catalog.stores[int(place)].installedBytes()) /* F2: sizes per kind */);
             groups->addWidget(strong(title));
         }
         QTreeWidget *tree = table({tr("Name"), tr("Version"), tr("Newer"), tr("Installed"), tr("Size")});
@@ -2057,7 +2061,8 @@ RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, cons
         // On an A/B system the change goes into the other root.
         words = takenOut;
     } else {
-        words = recipe.menu.isEmpty() && item.menu.isEmpty()
+        // F2: `installed --json` lists no files any more; the menu entries are the recipe's (ABOUT.adds).
+        words = recipe.menu.isEmpty()
                     ? tr("It is no longer installed.")
                     : tr("%1 leaves the applications menu and is no longer installed.").arg(recipe.shown());
     }
