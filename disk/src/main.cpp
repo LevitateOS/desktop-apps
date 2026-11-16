@@ -30,7 +30,7 @@ int main(int argc, char **argv)
         applyLook(parser.value(look));
     // A picture run must not reach the person's real system: it needs every stand-in named.
     if (parser.isSet(shots)) {
-        const int refused = guardPictureMode("disk-gui", {"DISK_GUI_RECAB", "DISK_GUI_CMDLINE", "DISK_GUI_RECIPE", "DISK_GUI_FILES", "DISK_GUI_LSBLK", "DISK_GUI_ROOTS", "DISK_GUI_HOME"}, {"DISK_GUI_ROOT_HELPER"});
+        const int refused = guardPictureMode("disk-gui", {"DISK_GUI_RECAB", "DISK_GUI_CMDLINE", "DISK_GUI_FILES", "DISK_GUI_LSBLK", "DISK_GUI_ROOTS", "DISK_GUI_HOME"}, {"DISK_GUI_ROOT_HELPER"});
         if (refused)
             return refused;
     }

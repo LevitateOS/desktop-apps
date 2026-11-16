@@ -2,7 +2,7 @@
 
 The graphical front end for Recipe on the desktop images: Plasma on LevitateOS,
 LXQt on AcornOS. One window to find software, see what its recipe will do and
-may use, read the recipe, install, update, go back a version and remove.
+may use, read the recipe, install, update and remove.
 
 It holds no package rules. It runs `recipe`, reads its JSON and shows it. It has
 no agent inside: the only bridge to one is a "Copy for agent" button on failure
@@ -30,10 +30,9 @@ first time, then at the size it had.
   libraries of system groups are shared parts (see "Where software goes").
 - **Updates**: what `recipe updates` says would change, with what the newer
   recipe may use that the installed one may not. "Check for updates" fetches the
-  sources' lists again. "Update all" updates every update that is not kept at a
-  version, each after its own Before step.
+  sources' lists again. Each update starts from its own Before step.
 - **Sources**: where recipes come from, and how to use recipes of one's own.
-- **Storage**: what installed software and its earlier versions take.
+- **Storage**: what installed software takes.
 - **Help**: the frame's page, the same shape in all three apps.
 
 The status line says where the recipes are from and when they were read.
@@ -82,15 +81,15 @@ root B is started."; on one root, "NAME was written into the system. It is
 active at once; programs that are already running may need a restart."
 
 Each system package has `name`, `version`, `recipe`, `dependencies` and `sessions`.
-For software in the system the window shows only that: no size, no date, no earlier
-versions, no programs and so no Open, no Go back, no keeping at a version. It offers
+For software in the system the window shows only that: no size, no date,
+no programs and so no Open. It offers
 Update when the collection has another version (the window compares the version
 of the recipe with the one `--system installed` lists), and Remove.
 
 - **The base.** The entry `{"name": "base", "release": true, "serial": N, ...}` is one
   row for the system itself ("LevitateOS 1.1, the base system"; the name is the
-  os-release `NAME`, `RECIPE_GUI_OS_RELEASE`). It has no Update, Remove, Go back
-  or Keep; its one button, "Check for updates", opens the frame's release page
+  os-release `NAME`, `RECIPE_GUI_OS_RELEASE`). It has no Update or Remove;
+  its one button, "Check for updates", opens the frame's release page
   (`recupdate`, see below). `system-effects` and `previous-kernel` are never shown.
 - **Needed by.** The `dependencies` of the system's packages say which installed
   package needs which. A package's row and page say "Needed by: A, B". Remove is
@@ -171,8 +170,8 @@ output, with where the run's log is (`recipe: diagnostics: DIRECTORY`).
 agent" puts the issue, the facts and the output on the clipboard. A refused
 connection names the numeric address Recipe reports, never a host name.
 
-Short changes (remove, go back, keep at a version, add or remove a source, fetch
-the lists, clear earlier versions) have a page of their own with a Stop, the
+Short changes (remove, add or remove a source, fetch
+the lists) have a page of their own with a Stop, the
 command's output, and on failure "Try again" and "Back". Only one change runs at
 a time: a second one is told "One thing at a time". Closing the window while a
 run is going asks first, says what stops and what is kept, and defaults to
@@ -189,22 +188,15 @@ keeping the window open.
   of the recipe's file (`src/sourceview.*`), with Rhai highlighting and the
   source it is from. The file is the one `recipe info NAME` names; for a remote
   source `recipe info` fetches the copy to read. It cannot be changed here.
-- **Keep at this version** and **Let it update again** (`recipe hold`, `unhold`)
-  mark a program "kept at this version". A kept program is listed by `recipe
-  updates` but not counted in the badge, and "Update all" leaves it alone.
-- **Go back** (`recipe go-back`) returns to the newest earlier version.
 - **A program with no recipe** (the source is gone) is not a dead end: Installed
   says where it came from, and "Its receipt" opens a page of what the receipt
-  holds and what can be done from it (keep at the version, go back, remove).
+  holds and what can be done from it (remove).
 
 ## Storage
 
-One section of numbers per store the computer has (`recipe storage --json`): what
-the earlier versions take and in how many generations (Recipe's own count of
-the earlier versions of the user profile that `go-back` returns to), what is
+One section of numbers per store the computer has (`recipe storage --json`): what is
 installed takes, and what was done to the stores (`recipe history --json`, as
-sentences with the time). "Clear earlier versions…" asks first, then runs
-`recipe storage --clear-earlier`. Only numbers `recipe` reports are shown: it has
+sentences with the time). Only numbers `recipe` reports are shown: it has
 no build-cache or download sizes, and the page says so. An A/B computer's running
 root has no store behind it, so it has no row of numbers.
 
@@ -246,17 +238,17 @@ Reads (JSON on stdout, `"schema_version": 1`):
 | Command | The window reads |
 |---|---|
 | `recipe list --json` | `host_libc`; per recipe `name`, `version`, `description`, `about`, `needs`, `deps`, `build_deps`, `hooks`, `source`, `runs_here`, `not_runnable_reason`; `sources`; `problems` for recipes that cannot be read |
-| `recipe installed --json` | per package `name`, `version`, `recipe`, `files`, `installed_on`, `size_bytes`, `kept`, `held`, `source`, `commit`; and `profile` |
-| `recipe updates --json` | `updates` (`name`, `source`, `from`, `to`, `reason`, `changes`, `held`) and `problems` |
-| `recipe storage --json` | `active_bytes`, `earlier_generations`, `earlier_bytes` |
+| `recipe installed --json` | per package `name`, `version`, `recipe`, `files`, `installed_on`, `size_bytes`, `source`, `commit`; and `profile` |
+| `recipe updates --json` | `updates` (`name`, `source`, `from`, `to`, `reason`, `changes`) and `problems` |
+| `recipe storage --json` | `active_bytes` |
 | `recipe history --json` | `history`, each with `at`, `what`, `package`, `from`, `to`, `source` |
 | `recipe --system installed --json` | on both kinds of computer. A/B: `booted`, `other`, `not_done`; one root: `root`, `packages`. Per package `name`, `version`, `dependencies`, `sessions`; for the base `release` and `serial` |
 | `recipe info NAME` | the line `Recipe: PATH`, to find the recipe's file |
 
 Changes, through the root helper unless they are for the person's own store,
-with `--machine-events`: `install`, `update`, `remove`, `go-back`, `hold`,
-`unhold`, with `--system` first for the three that change software for everyone
-(not on the one explicit store a check names); `storage --clear-earlier --json`; `refresh`; `source add`,
+with `--machine-events`: `install`, `update`, `remove`,
+with `--system` first for the three that change software for everyone
+(not on the one explicit store a check names); `refresh`; `source add`,
 `source remove`. `--recipes-path` is added when `RECIPE_GUI_RECIPES_PATH` is set.
 
 The events the run page reads, one JSON object per line on stderr; any other line
@@ -268,8 +260,8 @@ refused connection). Without a `plan` the window adds three steps for each recip
 as its first step arrives.
 
 The password prompt (`data/org.levitateos.recipe.policy`) says what the action
-covers: install, update, remove, keeping at a version, going back, adding or
-removing a source and clearing earlier versions. Fetching the lists runs as the
+covers: install, update, remove, and adding or
+removing a source. Fetching the lists runs as the
 person and asks for nothing.
 
 ## Build and run from a checkout
@@ -402,18 +394,14 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
   collection's version against the listed one: `client.cpp`, `RecipeClient::load`).
 - Everything here ran offscreen against the stand-in. The real `recipe` was only
   read from (list, installed, updates, storage, history) on a hand-made store.
-  Installing, going back, keeping at a version, clearing, system installs into a
+  Installing, system installs into a
   real other root and a real refused connection have not been run through the
   window. Neither has the window run on a real desktop, with `pkexec` or a real
   polkit prompt.
 - Not shown, because `recipe` carries nothing for it: "Copy to your own recipes",
   sort and licence boxes, search of Installed, sizes of downloads and
-  builds, a source's "added by you on", and which build is running as the reason
-  something cannot be cleared.
-- "Update all" updates everything that is not kept, each after its own Before
-  step; it does not limit itself to updates that ask for nothing new.
-- Remove asks in its own small window, not on the Before page. Go back and Clear
-  earlier versions act without a Before page (Clear asks in a box first).
+  builds, a source's "added by you on".
+- Remove asks in its own small window, not on the Before page.
 - Recipes show a letter until the catalog carries `NAME.svg`. No translation
   exists, though every string goes through `tr()`. No notice appears when updates
   appear.

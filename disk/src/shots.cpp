@@ -209,21 +209,6 @@ void diskShots(Window &window, const Save &save, const Expect &expect, QTextStre
     expect(QStringLiteral("the Known leftovers row equals the Mess list (%1 in %2 places)").arg(bytesText(mess)).arg(window.found().size()),
            words.contains(QStringLiteral("Known leftovers")) && words.contains(bytesText(mess))
                && words.contains(counted(window.found().size(), QStringLiteral("in %1 place"), QStringLiteral("in %1 places"))));
-    // Recipe's earlier versions, asked of the stand-in `recipe storage --json`.
-    const qint64 earlier = qEnvironmentVariable("DISK_STANDIN_EARLIER", QString::number(6ll << 30)).toLongLong();
-    expect(QStringLiteral("Kept by Recipe says what Recipe says (%1)").arg(bytesText(earlier)),
-           earlier > 0 && words.contains(QStringLiteral("Kept by Recipe")) && words.contains(bytesText(earlier)));
-    const QString mark = qEnvironmentVariable("DISK_STANDIN_RECIPE_MARK");
-    if (mark.isEmpty() || qEnvironmentVariable("LEVITATE_APP_RECIPE").isEmpty()) {
-        expect(QStringLiteral("the Recipe app could be started: LEVITATE_APP_RECIPE and DISK_STANDIN_RECIPE_MARK, see README.md"), false);
-    } else {
-        QFile::remove(mark);
-        if (QPushButton *open = buttonNamed(page, QStringLiteral("Open Recipe…")))
-            open->click();
-        waitFor([&] { return QFileInfo::exists(mark); }, 10);
-        expect(QStringLiteral("\"Open Recipe…\" starts the Recipe app"), QFileInfo::exists(mark));
-        QFile::remove(mark);
-    }
     expect(QStringLiteral("there is no row for what cannot be measured (logs and crash records)"),
            !words.contains(QStringLiteral("Logs and crash records")));
 

@@ -35,7 +35,6 @@ Window::Window(QWidget *parent)
     , kept_(qEnvironmentVariable("DISK_GUI_KEPT",
                                  QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/comparison.json"))
     , lsblk_(qEnvironmentVariable("DISK_GUI_LSBLK", "lsblk"))
-    , recipe_(qEnvironmentVariable("DISK_GUI_RECIPE", "recipe"))
     , files_(qEnvironmentVariable("DISK_GUI_FILES"))
     , apparent_(qEnvironmentVariable("DISK_GUI_APPARENT") == QLatin1String("1"))
 {
@@ -123,7 +122,6 @@ Window::Window(QWidget *parent)
     connect(disk_, &DiskPage::showMess, this, [this] { frame_->choose(QStringLiteral("mess")); });
     connect(disk_, &DiskPage::showBrowse, this, [this] { frame_->choose(QStringLiteral("browse")); });
     connect(disk_, &DiskPage::showSystems, this, [this] { frame_->choose(QStringLiteral("systems")); });
-    connect(disk_, &DiskPage::openRecipe, this, [this] { frame_->startApp(Frame::Recipe); });
 
     // F5 reads again what the tab shows. Coming back to the window reads the
     // state of the two roots again, which is quick; the disk is only looked
@@ -165,7 +163,6 @@ Window::Window(QWidget *parent)
     scan();
     readState();
     readLayout();
-    readEarlier();
 }
 
 Window::~Window()
@@ -179,8 +176,7 @@ Window::~Window()
 
 bool Window::busy() const
 {
-    return scanner_ != nullptr || run_ != nullptr || reading_ != nullptr || layoutRun_ != nullptr
-           || recipeRun_ != nullptr;
+    return scanner_ != nullptr || run_ != nullptr || reading_ != nullptr || layoutRun_ != nullptr;
 }
 
 void Window::refresh()
@@ -201,7 +197,6 @@ void Window::lookAgain()
         return;
     scan();
     readLayout();
-    readEarlier();
 }
 
 // "Open in Files": the desktop's file manager. DISK_GUI_FILES names a stand-in
@@ -412,8 +407,6 @@ DiskInfo Window::diskInfo() const
     info.found = found_;
     if (tree_ && !scanner_)
         info.slices = composition(tree_.get(), found_, home_);
-    info.earlierBytes = earlierBytes_;
-    info.earlierGenerations = earlierGenerations_;
     info.layoutRead = layoutRead_;
     info.layout = layout_;
     if (systems_ && state_.known) {
@@ -464,29 +457,6 @@ void Window::readLayout()
         drawDisk();
     });
     layoutRun_->start();
-}
-
-void Window::readEarlier()
-{
-    if (recipeRun_)
-        return;
-    recipeRun_ = new Run(recipe_, {"storage", "--json"}, this);
-    connect(recipeRun_, &Run::finished, this, [this](bool ok) {
-        Run *run = recipeRun_;
-        recipeRun_ = nullptr;
-        run->deleteLater();
-        earlierBytes_ = -1;
-        earlierGenerations_ = 0;
-        if (ok) {
-            const QJsonObject answer = QJsonDocument::fromJson(run->answer()).object();
-            if (answer.contains("earlier_bytes")) {
-                earlierBytes_ = answer["earlier_bytes"].toInteger();
-                earlierGenerations_ = answer["earlier_generations"].toInteger();
-            }
-        }
-        drawDisk();
-    });
-    recipeRun_->start();
 }
 
 // ---------------------------------------------------------------- The two roots

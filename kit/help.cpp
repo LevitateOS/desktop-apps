@@ -103,14 +103,9 @@ HelpText recipeText()
                      "use that is different. “Check for updates” fetches the lists of recipes first. Each update shows the "
                      "page that says what will happen."),
          QStringLiteral("updates"), QObject::tr("Updates")},
-        {QObject::tr("Go back a version, or keep a program at its version"),
-         QObject::tr("Open the program from Installed. “Go back” puts an earlier version in use again; “Keep at this "
-                     "version” stops updates until you press “Let it update again”. Software in a locked computer's "
-                     "running system has no earlier versions."),
-         QStringLiteral("installed"), QObject::tr("Installed")},
         {QObject::tr("See what takes room"),
-         QObject::tr("Storage shows what the earlier versions and what is installed take, and what was done to the "
-                     "stores. “Clear earlier versions…” deletes all earlier versions, after asking."),
+         QObject::tr("Storage shows what is installed takes, and what was done to the "
+                     "stores."),
          QStringLiteral("storage"), QObject::tr("Storage")},
         {QObject::tr("See where recipes come from"),
          QObject::tr("Sources lists them. “Fetch again” reads one again; “Add a source…” takes an address or a folder."),
@@ -118,8 +113,8 @@ HelpText recipeText()
     t.wrong = {
         {QObject::tr("An install or update stopped"),
          QObject::tr("The page says what stopped and shows what Recipe recorded. “Try again” repeats it, and “Copy for "
-                     "agent” puts the whole output on the clipboard, to paste into your own agent. Removing, going back, "
-                     "keeping at a version, sources, fetching and clearing have a page of their own with Stop; if one does "
+                     "agent” puts the whole output on the clipboard, to paste into your own agent. Removing, sources "
+                     "and fetching have a page of their own with Stop; if one does "
                      "not finish it shows Recipe's message and “Try again”."),
          QString(), QString()}};
     t.others = {{Frame::Recab, QObject::tr("Make the other root a copy of the booted root, start it at the next boot, and "

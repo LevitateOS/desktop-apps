@@ -136,12 +136,6 @@ static void readInstalled(const QJsonObject &installed, Catalog &fresh, Place pl
         item.place = place;
         item.name = o["name"].toString();
         item.version = o["version"].toString();
-        // Earlier versions Recipe still holds, newest first.
-        item.kept = o["kept"].toArray().first().toObject()["version"].toString();
-        for (const QJsonValue &earlier : o["kept"].toArray())
-            item.earlier << earlier.toObject()["version"].toString();
-        // `recipe installed --json` always carries `held` (commands.rs, Commands::Installed).
-        item.held = o["held"].toBool();
         if (o.contains("installed_on"))
             item.installedOn = QDateTime::fromSecsSinceEpoch(o["installed_on"].toInteger()).date();
         item.sizeBytes = o["size_bytes"].toInteger();
@@ -202,8 +196,7 @@ static bool readRootPackage(const QJsonObject &o, InstalledItem &item)
 // What `recipe --system installed --json` answers. On an A/B computer:
 // `{booted: {root, packages}, other: {root, mount, packages}, not_done: [{package, error}]}`.
 // On one with a single root: `{root, packages}` (the running root). Either way each package is a name
-// and a version, what it needs and how many desktop sessions it provides: no sizes, no earlier
-// versions, no programs.
+// and a version, what it needs and how many desktop sessions it provides: no sizes, no programs.
 static void readSystem(const QJsonObject &answer, Catalog &fresh)
 {
     fresh.systemName = osName();
@@ -253,7 +246,6 @@ static void readUpdates(const QJsonObject &updates, Catalog &fresh, Place place)
         // Null: nothing was recorded when the installed version was installed.
         item.changesKnown = o["changes"].isArray();
         item.sameVersion = o["reason"] == QLatin1String("recipe");
-        item.held = o["held"].toBool();
         for (const QJsonValue &change : o["changes"].toArray()) {
             const QJsonObject c = change.toObject();
             item.changes << Change{c["field"].toString(), c["before"].toString(), c["after"].toString(),
@@ -271,8 +263,6 @@ static void readStorage(const QJsonObject &storage, Catalog &fresh, Place place)
     Store &store = fresh.stores[int(place)];
     store.has = true;
     store.activeBytes = storage["active_bytes"].toInteger();
-    store.earlierBytes = storage["earlier_bytes"].toInteger();
-    store.earlierGenerations = storage["earlier_generations"].toInt();
 }
 
 // What `recipe history --json` answers: `{"schema_version": 1, "history": [...]}`,
@@ -326,8 +316,6 @@ void RecipeClient::load(Loaded done)
             }
             for (const Store &store : fresh->stores) {
                 fresh->activeBytes += store.activeBytes;
-                fresh->earlierBytes += store.earlierBytes;
-                fresh->earlierGenerations += store.earlierGenerations;
             }
         }
         done(ok, *fresh, problem);
@@ -419,26 +407,6 @@ Run *RecipeClient::update(const QString &name, Place place)
 Run *RecipeClient::remove(const QString &name, Place place)
 {
     return change(lead(place) + QStringList{"remove", name, "--machine-events"} + collection() + at(place), place);
-}
-
-Run *RecipeClient::clearEarlier(Place place)
-{
-    return change(QStringList{"storage", "--clear-earlier", "--json"} + at(place), place);
-}
-
-Run *RecipeClient::hold(const QString &name, Place place)
-{
-    return change(QStringList{"hold", name, "--machine-events"} + at(place), place);
-}
-
-Run *RecipeClient::unhold(const QString &name, Place place)
-{
-    return change(QStringList{"unhold", name, "--machine-events"} + at(place), place);
-}
-
-Run *RecipeClient::goBack(const QString &name, Place place)
-{
-    return change(QStringList{"go-back", name, "--machine-events"} + at(place), place);
 }
 
 Run *RecipeClient::refresh(const QString &source)

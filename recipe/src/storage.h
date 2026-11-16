@@ -1,4 +1,4 @@
-// What the installed software and its earlier versions take, and what was
+// What the installed software takes, and what was
 // done to the stores: `recipe storage --json` and `recipe history --json`,
 // per place where a store stands behind the software.
 #pragma once
@@ -15,8 +15,6 @@ public:
     // The sentences of the history as shown, newest first, for a check.
     QStringList historyLines() const { return lines_; }
 signals:
-    // Delete every earlier version the store of that place keeps.
-    void clearEarlier(Place place);
     void openInstalled();
 private:
     QStringList lines_;

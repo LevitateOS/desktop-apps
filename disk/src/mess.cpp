@@ -90,7 +90,7 @@ void look(Node *node, const QString &path, Search &s)
 
     // Recipe's own folders are named first: they belong to Recipe, so they are listed and
     // never handed over. Recipe has no command to clear them yet (`recipe cleanup NAME`
-    // is for one recipe's build files, `recipe storage --clear-earlier` for earlier versions).
+    // is for one recipe's build files).
     if (path == s.home + QStringLiteral("/.local/state/recipe") || path == QStringLiteral("/var/lib/recipe/state")) {
         s.add(Recipe, node, path, QObject::tr("Recipe's saved build steps"),
               QObject::tr("Kept so an interrupted or repeated build can continue. Recipe builds again what it needs."),

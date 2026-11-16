@@ -76,12 +76,7 @@ struct Recipe {
 enum class Place { Me = 0, Computer = 1, Other = 2 };
 
 struct InstalledItem {
-    // `kept`: the newest earlier version Recipe still holds, which "Go back" returns to.
-    QString name, version, kept;
-    // Every earlier version Recipe still holds, newest first (`kept` is the first).
-    QStringList earlier;
-    // `recipe hold` was run on it: `recipe update` leaves it as it is.
-    bool held = false;
+    QString name, version;
     QDate installedOn;
     qint64 sizeBytes = 0;
     QStringList programs, menu;
@@ -95,7 +90,7 @@ struct InstalledItem {
     // Empty where no store stands behind it.
     QString profile;
     Place place = Place::Computer;
-    // A store stands behind it: earlier versions, storage and going back apply.
+    // A store stands behind it: storage applies.
     // False for what `recipe --system installed` answers on an A/B system,
     // which says only name and version.
     bool inStore = true;
@@ -137,9 +132,6 @@ struct UpdateItem {
     bool changesKnown = true;
     // The version is the same and the source publishes another recipe file.
     bool sameVersion = false;
-    // `recipe updates` still lists a held package, marked held. It is not
-    // counted and "Update all" leaves it.
-    bool held = false;
     bool asksMore() const;
     // What it asks for beyond what the installed version had, in a few words:
     // "network, memory". Empty when nothing is more.
@@ -150,7 +142,7 @@ struct UpdateItem {
 // versions; any field that does not apply is empty.
 struct HistoryEntry {
     qint64 at = 0; // seconds since 1970
-    QString what;  // install, update, remove, go-back, clear-earlier, hold, unhold
+    QString what;  // install, update, remove
     QString package, from, to, source;
 };
 
@@ -158,8 +150,7 @@ struct HistoryEntry {
 // `recipe history` says (newest first).
 struct Store {
     bool has = false;
-    qint64 activeBytes = 0, earlierBytes = 0;
-    int earlierGenerations = 0;
+    qint64 activeBytes = 0;
     QList<HistoryEntry> history;
     // `recipe history` answered (an empty history is an answer).
     bool historyKnown = false;
@@ -184,11 +175,9 @@ struct Catalog {
     QList<UpdateItem> updates;
     // Installed software `recipe updates` could not look up, each as "name: why".
     QStringList updateProblems;
-    // What the store takes: what is installed, and the earlier versions kept
-    // beside it (with what only they hold).
+    // What the store takes: what is installed.
     // Summed over the stores there are; `stores` has each, by `Place`.
-    qint64 activeBytes = 0, earlierBytes = 0;
-    int earlierGenerations = 0;
+    qint64 activeBytes = 0;
     Store stores[2];
     // More than one place holds software (or can): rows say where they are.
     bool twoPlaces = false;
@@ -219,8 +208,6 @@ struct Catalog {
     const InstalledItem *installedItem(const QString &name, Place place) const;
     const UpdateItem *update(const QString &name) const;
     const UpdateItem *update(const QString &name, Place place) const;
-    // Updates that count: the held ones are listed but not counted.
-    int updatesToCount() const;
     // The other root holds it (and the booted root does not hold that version).
     bool inOtherRoot(const QString &name) const;
     // "the other root (B)", or "the other root" when its name is not known.

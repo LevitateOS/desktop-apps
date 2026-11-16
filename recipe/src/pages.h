@@ -66,15 +66,12 @@ signals:
     void update(const QString &name, Place place);
     void remove(const QString &name, Place place);
     void open(const QString &name, Place place);
-    void goBack(const QString &name, Place place);
-    // Keep it at its version (`on`), or let it update again.
-    void hold(const QString &name, Place place, bool on);
     // Open the recipe's file.
     void readRecipe(const QString &name);
 private:
     // Where the software is, in each place that holds it.
     void whereItIs(QVBoxLayout *body, const Catalog &catalog, const QString &name);
-    // What can be done to what is installed: keep it, go back, remove. Nothing here needs a recipe.
+    // What can be done to what is installed: remove. Nothing here needs a recipe.
     void actionRows(QVBoxLayout *body, const Catalog &catalog, const QString &name,
                     const QList<const InstalledItem *> &held);
     // Installed software whose recipe is gone: what its receipt says, and what still works.
@@ -139,8 +136,8 @@ private:
     QString log_;
 };
 
-// A short change that has no steps of its own: removing, going back, keeping at a
-// version, adding or removing a source, fetching the lists, clearing earlier versions.
+// A short change that has no steps of its own: removing, adding or removing a
+// source, fetching the lists.
 // It shows what is being done, lets it be stopped, shows the command's own output,
 // and when it did not finish says why and offers "Try again". The window drives it.
 class ChangePage : public Page {
@@ -181,11 +178,8 @@ public:
     void show(const Catalog &catalog, const QString &selected, int selectedPlace = -1);
 signals:
     void open(const QString &name, Place place);
-    void goBack(const QString &name, Place place);
     void remove(const QString &name, Place place);
     void update(const QString &name, Place place);
-    void hold(const QString &name, Place place, bool on);
-    void openStorage();
     void selected(const QString &name, Place place);
     // The page of software whose recipe is gone: what its receipt says.
     void openPage(const QString &name);
@@ -200,8 +194,6 @@ public:
     void show(const Catalog &catalog, const QString &selected, int selectedPlace = -1);
 signals:
     void update(const QString &name, Place place);
-    void hold(const QString &name, Place place, bool on);
-    void updateAll();
     void selected(const QString &name, Place place);
     // Fetch every source's list again, to see whether anything is newer.
     void check();

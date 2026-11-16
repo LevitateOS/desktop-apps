@@ -45,17 +45,6 @@ public:
     Run *install(const QString &name, Place place);
     Run *update(const QString &name, Place place);
     Run *remove(const QString &name, Place place);
-    // Activates the newest earlier version a store still holds; no recipe
-    // runs. Only where a store stands behind the software.
-    Run *goBack(const QString &name, Place place);
-    // Keeps a package at its version (`recipe hold`) or lets it update again
-    // (`recipe unhold`). Only where a store stands behind the software: `recipe`
-    // does not hold software on an A/B system (system_route takes install, update,
-    // remove, installed and isinstalled only).
-    Run *hold(const QString &name, Place place);
-    Run *unhold(const QString &name, Place place);
-    // Deletes every earlier version a store keeps. Nothing installed changes.
-    Run *clearEarlier(Place place);
 
     // The file `recipe info` names as this recipe's: the one Recipe runs for that entry (for a
     // remote source, the copy it fetches to read). `then` gets the path, or why there is none.

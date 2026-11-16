@@ -25,7 +25,7 @@ Shared widgets are in `../kit`.
 **The finding is real.** The scanner and the rules have run on a real home
 folder (172 GiB read in about nine seconds, on a warm disk). The pages for The
 disk, Browse and Mess were built against stand-ins for `lsblk` and
-`recipe storage` (below) and never on a real desktop.
+`recab` (below) and never on a real desktop.
 
 **recab compare has only run on sample trees.** It answers in the shape written down
 under "What it asks of recab"; the two-root form, which mounts the other partition, has never
@@ -40,10 +40,7 @@ run on an A/B computer with this window. The stories use `fixtures/recab`, which
   "has room", with how much is left of how much. Never counted from the list.
 - **What can be freed**, rows with a size, a sentence and a button:
   *Known leftovers* (the Mess list: the same figure in the same number of
-  places; the button, "Look at the list", goes to Mess); *Kept by Recipe* (`earlier_bytes` from
-  `recipe storage --json`, asked as the person; the button starts the Recipe app
-  through the frame's `startApp`; no row when Recipe cannot be asked or says
-  zero). There is no row
+  places; the button, "Look at the list", goes to Mess). There is no row
   for logs and crash records: they cannot be measured without root.
 - **Every partition of this disk**, from `lsblk --json --bytes` (`DISK_GUI_LSBLK`)
   for the disk that holds the home folder (found by its device, else by what is
@@ -64,7 +61,7 @@ run on an A/B computer with this window. The stories use `fixtures/recab`, which
   be read is said; their size is not known and is not guessed. Where lengths and
   room taken are counted alike, it also says how much of what the disk counts as
   used lies outside the folders read.
-- "Look again" reads the scan, the partitions, Recipe's storage again.
+- "Look again" reads the scan and the partitions again.
 
 ### Browse
 
@@ -153,7 +150,7 @@ computer with two roots compare them). The first page comes once per person the 
 
 ## What counts as mess
 
-The rules are in `src/mess.cpp`. A place smaller than 20 MiB is not named. A place the person said never to suggest, and anything inside it, is not named. Recipe's kept earlier versions (`package-generations`) are no longer a line here: they are the "Kept by Recipe" row on The disk, from Recipe's own number, so they are not counted twice.
+The rules are in `src/mess.cpp`. A place smaller than 20 MiB is not named. A place the person said never to suggest, and anything inside it, is not named.
 
 | Kind | What | Verdict |
 |---|---|---|
@@ -185,7 +182,7 @@ On a sample home folder, with the stand-ins:
 A=$PWD/build; F=$PWD/disk/fixtures
 $F/make-sample $A/sample
 DISK_GUI_ROOTS=$A/sample DISK_GUI_HOME=$A/sample DISK_GUI_APPARENT=1 \
-  DISK_GUI_LSBLK=$F/lsblk DISK_GUI_RECIPE=$F/recipe DISK_GUI_RECAB=$F/recab \
+  DISK_GUI_LSBLK=$F/lsblk DISK_GUI_RECAB=$F/recab \
   $A/disk/disk-gui --look levitate
 ```
 
@@ -200,7 +197,7 @@ expected: ..." for each thing that failed, and exits non-zero. It needs no
 display, and no real recab, recipe, lsblk or administrator.
 **`--shots` refuses to start (exit code 2, and a sentence naming what is missing)
 unless every program it could run and every folder it could write is named in the
-environment**: `DISK_GUI_RECAB`, `DISK_GUI_CMDLINE`, `DISK_GUI_RECIPE`, `DISK_GUI_FILES`,
+environment**: `DISK_GUI_RECAB`, `DISK_GUI_CMDLINE`, `DISK_GUI_FILES`,
 `DISK_GUI_LSBLK`, `DISK_GUI_ROOTS`, `DISK_GUI_HOME`, `DISK_GUI_ROOT_HELPER` (empty is a
 name), and `HOME` (not your own) and the XDG folders in scratch space (the command
 below names them all). The story runs itself bare to check that.
@@ -220,8 +217,7 @@ ones about the two roots.
 - **The disk**: the free space and total it names are what `statvfs` says for the
   sample's disk (within 256 MiB, because the disk is shared with other programs
   while the check runs), and the heading follows them; the Known leftovers row is
-  the Mess list's figure in the same number of places; Kept by Recipe is what the
-  `recipe` stand-in says, and its button starts the Recipe stand-in app; there is
+  the Mess list's figure in the same number of places; there is
   no row for logs; the partitions are the `lsblk` stand-in's (right disk, the
   other disk's partition left out, the booted root and the other root named
   from recab's status and the mounts, the home partition measured, the unmounted ones "not
@@ -259,7 +255,6 @@ A=$PWD/build; F=$PWD/disk/fixtures
 S=/tmp/disk-shots   # all state of the check lives here
 mkdir -p $S/home; $F/make-sample $S/sample
 printf '#!/bin/sh\ntouch "$DISK_STANDIN_SYSTEM_MARK"\n' > $S/system-app; chmod +x $S/system-app
-printf '#!/bin/sh\ntouch "$DISK_STANDIN_RECIPE_MARK"\n' > $S/recipe-app; chmod +x $S/recipe-app
 printf '#!/bin/sh\nprintf %%s "$1" > "$DISK_STANDIN_FILES_MARK"\n' > $S/files-app; chmod +x $S/files-app
 mkdir -p $S/run; chmod 700 $S/run
 export HOME=$S/home XDG_CONFIG_HOME=$S/home/config XDG_STATE_HOME=$S/home/state \
@@ -270,7 +265,6 @@ QT_QPA_PLATFORM=offscreen DISK_GUI_ROOTS=$S/sample DISK_GUI_HOME=$S/sample DISK_
   LEVITATE_APP_SYSTEM=$S/system-app DISK_STANDIN_SYSTEM_MARK=$S/system-app-started \
   DISK_GUI_LSBLK=$F/lsblk DISK_STANDIN_LSBLK_MOUNT=$(df --output=target $S/sample | tail -1) \
   DISK_STANDIN_LSBLK_HOME_SIZE=$(df -B1 --output=size $S/sample | tail -1 | tr -d ' ') \
-  DISK_GUI_RECIPE=$F/recipe LEVITATE_APP_RECIPE=$S/recipe-app DISK_STANDIN_RECIPE_MARK=$S/recipe-app-started \
   DISK_GUI_FILES=$S/files-app DISK_STANDIN_FILES_MARK=$S/files-app-asked \
   $A/disk/disk-gui --look levitate --shots $S/pics
 ```
@@ -291,7 +285,6 @@ Without the settings it reads the real home folder and compares nothing.
 | `DISK_GUI_ROOT_HELPER` | what runs it as root; empty: run it as the person | `pkexec` |
 | `DISK_GUI_KEPT` | the file the last comparison is kept in | `comparison.json` in the person's cache |
 | `DISK_GUI_LSBLK` | the program that lists the disk's partitions, asked `--json --bytes -o ...` | `lsblk` |
-| `DISK_GUI_RECIPE` | the program asked `storage --json` for what Recipe keeps | `recipe` |
 | `DISK_GUI_FILES` | a program started with a folder instead of the desktop's file manager (for checks) | the desktop's own |
 
 The stand-ins, all in `fixtures/`:
@@ -301,7 +294,6 @@ The stand-ins, all in `fixtures/`:
   `DISK_STANDIN_LSBLK_HOME_SIZE` bytes; nothing else is mounted, so no real disk
   of the computer it runs on is mistaken for one of the partitions.
   `DISK_STANDIN_LSBLK_FAIL=1` makes it fail.
-- `recipe` answers `storage --json` (`DISK_STANDIN_EARLIER` bytes, default 6 GiB).
 - `recab` reads no disk and speaks `status --json` (schema 11) and `compare --json
   --machine-events` only. `DISK_STANDIN_SCENARIO` picks what it says: `normal` (A booted),
   `booted-b`, `identical` (the two roots hold the same), `failing`. `DISK_STANDIN_LOG`
@@ -355,7 +347,7 @@ both and set side by side.
 | `src/systems.*` | the comparison of the two roots: what recab answered, and its page |
 | `src/window.*` | the frame, its four entries and the flows between them |
 | `src/shots.*` | the picture mode and flow check |
-| `fixtures/` | the stand-ins (lsblk, recipe, recab) and the sample home folder |
+| `fixtures/` | the stand-ins (lsblk, recab) and the sample home folder |
 | `data/` | the menu entry |
 | `../kit/` | the frame (rail, status line), shared widgets, the page base, the command runner |
 
@@ -396,7 +388,7 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
 - Choosing the other entry while a comparison reads is allowed (the page keeps
   filling).
 - Checked only offscreen, with stand-ins; not on a real desktop, and the
-  link buttons, the Recipe app and the Recab app were not started for real.
+  link buttons and the Recab app were not started for real.
 - A comparison of a real pair of roots: `recab compare` has only run on
   sample trees. It says no byte progress, so the bar cannot say how far it is.
 - The kept comparison is one file in the person's cache
@@ -405,10 +397,8 @@ and "Open Updater" on a mutable one. F5 and coming back to the window read the f
 - Seeing what changed inside a file whose content differs; searching the list of
   differences.
 - Recipe's own folders are left alone because Recipe has no command that clears
-  them (`recipe cleanup NAME` is for one recipe's build files, `recipe storage
-  --clear-earlier` for earlier versions). When it has one, Recdirstat can offer to clear them through
-  Recipe. The real `recipe storage --json` was not run here: the shape (`earlier_bytes`,
-  `earlier_generations`) was read from `tools/recipe` and `recipe/README.md`.
+  them (`recipe cleanup NAME` is for one recipe's build files). When it has one, Recdirstat can offer to clear them through
+  Recipe.
 - Mess inside the roots. The map reads only the home folder and
   `/var/lib/recipe`; the two roots are compared with each other, not searched
   for leftovers.

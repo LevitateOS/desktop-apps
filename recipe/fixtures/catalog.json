@@ -787,7 +787,9 @@
     "title": "Plasma desktop",
     "details": "The Plasma desktop, its login session and the everyday apps that come with it.",
     "license": "GPL-2.0-or-later",
-    "systems": ["levitateos"],
+    "systems": [
+     "levitateos"
+    ],
     "adds": {
      "programs": [],
      "menu": []
@@ -806,7 +808,9 @@
     "timeout_secs": 7200,
     "network_max_bytes": 7340032
    },
-   "deps": ["desktop-libs"],
+   "deps": [
+    "desktop-libs"
+   ],
    "build_deps": [],
    "hooks": [
     "install",
@@ -841,7 +845,9 @@
     "timeout_secs": 7200,
     "network_max_bytes": 7340032
    },
-   "deps": ["desktop-libs"],
+   "deps": [
+    "desktop-libs"
+   ],
    "build_deps": [],
    "hooks": [
     "install",
@@ -876,7 +882,9 @@
     "timeout_secs": 7200,
     "network_max_bytes": 7340032
    },
-   "deps": ["desktop-libs"],
+   "deps": [
+    "desktop-libs"
+   ],
    "build_deps": [],
    "hooks": [
     "install",
@@ -925,7 +933,6 @@
    "version": "1.12.3",
    "installed_on": 1793188800,
    "size_bytes": 429916160,
-   "kept": [],
    "recipe": "/usr/share/recipe/recipes/element.rhai",
    "files": [
     "bin/element-desktop",
@@ -938,14 +945,6 @@
    "version": "10.2.0",
    "installed_on": 1792152000,
    "size_bytes": 6291456,
-   "kept": [
-    {
-     "version": "10.1.0",
-     "generation": "g-fd-1010",
-     "installed_on": 1790000000,
-     "size_bytes": 5242880
-    }
-   ],
    "recipe": "/usr/share/recipe/recipes/fd.rhai",
    "files": [
     "bin/fd",
@@ -959,14 +958,6 @@
    "version": "3.0.4",
    "installed_on": 1793620800,
    "size_bytes": 545259520,
-   "kept": [
-    {
-     "version": "3.0.2",
-     "generation": "g-gimp-302",
-     "installed_on": 1791028800,
-     "size_bytes": 220200960
-    }
-   ],
    "recipe": "/usr/share/recipe/recipes/gimp.rhai",
    "files": [
     "bin/gimp",
@@ -979,14 +970,6 @@
    "version": "1.94.1",
    "installed_on": 1791979200,
    "size_bytes": 713031680,
-   "kept": [
-    {
-     "version": "1.94.0",
-     "generation": "g-rust-1940",
-     "installed_on": 1789387200,
-     "size_bytes": 419430400
-    }
-   ],
    "recipe": "/usr/share/recipe/recipes/rust.rhai",
    "files": [
     "bin/rustc",
@@ -999,7 +982,6 @@
    "version": "140.3.0",
    "installed_on": 1791806400,
    "size_bytes": 304087040,
-   "kept": [],
    "recipe": "/usr/share/recipe/recipes/thunderbird.rhai",
    "files": [
     "bin/thunderbird",

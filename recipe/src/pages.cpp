@@ -396,10 +396,7 @@ void BrowsePage::show(const Catalog &catalog, const QString &category, const QSt
         bool onlyOther = !held.isEmpty();
         for (const InstalledItem *item : held)
             onlyOther = onlyOther && item->place == Place::Other;
-        if (newer && newer->held) {
-            // Kept at its version: its update is not offered until it is released.
-            grid->addWidget(dim(text(tr("Kept"))), row, 4, Qt::AlignRight);
-        } else if (newer) {
+        if (newer) {
             const Place where = newer->place;
             auto *button = new QPushButton(tr("Update"));
             connect(button, &QPushButton::clicked, this, [this, name, where] { emit update(name, where); });
@@ -561,7 +558,7 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
             bool offered = false;
             for (const InstalledItem *other : held) {
                 const UpdateItem *update = catalog.update(name, other->place);
-                offered = offered || (update && !update->held && other->place != Place::Other);
+                offered = offered || (update && other->place != Place::Other);
             }
             auto *open = offered ? new QPushButton(tr("Open")) : primary(tr("Open"));
             connect(open, &QPushButton::clicked, this, [this, name, place] { emit this->open(name, place); });
@@ -573,10 +570,6 @@ void RecipePage::show(const Catalog &catalog, const QString &name)
         const UpdateItem *update = catalog.update(name, item->place);
         if (!update || item->place == Place::Other)
             continue;
-        // A held program is not offered an update until it is released.
-        if (update->held) {
-            continue;
-        }
         anyUpdate = true;
         const Place place = item->place;
         auto *go = primary(named(tr("Update to %1").arg(update->to), place));
@@ -768,12 +761,9 @@ void RecipePage::whereItIs(QVBoxLayout *body, const Catalog &catalog, const QStr
                 if (!needed.isEmpty())
                     sentences << tr("Needed by: %1.").arg(catalog.shownNames(needed).join(tr(", ")));
             }
-            if (item->held)
-                sentences << tr("Kept at this version.");
             const UpdateItem *update = catalog.update(name, place);
             if (update && place != Place::Other)
-                sentences << (item->held ? tr("%1 is ready, and is not offered while it is kept.").arg(update->to)
-                                         : tr("%1 is ready.").arg(update->to));
+                sentences << tr("%1 is ready.").arg(update->to);
             if (!sentences.isEmpty())
                 state += tr(". %1").arg(sentences.join(QLatin1Char(' ')));
         }
@@ -802,25 +792,6 @@ void RecipePage::actionRows(QVBoxLayout *body, const Catalog &catalog, const QSt
         for (const InstalledItem *item : held) {
             const Place place = item->place;
             const QString at = several ? tr(" (%1)").arg(where(place)) : QString();
-            // `recipe` holds software only where a store stands behind it.
-            if (item->inStore && place != Place::Other) {
-                if (item->held) {
-                    auto *release = new QPushButton(tr("Let it update again"));
-                    connect(release, &QPushButton::clicked, this, [this, name, place] { emit hold(name, place, false); });
-                    rows.add(tr("Kept at %1%2").arg(item->version, at),
-                             tr("Update and Update all leave it alone until you let it update again."), {release});
-                } else {
-                    auto *keep = new QPushButton(tr("Keep at this version"));
-                    connect(keep, &QPushButton::clicked, this, [this, name, place] { emit hold(name, place, true); });
-                    rows.add(tr("Keep it at %1%2").arg(item->version, at),
-                             tr("Update and Update all will leave it alone until you let it update again."), {keep});
-                }
-            }
-            if (item->inStore && !item->kept.isEmpty()) {
-                auto *older = new QPushButton(tr("Go back to %1").arg(item->kept));
-                connect(older, &QPushButton::clicked, this, [this, name, place] { emit goBack(name, place); });
-                rows.add(tr("Go back%1").arg(at), tr("Return to %1, which is still kept.").arg(item->kept), {older});
-            }
             // The base is the system itself: it is replaced by a newer release, never removed.
             if (item->base)
                 continue;
@@ -834,11 +805,7 @@ void RecipePage::actionRows(QVBoxLayout *body, const Catalog &catalog, const QSt
             }
             auto *remove = new QPushButton(tr("Remove…"));
             connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
-            QString removed;
-            if (!item->inStore)
-                removed = catalog.takenOutWords(*item);
-            else
-                removed = tr("No longer installed. Its files stay among the earlier versions until those are cleared, in Storage.");
+            const QString removed = !item->inStore ? catalog.takenOutWords(*item) : tr("No longer installed.");
             rows.add(tr("Remove%1").arg(at), removed, {remove});
         }
         body->addWidget(rows.panel);
@@ -936,7 +903,7 @@ void RecipePage::showReceipt(const Catalog &catalog, const QString &name)
         body->addWidget(panel);
     }
 
-    // Remove, and going back and keeping at a version where a store stands behind it, work from the receipt.
+    // Remove works from the receipt.
     actionRows(body, catalog, name, held);
     body->addStretch();
 
@@ -1252,20 +1219,11 @@ void RunPage::onFinished(bool ok)
     state_->setText(stoppedByUser ? tr("Stopped") : tr("Stopped at this step"));
     title_->setText(shown);
 
-    // `recipe update` refuses a held package before anything runs, in its own
-    // sentence (commands.rs, Commands::Update); the catalog this run began from
-    // may be older than the hold, so the sentence counts too.
     const QString reason = failure["reason"].toString();
-    const InstalledItem *wasInstalled = catalog_.installedItem(name_, place_);
-    const bool heldRefusal = !updatingFrom_.isEmpty() && !stoppedByUser
-                             && ((wasInstalled && wasInstalled->held)
-                                 || reason.contains(QStringLiteral(" is held, so it is not updated")));
 
     // What happened, and what it left.
     QString what;
-    if (heldRefusal)
-        what = tr("%1 is kept at version %2").arg(shown, updatingFrom_);
-    else if (stoppedByUser)
+    if (stoppedByUser)
         what = tr("You stopped it");
     else if (updatingFrom_.isEmpty())
         what = tr("Installing %1 was stopped").arg(shown);
@@ -1278,9 +1236,7 @@ void RunPage::onFinished(bool ok)
     verdict->setFrameShape(QFrame::NoFrame);
     verdict->column()->addWidget(strong(what));
     verdict->column()->addWidget(
-        text(heldRefusal ? (reason.isEmpty() ? tr("It is kept at this version, so it is not updated.") : reason)
-             : stoppedByUser ? tr("What was already fetched and built is kept.") : unchanged,
-             true));
+        text(stoppedByUser ? tr("What was already fetched and built is kept.") : unchanged, true));
     column_->insertWidget(1, verdict);
 
     auto *buttons = new QHBoxLayout;
@@ -1288,20 +1244,6 @@ void RunPage::onFinished(bool ok)
     auto *leave = new QPushButton(tr("Back"));
     connect(again, &QPushButton::clicked, this, [this, name] { emit retry(name); });
     connect(leave, &QPushButton::clicked, this, &RunPage::back);
-    if (heldRefusal) {
-        // Nothing ran, so there is no plan to show; and nothing to copy:
-        // the person asked it to stay as it is.
-        planBox_->hide();
-        outputTitle_->hide();
-        output_->hide();
-        column_->addStretch();
-        delete again;
-        buttons->addWidget(leave);
-        buttons->addStretch();
-        verdict->column()->addLayout(buttons);
-        emit failed(name_);
-        return;
-    }
     if (stoppedByUser) {
         buttons->addWidget(again);
         buttons->addWidget(leave);
@@ -1492,7 +1434,8 @@ void ChangePage::begin(const Words &words, Run *run)
     auto *top = new QVBoxLayout;
     top->setSpacing(1);
     top->addWidget(heading(words.title));
-    top->addWidget(dim(text(words.subtitle, true)));
+    if (!words.subtitle.isEmpty())
+        top->addWidget(dim(text(words.subtitle, true)));
     header->addLayout(top, 1);
     auto *side = new QVBoxLayout;
     side->setSpacing(6);
@@ -1665,11 +1608,9 @@ void addNotDone(QVBoxLayout *into, const Catalog &catalog)
     }
 }
 
-// What a row says about a newer version, and whether the program is kept.
-QString newerCell(const InstalledItem &item, const UpdateItem *update)
+// What a row says about a newer version.
+QString newerCell(const UpdateItem *update)
 {
-    if (item.held)
-        return update ? QObject::tr("kept at this version; %1 is ready").arg(update->to) : QObject::tr("kept at this version");
     if (!update)
         return QString();
     return update->fromCollection ? QObject::tr("recipe has %1").arg(update->to) : QObject::tr("%1 is ready").arg(update->to);
@@ -1711,14 +1652,6 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             summary += tr(" %1 more only in %2.").arg(other).arg(catalog.otherWords());
     }
     top->addWidget(dim(text(summary, true)));
-    // The earlier versions and clearing them are in Storage.
-    if (catalog.earlierGenerations) {
-        auto *storage = new ClickLabel(tr("Earlier versions kept beside them take %1. They are in Storage.")
-                                           .arg(bytesText(catalog.earlierBytes)));
-        dim(storage);
-        connect(storage, &ClickLabel::clicked, this, &InstalledPage::openStorage);
-        top->addWidget(storage, 0, Qt::AlignLeft);
-    }
     if (!catalog.computerProblem.isEmpty())
         top->addWidget(dim(text(tr("This computer's own software could not be read: %1").arg(catalog.computerProblem), true)));
     column->addLayout(top);
@@ -1728,10 +1661,9 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         return;
     }
 
-    bool anyDate = false, anyKept = false, anySize = false;
+    bool anyDate = false, anySize = false;
     for (const InstalledItem &item : catalog.installed) {
         anyDate = anyDate || item.installedOn.isValid();
-        anyKept = anyKept || !item.kept.isEmpty();
         anySize = anySize || item.sizeBytes;
     }
     auto shared = std::make_shared<Catalog>(catalog);
@@ -1766,7 +1698,7 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                 title += tr(", %1").arg(bytesText(catalog.stores[int(place)].activeBytes));
             groups->addWidget(strong(title));
         }
-        QTreeWidget *tree = table({tr("Name"), tr("Version"), tr("Newer"), tr("Installed"), tr("Size"), tr("Earlier")});
+        QTreeWidget *tree = table({tr("Name"), tr("Version"), tr("Newer"), tr("Installed"), tr("Size")});
         for (const InstalledItem *item : here) {
             const Recipe *recipe = catalog.recipe(item->name);
             const UpdateItem *update = catalog.update(item->name, item->place);
@@ -1780,12 +1712,9 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                 if (!with.isEmpty())
                     shownName = tr("%1 · comes with %2").arg(shownName, catalog.shownNames(with).join(tr(", ")));
             }
-            auto *line = new QTreeWidgetItem(tree, {shownName, item->base ? QString() : item->version, newerCell(*item, update),
+            auto *line = new QTreeWidgetItem(tree, {shownName, item->base ? QString() : item->version, newerCell(update),
                                                     QLocale().toString(item->installedOn, "d MMM yyyy"),
-                                                    item->sizeBytes ? bytesText(item->sizeBytes) : QString(),
-                                                    item->kept.isEmpty() ? (item->inStore ? tr("none") : QString()) : item->kept});
-            if (item->held)
-                line->setForeground(2, moodColour(tree->palette(), Mood::Warn));
+                                                    item->sizeBytes ? bytesText(item->sizeBytes) : QString()});
             line->setData(0, Qt::UserRole, item->name);
             line->setData(1, Qt::UserRole, int(item->place));
             line->setSizeHint(0, QSize(0, 32));
@@ -1797,7 +1726,6 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         // A receipt written before Recipe recorded it has no date; recab's list has none of these.
         tree->setColumnHidden(3, !anyDate);
         tree->setColumnHidden(4, !anySize);
-        tree->setColumnHidden(5, !anyKept);
         tree->setMaximumHeight(tree->header()->sizeHint().height() + 6 + tree->sizeHintForRow(0) * int(here.size()));
         groups->addWidget(tree);
         trees->append(tree);
@@ -1829,11 +1757,10 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
         auto *words = new QVBoxLayout;
         words->setSpacing(1);
         if (item->base) {
-            // The system itself: replaced as a whole by a newer release, so no Update, Remove, Go back
-            // or Keep. The frame's release page says whether a newer release exists.
+            // The system itself: replaced as a whole by a newer release, so no Update or Remove. The frame's release page says whether a newer release exists.
             words->addWidget(strong(shared->baseWords(*item)));
             words->addWidget(dim(text(tr("The files of the system release this computer runs. A newer release replaces it as a "
-                                         "whole; it is not updated, removed or kept at a version like a program. \"Check for "
+                                         "whole; it is not updated or removed like a program. \"Check for "
                                          "updates\" says whether there is one."),
                                       true)));
             row->addLayout(words, 1);
@@ -1873,10 +1800,6 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
                               blockers.size() == 1 ? tr("it") : tr("them"));
         if (item->menu.isEmpty() && !item->programs.isEmpty())
             about += tr(" Run it in a terminal as %1.").arg(item->programs.join(tr(", ")));
-        if (item->held)
-            about += tr(" It is kept at this version: updates leave it alone.");
-        if (!item->kept.isEmpty())
-            about += tr(" Version %1 is kept, so you can go back to it.").arg(item->kept);
         words->addWidget(dim(text(about, true)));
         row->addLayout(words, 1);
         if (!recipe) {
@@ -1891,25 +1814,12 @@ void InstalledPage::show(const Catalog &catalog, const QString &selectedName, in
             connect(open, &QPushButton::clicked, this, [this, name, place] { emit this->open(name, place); });
             row->addWidget(open);
         }
-        if (!item->kept.isEmpty() && item->inStore) {
-            auto *older = new QPushButton(tr("Go back to %1").arg(item->kept));
-            connect(older, &QPushButton::clicked, this, [this, name, place] { emit goBack(name, place); });
-            row->addWidget(older);
-        }
-        // `recipe` holds software only where a store stands behind it.
-        if (item->inStore && place != Place::Other) {
-            auto *keep = new QPushButton(item->held ? tr("Let it update again") : tr("Keep at this version"));
-            const bool hold = !item->held;
-            connect(keep, &QPushButton::clicked, this, [this, name, place, hold] { emit this->hold(name, place, hold); });
-            row->addWidget(keep);
-        }
         if (blockers.isEmpty()) {
             auto *remove = new QPushButton(tr("Remove…"));
             connect(remove, &QPushButton::clicked, this, [this, name, place] { emit this->remove(name, place); });
             row->addWidget(remove);
         }
-        // A held program is not offered an update until it is released.
-        if (update && place != Place::Other && !update->held) {
+        if (update && place != Place::Other) {
             auto *newer = primary(tr("Update to %1").arg(update->to));
             connect(newer, &QPushButton::clicked, this, [this, name, place] { emit this->update(name, place); });
             row->addWidget(newer);
@@ -1941,15 +1851,11 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
     auto *header = new QHBoxLayout;
     auto *top = new QVBoxLayout;
     top->setSpacing(1);
-    const int counted_ = catalog.updatesToCount();
+    const int counted_ = int(catalog.updates.size());
     top->addWidget(heading(counted_ ? counted(counted_, tr("%1 update"), tr("%1 updates")) : tr("Updates")));
     // What the updates ask for, in the three ways `recipe updates` can say it.
-    int more = 0, same = 0, unknown = 0, heldCount = 0;
+    int more = 0, same = 0, unknown = 0;
     for (const UpdateItem &item : catalog.updates) {
-        if (item.held) {
-            ++heldCount;
-            continue;
-        }
         (!item.changesKnown ? unknown : item.asksMore() ? more : same)++;
     }
     QStringList parts;
@@ -1962,8 +1868,6 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
     QString summary;
     if (catalog.updates.isEmpty())
         summary = tr("Everything installed is at the newest version of its recipe.");
-    else if (!counted_)
-        summary = tr("Nothing to update. %1 kept at their version would have a newer one.").arg(heldCount);
     else
         summary = tr("%1.").arg(parts.join(tr("; ")));
     qint64 fetched = 0;
@@ -1981,22 +1885,7 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
     check->setToolTip(tr("Fetches every source's list again"));
     connect(check, &QPushButton::clicked, this, &UpdatesPage::check);
     header->addWidget(check, 0, Qt::AlignBottom);
-    if (counted_ > 1) {
-        auto *all = primary(tr("Update all"));
-        connect(all, &QPushButton::clicked, this, &UpdatesPage::updateAll);
-        header->addWidget(all, 0, Qt::AlignBottom);
-    }
     column->addLayout(header);
-    // "Update all" leaves the held ones; the page says which.
-    QStringList keptNames;
-    for (const UpdateItem &item : catalog.updates)
-        if (item.held)
-            keptNames << tr("%1 (kept at %2)").arg(catalog.recipe(item.name) ? catalog.recipe(item.name)->shown() : item.name, item.from);
-    if (!keptNames.isEmpty())
-        column->addWidget(tinted(text(counted_ > 1 ? tr("Update all leaves %1 alone. Let it update again to include it.").arg(keptNames.join(tr(", ")))
-                                                   : tr("Kept, so left alone: %1. Let it update again to offer its update.").arg(keptNames.join(tr(", "))),
-                                      true),
-                                 Mood::Warn));
     if (!catalog.updateProblems.isEmpty())
         column->addWidget(dim(text(tr("Not looked up: %1.").arg(catalog.updateProblems.join(tr("; "))), true)));
     if (catalog.updates.isEmpty()) {
@@ -2008,14 +1897,13 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
     auto shared = std::make_shared<Catalog>(catalog);
     for (const UpdateItem &item : catalog.updates) {
         const Recipe *recipe = catalog.recipe(item.name);
-        const QString asks = item.held ? tr("Kept at this version")
-                             : !item.changesKnown ? tr("Not compared")
+        const QString asks = !item.changesKnown ? tr("Not compared")
                              : item.asksMore() ? tr("More: %1").arg(item.asksMoreWords()) : tr("Nothing more");
         auto *line = new QTreeWidgetItem(tree, {recipe ? recipe->shown() : item.name, placeTitle(item.place, catalog.otherRoot),
                                                 item.sameVersion ? tr("%1, another recipe").arg(item.from)
                                                                  : tr("%1 → %2").arg(item.from, item.to),
                                                 asks});
-        if (item.held || (item.changesKnown && item.asksMore()))
+        if (item.changesKnown && item.asksMore())
             line->setForeground(3, moodColour(tree->palette(), Mood::Warn));
         line->setData(0, Qt::UserRole, item.name);
         line->setData(1, Qt::UserRole, int(item.place));
@@ -2048,19 +1936,11 @@ void UpdatesPage::show(const Catalog &catalog, const QString &selectedName, int 
         if (!item)
             return;
         const QString shown = recipe ? recipe->shown() : name;
-        // Update, or for a program kept at its version, letting it update again first.
         auto buttons = [&] {
             auto *row = new QHBoxLayout;
-            if (item->held) {
-                auto *release = new QPushButton(tr("Let it update again"));
-                connect(release, &QPushButton::clicked, this, [this, name, place] { emit hold(name, place, false); });
-                row->addWidget(release);
-                row->addWidget(dim(text(tr("%1 is kept at %2. Updating it is not offered until it is released.").arg(shown, item->from))));
-            } else {
-                auto *go = new QPushButton(tr("Update %1").arg(shown));
-                connect(go, &QPushButton::clicked, this, [this, name, place] { emit update(name, place); });
-                row->addWidget(go);
-            }
+            auto *go = new QPushButton(tr("Update %1").arg(shown));
+            connect(go, &QPushButton::clicked, this, [this, name, place] { emit update(name, place); });
+            row->addWidget(go);
             row->addStretch();
             return row;
         };
@@ -2180,8 +2060,6 @@ RemoveDialog::RemoveDialog(const Recipe &recipe, const InstalledItem &item, cons
         words = recipe.menu.isEmpty() && item.menu.isEmpty()
                     ? tr("It is no longer installed.")
                     : tr("%1 leaves the applications menu and is no longer installed.").arg(recipe.shown());
-        // Recipe keeps what it removes among the earlier versions.
-        words += tr(" Recipe keeps its files among the earlier versions until those are cleared, in Storage.");
     }
     words += recipe.keeps.isEmpty()
                  ? tr(" What it wrote in your home folder stays.")

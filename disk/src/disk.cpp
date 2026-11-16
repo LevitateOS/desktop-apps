@@ -328,17 +328,6 @@ void DiskPage::show(const DiskInfo &info)
         addRow(leftovers, tr("Known leftovers"), tr("in %1: %2.").arg(counted(info.found.size(), tr("%1 place"), tr("%1 places")), list), go);
         ++rowsShown;
     }
-    if (info.earlierBytes > 0) {
-        auto *go = small(tr("Open Recipe…"));
-        connect(go, &QPushButton::clicked, this, &DiskPage::openRecipe);
-        addRow(info.earlierBytes, tr("Kept by Recipe"),
-               info.earlierGenerations > 0
-                   ? tr("%1 of installed software, kept so you can go back. Recipe knows which are in use.")
-                         .arg(counted(info.earlierGenerations, tr("%1 earlier generation"), tr("%1 earlier generations")))
-                   : tr("Earlier versions of installed software, kept so you can go back. Recipe knows which are in use."),
-               go);
-        ++rowsShown;
-    }
     if (info.scanning) {
         rows->addWidget(dim(text(tr("Looking for leftovers: %1 so far…").arg(bytesText(info.scanBytes)))));
     } else if (!rowsShown) {

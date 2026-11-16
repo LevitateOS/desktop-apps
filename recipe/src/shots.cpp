@@ -104,7 +104,7 @@ QList<Asked> changesAsked()
         for (const QString &argument : asked.arguments) {
             if (argument.startsWith("--"))
                 continue;
-            if (argument == "install" || argument == "update" || argument == "remove" || argument == "go-back")
+            if (argument == "install" || argument == "update" || argument == "remove")
                 found << asked;
             break;
         }
@@ -123,7 +123,7 @@ QJsonObject answerOf(const QStringList &arguments)
     return QJsonDocument::fromJson(run.readAllStandardOutput()).object();
 }
 
-// Every command that changes a store, from the stand-in's log: hold and unhold too.
+// Every command that changes a store, from the stand-in's log.
 QList<Asked> loggedCommands()
 {
     QString path = qEnvironmentVariable("RECIPE_STANDIN_LOG");
@@ -379,8 +379,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                catalog.installedItem("tree", Place::Me) && catalog.installedItem("gimp", Place::Computer)
                    && !catalog.installedItem("gimp", Place::Computer)->inStore
                    && catalog.installedItem("gimp", Place::Computer)->version == "3.0.4"
-                   && !catalog.installedItem("gimp", Place::Computer)->sizeBytes
-                   && catalog.installedItem("gimp", Place::Computer)->kept.isEmpty());
+                   && !catalog.installedItem("gimp", Place::Computer)->sizeBytes);
         expect(QStringLiteral("the other root starts as a copy of the booted one: nothing is only in it"),
                !catalog.installedItem("gimp", Place::Other) && !catalog.installedItem("element", Place::Other)
                    && !catalog.installedItem("gimp", Place::Computer)->leavesOther);
@@ -553,10 +552,8 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         for (QPushButton *button : window.findChildren<QPushButton *>())
             if (button->isVisible())
                 buttons << button->text();
-        expect(QStringLiteral("a booted-root row offers Remove but not Go back (%1)").arg(buttons.join("|")),
-               buttons.contains("Remove…") && !buttons.filter("Go back").size());
-        expect(QStringLiteral("no store stands behind the booted root's software, so nothing to clear for it"),
-               !buttons.filter("Clear earlier versions, for everyone").size());
+        expect(QStringLiteral("a booted-root row offers Remove (%1)").arg(buttons.join("|")),
+               buttons.contains("Remove…"));
         const QString installed = wordsOn(window);
         for (const char *where : {"For me", "For everyone", "In the other root (B)", "active now", "active when root B is started"})
             expect(QStringLiteral("Installed says %1").arg(where), installed.contains(QString::fromLatin1(where)));
@@ -564,7 +561,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                !installed.contains("next system") && !installed.contains("restart"));
         expect(QStringLiteral("no page made the window wider than it was (%1)").arg(window.width()), window.width() == 1100);
         save(window, "p4-installed-both-roots");
-        // The base is one row for the system itself: only a way to the release page, no Update, Remove, Go back or Keep.
+        // The base is one row for the system itself: only a way to the release page, no Update or Remove.
         {
             window.showInstalled("base", int(Place::Computer));
             settle(100);
@@ -573,7 +570,6 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
             expect(QStringLiteral("the base is one row for the system, with Check for updates and nothing that changes it (%1)").arg(on.join("|")),
                    base && base->base && base->serial == 4 && wordsOn(window).contains(", the base system")
                        && on.contains("Check for updates") && !on.contains("Remove…") && !on.filter("Update to").size()
-                       && !on.filter("Go back").size() && !on.contains("Keep at this version") && !on.contains("Let it update again")
                        && !window.catalog().update("base", Place::Computer));
             save(window, "p4b-installed-base");
             // A shared part comes with the software that needs it, and stays while that is installed.
@@ -811,18 +807,16 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
                    && window.frame()->statusText().contains("htop was written into the system. It is active at once; programs that are already running may need a restart."));
         before = changesAsked().size();
 
-        // Software that no store stands behind is not taken back to an earlier version, nor kept at one: the list names
-        // the software and its version only. A program with no recipe still has its receipt page, and can be removed.
+        // Software that no store stands behind: the list names the software and its version only. A program with no recipe still has its receipt page, and can be removed.
         window.showInstalled("fd", int(Place::Computer));
         settle(100);
-        expect(QStringLiteral("a program with no recipe, in the system's list, offers its receipt and Remove, not Go back or Keep (%1)").arg(buttonTexts(window).join("|")),
-               !window.catalog().recipe("fd") && buttonTexts(window).contains("Its receipt") && buttonTexts(window).contains("Remove…")
-                   && !buttonTexts(window).filter("Go back").size() && !buttonTexts(window).contains("Keep at this version"));
+        expect(QStringLiteral("a program with no recipe, in the system's list, offers its receipt and Remove (%1)").arg(buttonTexts(window).join("|")),
+               !window.catalog().recipe("fd") && buttonTexts(window).contains("Its receipt") && buttonTexts(window).contains("Remove…"));
         clickButton(window.installedPage(), "Its receipt");
         settle(150);
-        expect(QStringLiteral("its page offers Remove and no Go back"),
-               window.recipePage()->isVisible() && buttonTexts(window).contains("Remove…") && !buttonTexts(window).filter("Go back").size());
-        save(window, "18d-program-no-recipe-kept");
+        expect(QStringLiteral("its page offers Remove"),
+               window.recipePage()->isVisible() && buttonTexts(window).contains("Remove…"));
+        save(window, "18d-program-no-recipe-receipt");
 
         // A system group: no choice of place, one sentence why; then what the change reports.
         window.askInstall("lxqt");
@@ -877,10 +871,9 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
         // The base: one row for the system itself.
         window.showInstalled("base", int(Place::Computer));
         settle(100);
-        expect(QStringLiteral("the base is one row, with a way to the release page and no Remove, Update, Go back or Keep (%1)").arg(buttonTexts(window).join("|")),
+        expect(QStringLiteral("the base is one row, with a way to the release page and no Remove or Update (%1)").arg(buttonTexts(window).join("|")),
                wordsOn(window).contains(", the base system") && buttonTexts(window).contains("Check for updates")
-                   && !buttonTexts(window).contains("Remove…") && !buttonTexts(window).filter("Update to").size()
-                   && !buttonTexts(window).filter("Go back").size() && !buttonTexts(window).contains("Keep at this version"));
+                   && !buttonTexts(window).contains("Remove…") && !buttonTexts(window).filter("Update to").size());
         // Not the last desktop while another stays; the last one says so, and removing it is still allowed.
         window.askRemove("lxqt", Place::Computer);
         settle(200);
@@ -976,7 +969,7 @@ void placesShots(const QString &folder, const Save &save, const Expect &expect)
 
 
 // The program page in three states: not installed, installed, and installed with
-// an update (and with an earlier version kept, so it can be gone back to).
+// an update.
 void programPages(Window &window, const Save &save, const Expect &expect)
 {
     auto buttonsOn = [&](QWidget &inside) {
@@ -994,9 +987,8 @@ void programPages(Window &window, const Save &save, const Expect &expect)
     settle(100);
     QString words = wordsOn(window);
     QStringList buttons = buttonsOn(window);
-    expect(QStringLiteral("not installed: it says so and offers Install, nothing to remove or hold (%1)").arg(buttons.join("|")),
-           words.contains("Not installed") && buttons.contains("Install") && !buttons.contains("Remove…")
-               && !buttons.contains("Keep at this version"));
+    expect(QStringLiteral("not installed: it says so and offers Install, nothing to remove (%1)").arg(buttons.join("|")),
+           words.contains("Not installed") && buttons.contains("Install") && !buttons.contains("Remove…"));
     expect(QStringLiteral("it says what it adds, what it may use, where it is from and offers the recipe"),
            words.contains("It adds") && words.contains("the program htop") && words.contains("What it may use")
                && words.contains("github.com (port 443)") && words.contains("The recipe") && buttons.contains("Read it")
@@ -1010,190 +1002,47 @@ void programPages(Window &window, const Save &save, const Expect &expect)
     settle(100);
     words = wordsOn(window);
     buttons = buttonsOn(window);
-    expect(QStringLiteral("installed: its version, Open, Keep at this version and Remove; nothing to install again (%1)").arg(buttons.join("|")),
-           mail && words.contains("Version " + mail->version) && buttons.contains("Open") && buttons.contains("Keep at this version")
+    expect(QStringLiteral("installed: its version, Open and Remove; nothing to install again (%1)").arg(buttons.join("|")),
+           mail && words.contains("Version " + mail->version) && buttons.contains("Open")
                && buttons.contains("Remove…") && !buttons.contains("Install") && words.contains("Where it is"));
     save(window, "15b-program-installed");
 
-    // Installed with an update, and an earlier version kept.
+    // Installed with an update.
     const InstalledItem *gimp = catalog.installedItem("gimp");
     const UpdateItem *newer = catalog.update("gimp");
-    expect(QStringLiteral("gimp has an update and an earlier version kept"), gimp && newer && !gimp->kept.isEmpty());
+    expect(QStringLiteral("gimp has an update"), gimp && newer);
     window.showRecipe("gimp");
     settle(100);
     words = wordsOn(window);
     buttons = buttonsOn(window);
-    expect(QStringLiteral("installed with an update: Update to the new version, Go back to the kept one, Keep, Remove (%1)").arg(buttons.join("|")),
-           gimp && newer && buttons.contains("Update to " + newer->to) && buttons.contains("Go back to " + gimp->kept)
-               && buttons.contains("Keep at this version") && buttons.contains("Remove…")
+    expect(QStringLiteral("installed with an update: Update to the new version and Remove (%1)").arg(buttons.join("|")),
+           gimp && newer && buttons.contains("Update to " + newer->to) && buttons.contains("Remove…")
                && words.contains(newer->to + " is ready."));
     save(window, "15c-program-installed-with-update");
 }
 
-// Storage before anything is cleared: what the stand-in says, and what was done so far.
+// Storage: what the stand-in says, and what was done so far.
 void storageBefore(Window &window, const Save &save, const Expect &expect)
 {
     const QJsonObject said = answerOf({"storage", "--json"});
-    const qint64 active = said["active_bytes"].toInteger(), earlier = said["earlier_bytes"].toInteger();
-    const int generations = said["earlier_generations"].toInt();
-    expect(QStringLiteral("the stand-in reports earlier versions (%1 bytes in %2)").arg(earlier).arg(generations), earlier > 0 && generations > 0);
+    const qint64 active = said["active_bytes"].toInteger();
     window.showStorage();
     settle(100);
     const QString words = wordsOn(window);
     expect(QStringLiteral("Storage is marked in the rail"), window.frame()->selected() == "storage");
-    expect(QStringLiteral("Storage says what the earlier versions take, as recipe reports it (%1)").arg(bytesText(earlier)),
-           words.contains(QStringLiteral("Earlier versions take %1").arg(bytesText(earlier)))
-               && words.contains(counted(generations, QStringLiteral("%1 earlier generation"), QStringLiteral("%1 earlier generations"))));
-    expect(QStringLiteral("and what is installed takes (%1)").arg(bytesText(active)), words.contains(bytesText(active)));
-    expect(QStringLiteral("it offers to clear them, and says what recipe does not report"),
-           words.contains("Clear earlier versions…") && words.contains("Recipe reports no sizes for downloads or builds"));
+    expect(QStringLiteral("Storage says what is installed takes, as recipe reports it (%1)").arg(bytesText(active)),
+           words.contains(QStringLiteral("Installed software takes %1").arg(bytesText(active))));
+    expect(QStringLiteral("and says what recipe does not report"), words.contains("Recipe reports no sizes for downloads or builds"));
     // The history: what the story did to this store so far, newest first.
     const QJsonArray history = answerOf({"history", "--json"})["history"].toArray();
     expect(QStringLiteral("recipe's history has the story's changes (%1)").arg(history.size()), history.size() >= 3);
     const QStringList lines = window.storagePage()->historyLines();
     expect(QStringLiteral("the page lists as many as recipe reports (%1)").arg(lines.size()), lines.size() == history.size());
-    expect(QStringLiteral("newest first: the update of Element, the install of Krita, then the two goings back (%1)").arg(lines.join(" | ")),
-           lines.size() >= 4 && lines[0] == "Updated Element from 1.12.3 to 1.12.4, from levitate"
-               && lines[1] == "Installed Krita 5.2.13, from levitate"
-               && lines[2] == "Went back to GIMP 3.0.4, from 3.0.2" && lines[3] == "Went back to GIMP 3.0.2, from 3.0.4");
+    expect(QStringLiteral("newest first: the update of Element, then the install of Krita (%1)").arg(lines.join(" | ")),
+           lines.size() >= 2 && lines[0] == "Updated Element from 1.12.3 to 1.12.4, from levitate"
+               && lines[1] == "Installed Krita 5.2.13, from levitate");
     save(window, "15d-storage");
-    window.showInstalled("gimp");
-    settle(100);
-    const QString installed = wordsOn(window);
-    expect(QStringLiteral("Installed keeps a pointer to Storage and no clear button of its own"),
-           installed.contains("They are in Storage.") && !installed.contains("Clear earlier versions"));
 }
-
-// After clearing: no earlier versions, and the clearing is the newest line of the history.
-void storageAfter(Window &window, const Save &save, const Expect &expect)
-{
-    const QJsonObject said = answerOf({"storage", "--json"});
-    expect(QStringLiteral("the stand-in holds no earlier version now"), said["earlier_generations"].toInt() == 0 && said["earlier_bytes"].toInteger() == 0);
-    const int before = int(window.storagePage()->historyLines().size());
-    window.showStorage();
-    settle(100);
-    const QString words = wordsOn(window);
-    const QStringList lines = window.storagePage()->historyLines();
-    expect(QStringLiteral("Storage says no earlier versions are kept, and offers nothing to clear"),
-           words.contains("No earlier versions are kept") && !words.contains("Clear earlier versions…") && words.contains("None are kept."));
-    expect(QStringLiteral("clearing added a line, on top (%1)").arg(lines.value(0)),
-           lines.size() == before + 1 && lines.value(0) == "Cleared the earlier versions");
-    save(window, "15e-storage-cleared");
-}
-
-// Hold: a program kept at its version is marked, not counted, left by "Update all", and
-// released again.
-void holdShots(Window &window, const Save &save, const Expect &expect)
-{
-    const int counting = window.catalog().updatesToCount();
-    expect(QStringLiteral("gimp has an update to count, with others (%1)").arg(counting),
-           window.catalog().update("gimp") && !window.catalog().update("gimp")->held && counting >= 2);
-    const QString root = qEnvironmentVariable("RECIPE_GUI_PACKAGE_ROOT");
-    window.hold("gimp", Place::Computer, true);
-    waitUntilIdle(window, 30);
-    const InstalledItem *item = window.catalog().installedItem("gimp");
-    expect(QStringLiteral("holding: `recipe hold gimp` for that store"),
-           [&] {
-               for (const Asked &each : loggedCommands())
-                   if (each.arguments == QStringList({"hold", "gimp", "--machine-events", "--package-root", root}))
-                       return true;
-               return false;
-           }());
-    expect(QStringLiteral("gimp is held, and its update is listed as held"),
-           item && item->held && window.catalog().update("gimp") && window.catalog().update("gimp")->held);
-    expect(QStringLiteral("the Updates badge does not count it (%1 of %2)").arg(window.frame()->badge("updates")).arg(counting),
-           window.catalog().updatesToCount() == counting - 1 && window.frame()->badge("updates") == counting - 1
-               && window.catalog().updates.size() == counting);
-
-    window.showInstalled("gimp");
-    settle(100);
-    QString words = wordsOn(window);
-    QStringList buttons;
-    for (const QPushButton *button : window.findChildren<QPushButton *>())
-        if (button->isVisible())
-            buttons << button->text();
-    expect(QStringLiteral("Installed marks it as kept and offers Let it update again, not its update (%1)").arg(buttons.join("|")),
-           words.contains("kept at this version") && buttons.contains("Let it update again") && !buttons.filter("Update to").size()
-               && !buttons.contains("Keep at this version"));
-    save(window, "16a-installed-held");
-
-    window.showUpdates("gimp");
-    settle(100);
-    words = wordsOn(window);
-    expect(QStringLiteral("Updates lists it as kept at this version, and says Update all leaves it"),
-           words.contains("Kept at this version") && words.contains("Update all leaves GIMP (kept at 3.0.4) alone")
-               && words.contains("Let it update again"));
-    save(window, "16b-updates-held");
-
-    window.askUpdate("gimp", Place::Computer);
-    settle(100);
-    expect(QStringLiteral("its Before step is not offered while it is kept"), !window.beforePage()->isVisible());
-
-    window.showRecipe("gimp");
-    settle(100);
-    words = wordsOn(window);
-    expect(QStringLiteral("the program page says it is kept and offers to release it"),
-           words.contains("Kept at 3.0.4") && words.contains("Let it update again") && !words.contains("Update to 3.0.6")
-               && words.contains("is ready, and is not offered while it is kept"));
-    save(window, "16c-program-held");
-
-    // "Update all" asks about each update that is not kept, in turn, and never about gimp.
-    window.showUpdates();
-    settle(100);
-    clickButton(window.updatesPage(), "Update all");
-    QStringList asked;
-    for (int turn = 0; turn < 10; ++turn) {
-        settle(150);
-        if (!window.beforePage()->isVisible())
-            break;
-        asked << window.beforePage()->pageText().section('\n', 0, 0);
-        goOn(window, "Update");
-        waitUntilIdle(window, 30);
-    }
-    expect(QStringLiteral("Update all asked about the others and not about GIMP (%1)").arg(asked.join(" | ")),
-           asked.size() == counting - 1 && !asked.join(" ").contains("GIMP"));
-    expect(QStringLiteral("what is kept is still waiting, and counts for nothing"),
-           window.catalog().update("gimp") && window.catalog().update("gimp")->held && window.catalog().updatesToCount() == 0
-               && window.frame()->badge("updates") == 0);
-
-    // A refused update of a held program shows recipe's own sentence, and offers no repair.
-    window.startInstall("gimp", Place::Computer);
-    waitUntilIdle(window, 30);
-    words = wordsOn(window);
-    expect(QStringLiteral("a refused update of a held program: recipe's own sentence"),
-           words.contains("GIMP is kept at version 3.0.4")
-               && words.contains("gimp is held, so it is not updated. Release it with: recipe unhold gimp")
-               );
-    save(window, "16d-held-refused");
-
-    // Released again: its update counts and is offered.
-    window.hold("gimp", Place::Computer, false);
-    waitUntilIdle(window, 30);
-    expect(QStringLiteral("released: `recipe unhold gimp`, no longer held, counted again"),
-           [&] {
-               for (const Asked &each : loggedCommands())
-                   if (each.arguments == QStringList({"unhold", "gimp", "--machine-events", "--package-root", root}))
-                       return true;
-               return false;
-           }() && window.catalog().installedItem("gimp") && !window.catalog().installedItem("gimp")->held
-               && window.catalog().updatesToCount() == 1 && window.frame()->badge("updates") == 1);
-    window.showInstalled("gimp");
-    settle(100);
-    buttons.clear();
-    for (const QPushButton *button : window.findChildren<QPushButton *>())
-        if (button->isVisible())
-            buttons << button->text();
-    expect(QStringLiteral("and Installed offers Keep at this version and the update again"),
-           buttons.contains("Keep at this version") && !buttons.filter("Update to").isEmpty());
-    window.showStorage();
-    settle(100);
-    const QStringList lines = window.storagePage()->historyLines();
-    expect(QStringLiteral("the history says it was kept and let go (%1)").arg(lines.mid(0, 4).join(" | ")),
-           lines.value(0) == "Let GIMP update again" && lines.contains("Kept GIMP at 3.0.4")
-               && lines.indexOf("Kept GIMP at 3.0.4") > 0);
-    window.showBrowse();
-}
-
 
 // What the audit of the window found and the stories did not reach: software whose recipe is gone,
 // the page for a name nothing carries, the remove question, a short change with a page of its own
@@ -1213,8 +1062,7 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
                && words.contains("Its receipt lists 2 files.")
                && words.contains("It came from the source oldmirror, which is not among the sources any more.")
                && buttons.contains("Its receipt") && buttons.contains("Remove…")
-               && buttons.contains("Keep at this version") && !buttons.contains("Open") && !buttons.contains("Install")
-               && !buttons.contains("Go back to 10.1.0")); // the story cleared the earlier versions before this
+               && !buttons.contains("Open") && !buttons.contains("Install"));
     save(window, "18a-installed-no-recipe");
     clickButton(window.installedPage(), "Its receipt");
     settle(150);
@@ -1224,24 +1072,10 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
            window.recipePage()->isVisible() && words.contains("Its recipe is gone") && words.contains("What its receipt says")
                && words.contains("bin/fd") && words.contains("share/man/man1/fd.1") && words.contains("2 files")
                && words.contains("The source oldmirror, which is not among the sources any more, at commit e41c7a0")
-               && words.contains("/usr/share/recipe/recipes/fd.rhai") && words.contains("The file is not there any more.")
-               && words.contains("Kept at ") == false);
-    expect(QStringLiteral("and offers remove and keeping at the version, never install or a recipe to read"),
-           buttons.contains("Remove…") && buttons.contains("Keep at this version")
-               && !buttons.contains("Install") && !buttons.contains("Read it"));
+               && words.contains("/usr/share/recipe/recipes/fd.rhai") && words.contains("The file is not there any more."));
+    expect(QStringLiteral("and offers remove, never install or a recipe to read"),
+           buttons.contains("Remove…") && !buttons.contains("Install") && !buttons.contains("Read it"));
     save(window, "18b-program-no-recipe");
-    // Keeping it at its version works from the receipt alone, through a page of its own, and the page is drawn again.
-    const int kept = timesAsked({"hold", "fd"});
-    clickButton(window.recipePage(), "Keep at this version");
-    waitUntilIdle(window, 30);
-    expect(QStringLiteral("keeping it ran `recipe hold fd`, fd is held, and the receipt's page is back with the way to let it go"),
-           timesAsked({"hold", "fd"}) == kept + 1 && window.catalog().installedItem("fd") && window.catalog().installedItem("fd")->held
-               && window.recipePage()->isVisible() && wordsOn(window).contains("Kept at 10.2.0")
-               && buttonTexts(window).contains("Let it update again"));
-    clickButton(window.recipePage(), "Let it update again");
-    waitUntilIdle(window, 30);
-    expect(QStringLiteral("and it can be let go again"),
-           timesAsked({"unhold", "fd"}) == 1 && !window.catalog().installedItem("fd")->held && window.recipePage()->isVisible());
     // The back link leads to what is installed.
     for (ClickLabel *label : window.recipePage()->findChildren<ClickLabel *>())
         if (label->text() == QStringLiteral("‹ Installed"))
@@ -1273,7 +1107,6 @@ void gapShots(Window &window, const Save &save, const Expect &expect)
         const QString asked = wordsOn(*question);
         expect(QStringLiteral("for software with no recipe it still says what happens (%1)").arg(asked.left(80)),
                asked.contains("Remove fd 10.2.0?") && asked.contains("It is no longer installed.")
-                   && asked.contains("Recipe keeps its files among the earlier versions until those are cleared, in Storage.")
                    && asked.contains("What it wrote in your home folder stays."));
         save(*question, "17a-remove-question");
         clickButton(question, "Cancel");
@@ -1714,14 +1547,13 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
                 << "\n";
         for (const QString &problem : window.catalog().updateProblems)
             out << "not looked up: " << problem << "\n";
-        out << "installed takes " << window.catalog().activeBytes << " bytes; earlier versions "
-            << window.catalog().earlierBytes << " bytes in " << window.catalog().earlierGenerations << "\n";
+        out << "installed takes " << window.catalog().activeBytes << " bytes\n";
         if (!window.catalog().updates.isEmpty()) {
             window.showUpdates(name);
             ok &= save(window, "real-7-updates");
         }
         // Storage and the history, against what `recipe storage --json` and `recipe history --json`
-        // print for the same store; and the held flag of every installed package against `installed --json`.
+        // print for the same store; and the version of every installed package against `installed --json`.
         window.showStorage();
         ok &= save(window, "real-8-storage");
         const QString shown = wordsOn(window);
@@ -1732,12 +1564,7 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
             out << (holds ? "same: " : "DIFFERENT: ") << what << "\n";
             ok &= holds;
         };
-        out << "recipe storage: active " << storage["active_bytes"].toInteger() << ", earlier " << storage["earlier_bytes"].toInteger()
-            << " in " << storage["earlier_generations"].toInt() << "\n";
-        check(QStringLiteral("Storage shows the earlier versions' size and generations"),
-              shown.contains(bytesText(storage["earlier_bytes"].toInteger()))
-                  && shown.contains(counted(storage["earlier_generations"].toInt(), QStringLiteral("%1 earlier generation"),
-                                            QStringLiteral("%1 earlier generations"))));
+        out << "recipe storage: active " << storage["active_bytes"].toInteger() << "\n";
         check(QStringLiteral("Storage shows what is installed takes %1").arg(bytesText(storage["active_bytes"].toInteger())),
               shown.contains(bytesText(storage["active_bytes"].toInteger())));
         out << "recipe history: " << history.size() << " entries, newest " << history.first().toObject()["what"].toString() << "\n";
@@ -1748,16 +1575,10 @@ int tryRecipe(Window &window, const QString &name, const QString &folder, bool k
             const QJsonObject package = value.toObject();
             const InstalledItem *item = window.catalog().installedItem(package["name"].toString());
             out << "recipe installed: " << package["name"].toString() << " " << package["version"].toString()
-                << (package["held"].toBool() ? " held" : "") << "\n";
-            check(QStringLiteral("%1 is %2 as `installed --json` says").arg(package["name"].toString(), package["held"].toBool() ? "held" : "not held"),
-                  item && item->held == package["held"].toBool() && item->version == package["version"].toString());
+                << "\n";
+            check(QStringLiteral("%1 is at the version `installed --json` says").arg(package["name"].toString()),
+                  item && item->version == package["version"].toString());
         }
-        window.showInstalled();
-        const QString installedWords = wordsOn(window);
-        check(QStringLiteral("Installed marks the held package"),
-              !installedWords.isEmpty() && (installedWords.contains("kept at this version")
-                                           == std::any_of(packages.begin(), packages.end(), [](const QJsonValue &each) { return each.toObject()["held"].toBool(); })));
-        ok &= save(window, "real-9-installed-held");
         return ok ? 0 : 1;
     }
 
@@ -1936,21 +1757,6 @@ int takeShots(Window &window, const QString &folder)
         hold("the update of Element says what the newer recipe may use that the installed one may not",
              update && update->changesKnown && update->asksMore() && !update->changes.isEmpty()
                  && update->changes.first().added() == QStringList{"static.element.io:443"});
-
-        // An earlier version: gone back to, and the one left behind is kept instead.
-        const QString now = window.catalog().installedItem("gimp")->version;
-        const QString earlier = window.catalog().installedItem("gimp")->kept;
-        hold("an earlier version of GIMP is kept", !earlier.isEmpty() && window.catalog().earlierGenerations > 0);
-        window.showInstalled("gimp");
-        window.goBack("gimp");
-        waitUntilIdle(window);
-        hold("going back activates the earlier version and keeps the one left",
-             window.catalog().installedItem("gimp")->version == earlier
-                 && window.catalog().installedItem("gimp")->kept == now);
-        ok &= save(window, "7b-gone-back");
-        window.goBack("gimp");
-        waitUntilIdle(window);
-        hold("going back again returns", window.catalog().installedItem("gimp")->version == now);
     }
 
     // A first install the sandbox refuses: the failure offers "Copy for agent", which puts the issue, the facts
@@ -2017,31 +1823,17 @@ int takeShots(Window &window, const QString &folder)
     window.refresh();
     waitUntilIdle(window);
 
-    // The earlier versions are cleared; what is installed stays.
-    const qsizetype installedBefore = window.catalog().installed.size();
     window.showInstalled("gimp");
-    expect("earlier versions take room before they are cleared", window.catalog().earlierBytes > 0);
     {
         auto save_ = [&](QWidget &widget, const QString &name) { ok &= save(widget, name); };
         programPages(window, save_, expect);
         storageBefore(window, save_, expect);
-    }
-    window.clearEarlier(Place::Computer, false);
-    waitUntilIdle(window);
-    expect("clearing leaves no earlier version and everything installed",
-           window.catalog().earlierGenerations == 0 && window.catalog().installed.size() == installedBefore
-               && window.catalog().installedItem("gimp")->kept.isEmpty());
-    ok &= save(window, "14-earlier-versions-cleared");
-    {
-        auto save_ = [&](QWidget &widget, const QString &name) { ok &= save(widget, name); };
-        storageAfter(window, save_, expect);
     }
 
     // The frame: the rail.
     auto saved = [&](QWidget &widget, const QString &name) { ok &= save(widget, name); };
     auto held = [&](const QString &what, bool holds) { expect(what, holds); };
     frameShots(window, saved, held);
-    holdShots(window, saved, held);
     gapShots(window, saved, held);
     helpShots(window, saved, held);
     lagShots(window, saved, held);

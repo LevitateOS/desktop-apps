@@ -173,14 +173,6 @@ QString UpdateItem::asksMoreWords() const
     return fields.join(QObject::tr(", "));
 }
 
-int Catalog::updatesToCount() const
-{
-    int count = 0;
-    for (const UpdateItem &u : updates)
-        count += !u.held;
-    return count;
-}
-
 const Recipe *Catalog::recipe(const QString &name) const
 {
     for (const Recipe &r : recipes)

@@ -43,7 +43,7 @@ public:
     void takeOffList(Node *node);
     void neverSuggest(const QString &path);
     void suggestAgain(const QString &path);
-    // Everything again: the scan, the partitions, Recipe's storage.
+    // Everything again: the scan, the partitions.
     void lookAgain();
 
     // The page that says what will happen before it does.
@@ -102,7 +102,6 @@ private:
     void drawSystems(const QString &why = QString());
     void drawDisk();
     void readLayout();
-    void readEarlier();
     void listChanged();
     DiskInfo diskInfo() const;
     QStringList zones() const;
@@ -115,17 +114,16 @@ private:
     QString entryOf(QWidget *page) const;
 
     QStringList roots_;
-    QString home_, recab_, rootHelper_, kept_, lsblk_, recipe_, files_;
+    QString home_, recab_, rootHelper_, kept_, lsblk_, files_;
     bool apparent_;
 
     Scanner *scanner_ = nullptr;
     Run *run_ = nullptr, *reading_ = nullptr;
     Job job_ = Job::None;
-    Run *layoutRun_ = nullptr, *recipeRun_ = nullptr;
+    Run *layoutRun_ = nullptr;
     bool layoutRead_ = false;
     DiskLayout layout_;
     QStringList never_;
-    qint64 earlierBytes_ = -1, earlierGenerations_ = 0;
     int unreadable_ = 0;
     qint64 scanFiles_ = 0, scanBytes_ = 0;
     // The Before page: what its button does, where Cancel and the rail entry go.

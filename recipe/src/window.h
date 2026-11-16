@@ -65,12 +65,6 @@ public:
     bool busy() const { return run_ != nullptr || changeRun_ != nullptr || client_.loading(); }
     // From a checkout: remove without the question.
     void removeNow(const QString &name, Place place = Place::Computer);
-    // Activates the newest earlier version Recipe keeps of an installed program.
-    void goBack(const QString &name, Place place = Place::Computer);
-    // Deletes every earlier version the store of a place keeps, after asking unless told not to.
-    void clearEarlier(Place place = Place::Computer, bool askFirst = true);
-    // Keeps an installed program at its version, or lets it update again.
-    void hold(const QString &name, Place place, bool on);
     StoragePage *storagePage() const { return storage_; }
     InstalledPage *installedPage() const { return installed_; }
     UpdatesPage *updatesPage() const { return updates_; }
@@ -106,7 +100,6 @@ private:
     // Takes a said-for-a-moment line away at once.
     void clearFlash();
     void showBefore();
-    void startQueued();
     // A short change has a page of its own: what is being done, Stop, the command's output, and
     // when it did not finish, why. `make` starts the same command again for "Try again".
     void change(const ChangePage::Words &words, std::function<Run *()> make);
@@ -126,7 +119,7 @@ private:
     RecipeClient client_;
     Catalog catalog_;
     Run *run_ = nullptr;
-    // The short change that is running (remove, go back, hold, a source, clearing), if any.
+    // The short change that is running (remove, a source), if any.
     Run *changeRun_ = nullptr;
     std::function<Run *()> remake_;
     ChangePage::Words changeWords_;
@@ -142,8 +135,6 @@ private:
     // A read asked for while another is going: done as soon as that one ends.
     bool reloadQueued_ = false;
     std::function<void()> queuedThen_;
-    // Updates still to be asked about and made, one after another.
-    QList<QPair<QString, Place>> queue_;
     Ask ask_;           // what the Before page is about
     Place runPlace_ = Place::Computer; // where the running (or last) run acts
     std::function<void()> again_;

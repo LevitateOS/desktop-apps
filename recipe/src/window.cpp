@@ -118,13 +118,10 @@ Window::Window(QWidget *parent)
     connect(recipe_, &RecipePage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
     connect(recipe_, &RecipePage::remove, this, &Window::askRemove);
     connect(recipe_, &RecipePage::open, this, &Window::open);
-    connect(recipe_, &RecipePage::goBack, this, &Window::goBack);
-    connect(recipe_, &RecipePage::hold, this, &Window::hold);
     connect(recipe_, &RecipePage::readRecipe, this, &Window::viewSource);
 
     // The Before step: what will happen, then Cancel or go on.
     connect(before_, &BeforePage::cancelled, this, [this] {
-        queue_.clear();
         if (const auto draw = again_)
             draw();
         else
@@ -151,14 +148,9 @@ Window::Window(QWidget *parent)
     connect(installed_, &InstalledPage::open, this, &Window::open);
     connect(installed_, &InstalledPage::openPage, this, &Window::showRecipe);
     connect(recipe_, &RecipePage::backToInstalled, this, [this] { showInstalled(installedChoice_, installedPlace_); });
-    connect(installed_, &InstalledPage::goBack, this, &Window::goBack);
-    connect(installed_, &InstalledPage::hold, this, &Window::hold);
-    connect(installed_, &InstalledPage::openStorage, this, [this] { showStorage(); });
     // The base system's row: the frame's own "Check for updates" page.
     connect(installed_, &InstalledPage::openRelease, this, [this] { frame_->showRelease(); });
-    connect(storage_, &StoragePage::clearEarlier, this, [this](Place place) { clearEarlier(place); });
     connect(storage_, &StoragePage::openInstalled, this, [this] { showInstalled(installedChoice_, installedPlace_); });
-    connect(updates_, &UpdatesPage::hold, this, &Window::hold);
     connect(installed_, &InstalledPage::remove, this, &Window::askRemove);
     connect(installed_, &InstalledPage::update, this, [this](const QString &name, Place place) { askUpdate(name, place); });
     connect(installed_, &InstalledPage::selected, this, [this](const QString &name, Place place) {
@@ -169,15 +161,6 @@ Window::Window(QWidget *parent)
     connect(updates_, &UpdatesPage::selected, this, [this](const QString &name, Place place) {
         updateChoice_ = name;
         updatePlace_ = int(place);
-    });
-    // Each update is asked about in turn, with its own Before page.
-    connect(updates_, &UpdatesPage::updateAll, this, [this] {
-        queue_.clear();
-        for (const UpdateItem &item : catalog_.updates)
-            // A program kept at its version is left alone.
-            if (item.place != Place::Other && !item.held)
-                queue_ << qMakePair(item.name, item.place);
-        startQueued();
     });
 
     reload([this] { showBrowse(); });
@@ -302,8 +285,7 @@ void Window::fillCategories()
 
 void Window::fillRail()
 {
-    // A held program's update is listed, not counted.
-    frame_->setBadge(QStringLiteral("updates"), catalog_.updatesToCount());
+    frame_->setBadge(QStringLiteral("updates"), int(catalog_.updates.size()));
 }
 
 void Window::showBrowse(const QString &category)
@@ -361,13 +343,6 @@ void Window::askInstall(const QString &name)
 
 void Window::askUpdate(const QString &name, Place place)
 {
-    // A held program's Before step is not offered until it is released.
-    const InstalledItem *item = catalog_.installedItem(name, place);
-    if (item && item->held) {
-        queue_.clear();
-        frame_->flash(tr("%1 is kept at version %2. Let it update again first.").arg(catalog_.recipe(name) ? catalog_.recipe(name)->shown() : name, item->version));
-        return;
-    }
     ask_ = Ask{name, true, place, {place}};
     showBefore();
 }
@@ -382,14 +357,6 @@ void Window::showBefore()
     // The Cancel button comes back to the page the person was on: `again_` is still its.
     before_->show(beforeContent(catalog_, client_.places(), ask_, ask_.update ? ask_.place : ask_.choices.first()));
     stack_->setCurrentWidget(before_);
-}
-
-void Window::startQueued()
-{
-    if (!queue_.isEmpty()) {
-        const auto next = queue_.takeFirst();
-        askUpdate(next.first, next.second);
-    }
 }
 
 void Window::startInstall(const QString &name, Place place)
@@ -447,13 +414,8 @@ void Window::runEnded(const QString &name, bool ok, bool stay)
             frame_->flash(runUpdate_ ? tr("Updated %1").arg(shown) : tr("Installed %1").arg(shown));
     }
     reload([this, name, ok, stay] {
-        if (!ok) {
-            queue_.clear(); // the run page stays, with what went wrong
-            return;
-        }
-        if (!queue_.isEmpty())
-            startQueued();
-        else if (!stay)
+        // On failure the run page stays, with what went wrong.
+        if (ok && !stay)
             showRecipe(name);
     });
 }
@@ -631,7 +593,7 @@ ChangePage::Words Window::removeWords(const QString &name, Place place) const
     ChangePage::Words words;
     words.title = tr("Removing %1").arg(shown);
     words.subtitle = !store ? catalog_.takenOutWords(*item)
-                            : tr("Recipe keeps its files among the earlier versions until those are cleared, in Storage.");
+                            : QString();
     words.doing = tr("Asking Recipe to remove %1…").arg(shown);
     words.stopNote = store || !catalog_.ab
                          ? tr("Stopping it before it ends leaves %1 installed. You can remove it again from Installed.").arg(shown)
@@ -652,66 +614,6 @@ ChangePage::Words Window::removeWords(const QString &name, Place place) const
 void Window::removeNow(const QString &name, Place place)
 {
     change(removeWords(name, place), [this, name, place] { return client_.remove(name, place); });
-}
-
-void Window::goBack(const QString &name, Place place)
-{
-    const InstalledItem *item = catalog_.installedItem(name, place);
-    const QString shown = shownName(name);
-    ChangePage::Words words;
-    words.title = item && !item->kept.isEmpty() ? tr("Going back to %1 %2").arg(shown, item->kept) : tr("Going back with %1").arg(shown);
-    words.subtitle = tr("Recipe activates the earlier version again from the files it kept. The version left behind stays kept.");
-    words.doing = tr("Asking Recipe to go back…");
-    words.stopNote = item ? tr("Stopping it before it ends leaves %1 at version %2. You can go back again from Installed.").arg(shown, item->version)
-                          : tr("Stopping it before it ends leaves %1 as it was. You can go back again from Installed.").arg(shown);
-    words.failed = tr("Going back with %1 did not finish").arg(shown);
-    words.left = item ? tr("%1 is still at version %2.").arg(shown, item->version) : tr("Installed shows which version it is at.");
-    words.done = item && !item->kept.isEmpty() ? tr("%1 is back at version %2").arg(shown, item->kept) : tr("Went back with %1").arg(shown);
-    change(words, [this, name, place] { return client_.goBack(name, place); });
-}
-
-void Window::clearEarlier(Place place, bool askFirst)
-{
-    if (askFirst
-        && QMessageBox::question(this, tr("Clear earlier versions"),
-                                 tr("Delete every earlier version Recipe keeps%1 (%2)?\n\nNothing that is installed "
-                                    "changes. Afterwards no program there can be taken back to an earlier version "
-                                    "until it is updated again.")
-                                     .arg(catalog_.twoPlaces ? (place == Place::Me ? tr(" for you") : tr(" for everyone")) : QString(),
-                                          bytesText(catalog_.stores[int(place)].earlierBytes)),
-                                 QMessageBox::Yes | QMessageBox::Cancel)
-               != QMessageBox::Yes)
-        return;
-    ChangePage::Words words;
-    words.title = tr("Clearing earlier versions");
-    words.subtitle = tr("Recipe deletes every earlier version it keeps%1. Nothing that is installed changes.")
-                         .arg(catalog_.twoPlaces ? (place == Place::Me ? tr(" for you") : tr(" for everyone")) : QString());
-    words.doing = tr("Asking Recipe to delete them…");
-    words.stopNote = tr("If you stop it, some earlier versions may already be deleted and the rest stay. What is installed does not "
-                        "change. Clear again from Storage.");
-    words.failed = tr("Clearing the earlier versions did not finish");
-    words.left = tr("What is installed did not change. Storage shows which earlier versions are left.");
-    words.done = tr("Cleared the earlier versions");
-    change(words, [this, place] { return client_.clearEarlier(place); });
-}
-
-void Window::hold(const QString &name, Place place, bool on)
-{
-    // `recipe` holds software only where a store stands behind it.
-    const InstalledItem *item = catalog_.installedItem(name, place);
-    if (!item || !item->inStore || place == Place::Other)
-        return;
-    const QString shown = shownName(name);
-    ChangePage::Words words;
-    words.title = on ? tr("Keeping %1 at version %2").arg(shown, item->version) : tr("Letting %1 update again").arg(shown);
-    words.subtitle = on ? tr("Update and Update all leave it alone until you let it update again.")
-                        : tr("Its updates are offered again, and Update all includes it.");
-    words.doing = on ? tr("Asking Recipe to keep it at its version…") : tr("Asking Recipe to let it update again…");
-    words.stopNote = tr("Stopping it before it ends leaves %1 as it was. You can do it again from Installed.").arg(shown);
-    words.failed = on ? tr("Keeping %1 at its version did not finish").arg(shown) : tr("Letting %1 update again did not finish").arg(shown);
-    words.left = on ? tr("%1 is not kept at a version.").arg(shown) : tr("%1 is still kept at version %2.").arg(shown, item->version);
-    words.done = on ? tr("%1 is kept at version %2").arg(shown, item->version) : tr("%1 updates again").arg(shown);
-    change(words, [this, name, place, on] { return on ? client_.hold(name, place) : client_.unhold(name, place); });
 }
 
 // A short change has its own page: what it does, Stop, what the command printed, and when it did
@@ -954,9 +856,6 @@ QString Window::closeWords() const
     QString words = tr("%1 is still running.\n\nIf you close the window now it is stopped. What is already fetched and built is kept. "
                        "%2 You can start it again from %3's page whenever you like.")
                         .arg(runUpdate_ ? tr("Updating %1").arg(shown) : tr("Installing %1").arg(shown), unchanged, shown);
-    if (!queue_.isEmpty())
-        words += tr("\n\nThe %1 still waiting in Update all %2 not started.")
-                     .arg(counted(queue_.size(), tr("%1 update"), tr("%1 updates")), queue_.size() == 1 ? tr("is") : tr("are"));
     return words;
 }
 

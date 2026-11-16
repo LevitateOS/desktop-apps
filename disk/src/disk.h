@@ -64,8 +64,6 @@ struct DiskInfo {
     QList<Slice> slices;
 
     // What could be freed
-    qint64 earlierBytes = -1; // Recipe's earlier versions; -1: Recipe could not be asked
-    qint64 earlierGenerations = 0;
 
     // The partitions
     bool layoutRead = false;
@@ -96,7 +94,6 @@ signals:
     void showMess();
     void showBrowse();
     void showSystems();
-    void openRecipe();
 private:
     QString heading_;
     DiskInfo shown_;

@@ -47,10 +47,9 @@ Environment:
   RECIPE_STANDIN_REFUSE_NEW  a recipe whose install (not yet installed) the sandbox refuses,
                           as it refuses Element's update
   RECIPE_STANDIN_FIXED    "element": Element's update is no longer refused (its source fixed it)
-  RECIPE_STANDIN_STOP_AT  also "name:remove", "name:go-back", "name:hold" and "name:unhold": stay in the middle of
-                          that short change forever; so do "storage:clear", "refresh:refresh", "source:add"
-                          and "source:remove"
-  RECIPE_STANDIN_FAIL     "KIND:NAME" or "KIND": that short change (remove, go-back, hold, unhold, clear, refresh,
+  RECIPE_STANDIN_STOP_AT  also "name:remove": stay in the middle of that short change forever; so do
+                          "refresh:refresh", "source:add" and "source:remove"
+  RECIPE_STANDIN_FAIL     "KIND:NAME" or "KIND": that short change (remove, refresh,
                           source-add, source-remove) fails with plain output lines and recipe's own message, as
                           a store that cannot be written to does
 
@@ -61,8 +60,7 @@ state folder, so that a check can see what "Open" started and from where.
 
 It also keeps what the real `recipe` keeps beside a store (tools/recipe, packages.rs and
 packages/history.rs): the history of what was done to it (`recipe history --json`, one line
-per change, newest first), and `held` on a package (`recipe hold` / `unhold`; `installed`
-and `updates` carry it, `update` refuses a held package in the real sentence).
+per change, newest first).
 """
 import datetime
 import json
@@ -150,7 +148,7 @@ def unsync_profile(item):
 
 
 ME_START = [{
-    "name": "tree", "version": "2.3.1", "installed_on": 1793275200, "size_bytes": 3145728, "kept": [],
+    "name": "tree", "version": "2.3.1", "installed_on": 1793275200, "size_bytes": 3145728,
     "recipe": os.path.expanduser("~/.local/share/recipe/recipes/tree.rhai"),
     "files": ["bin/tree"],
 }]
@@ -158,7 +156,7 @@ ME_START = [{
 
 # What a computer with one root holds to begin with: the others' software, and a desktop with its libraries.
 ONE_ROOT_START = CATALOG["installed"] + [
-    {"name": name, "version": version, "installed_on": 1793188800, "size_bytes": 1 << 20, "kept": [],
+    {"name": name, "version": version, "installed_on": 1793188800, "size_bytes": 1 << 20,
      "recipe": "/usr/share/recipe/recipes/%s.rhai" % name, "files": []}
     for name, version in (("desktop-libs", "1.0.0"), ("plasma", "6.5.2"))]
 
@@ -381,8 +379,7 @@ def breaks(kind, name=None):
         return
     sys.stderr.write("recipe: %s%s\n" % (kind.replace("-", " "), " " + name if name else ""))
     reason = ("cannot switch the active profile of %s: Permission denied (os error 13)" % os.path.dirname(PROFILE)
-              if name else "cannot delete the earlier generations of %s: Permission denied (os error 13)" % os.path.dirname(PROFILE)
-              if kind == "clear" else "could not fetch the list of levitate: connection timed out")
+              if name else "could not fetch the list of levitate: connection timed out")
     if MACHINE_EVENTS and name:
         emit(event="failed", recipe=name, hook=None, reason=reason)
     else:
@@ -457,11 +454,6 @@ def install(name, update_only=False):
     item = recipe(name)
     items = installed()
     current = next((each for each in items if each["name"] == name), None)
-    if update_only and current and current.get("held"):
-        # `recipe update` refuses a held package before anything runs (commands.rs, Commands::Update).
-        emit(event="failed", recipe=name, hook=None,
-             reason="%s is held, so it is not updated. Release it with: recipe unhold %s" % (name, name))
-        sys.exit(1)
     order = [recipe(dep) for dep in item["build_deps"]] + [item]
     # The real recipe says where it keeps the run's log, in a plain line, as the run begins.
     logs = os.path.join(STATE_DIR, "logs", "%s-%d" % (name, int(time.time() * 1000)))
@@ -484,16 +476,12 @@ def install(name, update_only=False):
         "files": ["bin/" + program for program in about.get("programs", [])]
                  + ["share/applications/%s.desktop" % name for _ in about.get("menu", [])[:1]],
         "installed_on": int(time.time()),
-        "size_bytes": 62914560, "kept": [],
+        "size_bytes": 62914560,
     }
     if remote_source(name):
         entry["source"] = remote_source(name)
         entry["commit"] = next(each["commit"] for each in listed_sources() if each["name"] == entry["source"])
-    if current and current.get("held"):
-        entry["held"] = True  # installing again keeps a package held
     if current:
-        # The version it replaces stays in the generation before, to go back to.
-        entry["kept"] = [kept_of(current)] + current.get("kept", [])
         entry["size_bytes"] = current["size_bytes"]
         items.remove(current)
     items.append(entry)
@@ -505,28 +493,11 @@ def install(name, update_only=False):
     linger()
 
 
-def kept_of(item):
-    """An installed version as the earlier version it becomes."""
-    return {"version": item["version"], "generation": "g-%s-%s" % (item["name"], item["version"].replace(".", "")),
-            "installed_on": item.get("installed_on"), "size_bytes": item.get("size_bytes")}
-
-
-def storage(clear):
-    """What `recipe storage` says: what is installed, and the earlier versions beside it."""
+def storage():
+    """What `recipe storage` says: what is installed."""
     items = installed()
-    earlier = [kept for each in items for kept in each.get("kept", [])]
     answer = {"schema_version": 1, "active_bytes": sum(each.get("size_bytes") or 0 for each in items),
-              "earlier_generations": len(earlier), "earlier_bytes": sum(kept.get("size_bytes") or 0 for kept in earlier),
               "profile": PROFILE}
-    if clear:
-        stop_here("storage", "clear")
-        breaks("clear")
-        answer.update(operation="clear-earlier", cleared_generations=answer["earlier_generations"],
-                      cleared_bytes=answer["earlier_bytes"], earlier_generations=0, earlier_bytes=0)
-        for each in items:
-            each["kept"] = []
-        save(items)
-        record("clear-earlier")
     print(json.dumps(answer))
 
 
@@ -546,42 +517,6 @@ def remove(name):
     emit(event="done", recipe=name)
 
 
-def go_back(name):
-    items = installed()
-    current = next((each for each in items if each["name"] == name), None)
-    if not current or not current.get("kept"):
-        fail("no earlier version of %s is kept" % name)
-    stop_here(name, "go-back")
-    breaks("go-back", name)
-    # The newest earlier version comes back; the one left behind stays kept.
-    older = current["kept"][0]
-    left = current["version"]
-    current["kept"] = [kept_of(current)] + current["kept"][1:]
-    current["version"] = older["version"]
-    current["size_bytes"] = older.get("size_bytes") or current["size_bytes"]
-    current["installed_on"] = int(time.time())
-    save(items)
-    record("go-back", name, left, current["version"], remote_source(name))
-    emit(event="done", recipe=name)
-
-
-def hold(name, held):
-    """`recipe hold` / `unhold`: `held` on the receipt; holding a held package changes nothing."""
-    items = installed()
-    current = next((each for each in items if each["name"] == name), None)
-    if not current:
-        fail("package %s is not installed" % name)
-    stop_here(name, "hold" if held else "unhold")
-    breaks("hold" if held else "unhold", name)
-    if bool(current.get("held")) != held:
-        current["held"] = held
-        save(items)
-        record("hold" if held else "unhold", name, current["version"], current["version"], remote_source(name))
-    print(json.dumps({"name": name, "version": current["version"], "operation": "hold" if held else "unhold",
-                      "held": held, "profile": PROFILE}))
-    emit(event="done", recipe=name)
-
-
 def updates():
     found = []
     for each in installed():
@@ -592,8 +527,7 @@ def updates():
             # As the real `recipe updates`: only the fields of NEEDS that differ,
             # and null where nothing was recorded at install.
             found.append({"name": each["name"], "source": "levitate", "from": each["version"], "to": newer,
-                          "reason": "version", "changes": CATALOG["changes"].get(each["name"]),
-                          "held": bool(each.get("held"))})
+                          "reason": "version", "changes": CATALOG["changes"].get(each["name"])})
     return found
 
 
@@ -753,7 +687,7 @@ def one_root_change(action, name):
             if gone:
                 items.remove(gone)
             items.append({"name": each["name"], "version": each["version"], "recipe": "/usr/share/recipe/recipes/%s.rhai" % each["name"],
-                          "files": [], "installed_on": int(time.time()), "size_bytes": 1 << 20, "kept": []})
+                          "files": [], "installed_on": int(time.time()), "size_bytes": 1 << 20})
         record("update" if action == "update" else "install", name, current["version"] if current else None, item["version"], None)
         if item["about"]["kind"] == "system":
             # What a group of the system's own software writes besides its files.
@@ -828,7 +762,7 @@ def main(args):
         elif not arg.startswith("--"):
             words.append(arg)
     command = words[0] if words else ""
-    if command in ("install", "update", "remove", "go-back", "hold", "unhold") and len(words) == 2:
+    if command in ("install", "update", "remove") and len(words) == 2:
         words[1] = words[1].split(":", 1)[-1]  # SOURCE:NAME; the stand-in's names are unique
     if system and not AB:
         if command == "installed":
@@ -869,9 +803,7 @@ def main(args):
         source_remove(words[2])
     elif command == "installed":
         # The shape `recipe installed` has today, plus the fields the front end asks for.
-        # `held` is always there, true or false (commands.rs, Commands::Installed).
-        print(json.dumps({"packages": [dict(each, held=bool(each.get("held"))) for each in installed()],
-                          "profile": PROFILE}))
+        print(json.dumps({"packages": installed(), "profile": PROFILE}))
     elif command == "updates":
         print(json.dumps({"schema_version": 1, "updates": updates(),
                           "problems": [{"name": each["name"],
@@ -879,17 +811,13 @@ def main(args):
                                        for each in installed()
                                        if not any(item["name"] == each["name"] for item in recipes())]}))
     elif command == "storage":
-        storage("--clear-earlier" in args)
+        storage()
     elif command == "history":
         print(json.dumps({"schema_version": 1, "history": history()}))
-    elif command in ("hold", "unhold") and len(words) == 2:
-        hold(words[1], command == "hold")
     elif command in ("install", "update") and len(words) == 2:
         install(words[1], command == "update")
     elif command == "remove" and len(words) == 2:
         remove(words[1])
-    elif command == "go-back" and len(words) == 2:
-        go_back(words[1])
     else:
         sys.stderr.write("stand-in recipe: unknown command: %s\n" % " ".join(args))
         sys.exit(2)
